@@ -18,6 +18,7 @@ import {
   FCRModel,
   AFRRModel,
   MFRRModel,
+  DispatcherModel,
   type WeatherOutput, 
   type ForecastOutput, 
   type ForecastArrays,
@@ -37,7 +38,9 @@ import {
   type FrequencyBand,
   type FCRBreakdown,
   type AFRRBreakdown,
-  type MFRRBreakdown
+  type MFRRBreakdown,
+  type DispatcherBreakdown,
+  type DispatcherInput
 } from '../system_model'
 
 export interface ClockState {
@@ -122,6 +125,7 @@ export class WorldSimulation {
   private _fcrModel: FCRModel
   private _afrrModel: AFRRModel
   private _mfrrModel: MFRRModel
+  private _dispatcher: DispatcherModel
   private _currentTime = 0
   private _weatherHistory: WeatherSnapshot[] = []
   private _consumptionHistory: ConsumptionSnapshot[] = []
@@ -169,6 +173,7 @@ export class WorldSimulation {
     this._fcrModel = new FCRModel()
     this._afrrModel = new AFRRModel()
     this._mfrrModel = new MFRRModel()
+    this._dispatcher = new DispatcherModel()
   }
 
   initialize(): void {
@@ -191,6 +196,7 @@ export class WorldSimulation {
     this._fcrModel.reset()
     this._afrrModel.reset()
     this._mfrrModel.reset()
+    this._dispatcher.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
@@ -231,10 +237,31 @@ export class WorldSimulation {
       icingRisk01: weatherOutput.icingRisk01,
     })
 
+    // Get previous frequency state (or default)
+    const prevFreqHz = this._frequencyModel.currentFrequencyHz
+    const prevRocof = this._frequencyModel.breakdown?.rocofHzPerS ?? 0
+    const prevFcrBreakdown = this._fcrModel.breakdown
+    const prevAfrrBreakdown = this._afrrModel.breakdown
+    
+    // Update dispatcher to get setpoints
+    const dispatcherInput = this.buildDispatcherInput(
+      clock,
+      weatherOutput,
+      prevFreqHz,
+      prevRocof,
+      { up: prevFcrBreakdown?.upUsedMW ?? 0, down: prevFcrBreakdown?.downUsedMW ?? 0 },
+      { up: prevAfrrBreakdown?.upUsedMW ?? 0, down: prevAfrrBreakdown?.downUsedMW ?? 0 }
+    )
+    const dispatcherBreakdown = this._dispatcher.tick(dispatcherInput)
+    
     // Update nuclear fleet
     this._nuclearFleet.tick(this._currentTime)
 
-    // Update hydro reservoir
+    // Update hydro reservoir with dispatcher setpoint
+    this._hydroReservoir.setDispatch({
+      targetProductionMW: dispatcherBreakdown.setpoints.hydroReservoirMW,
+      mode: 'follow_target',
+    })
     this._hydroReservoir.tick(this._currentTime)
 
     // Update hydro run-of-river with inflow proxy
@@ -380,15 +407,21 @@ export class WorldSimulation {
       },
     })
     
-    // Run reserve controllers
+    // Run reserve controllers with dispatcher-provided capacities
+    const reserveAvail = dispatcherBreakdown.reserveAvailability
+    
     const fcrBreakdown = this._fcrModel.tick({
       frequencyHz: freqBreakdown.frequencyHz,
       rocofHzPerS: freqBreakdown.rocofHzPerS,
+      upCapacityMW: reserveAvail.fcr.upCapacityMW,
+      downCapacityMW: reserveAvail.fcr.downCapacityMW,
     })
     
     const afrrBreakdown = this._afrrModel.tick({
       frequencyHz: freqBreakdown.frequencyHz,
       netImbalanceMW: rawImbalanceMW,
+      upCapacityMW: reserveAvail.afrr.upCapacityMW,
+      downCapacityMW: reserveAvail.afrr.downCapacityMW,
     })
     
     const mfrrBreakdown = this._mfrrModel.tick({
@@ -397,6 +430,8 @@ export class WorldSimulation {
       afrrActivatedMW: afrrBreakdown.activatedMW,
       afrrUpCapacityMW: afrrBreakdown.availableUpMW,
       afrrDownCapacityMW: afrrBreakdown.availableDownMW,
+      upCapacityMW: reserveAvail.mfrr.upCapacityMW,
+      downCapacityMW: reserveAvail.mfrr.downCapacityMW,
     })
     
     // Total reserve injection (positive = adding power, negative = absorbing)
@@ -502,6 +537,178 @@ export class WorldSimulation {
       localMinute,
       localSecond,
       dayOfYear: this._config.startDayOfYear,
+    }
+  }
+
+  private buildDispatcherInput(
+    clock: ClockState,
+    weatherOutput: WeatherOutput,
+    freqHz: number,
+    rocofHz: number,
+    fcrUsed: { up: number; down: number },
+    afrrUsed: { up: number; down: number }
+  ): DispatcherInput {
+    // Build 24-hour forecast arrays (simplified: extrapolate from current values)
+    const forecast24h = this.build24hForecast(clock, weatherOutput)
+    
+    const hydroBreakdown = this._hydroReservoir.breakdown
+    
+    return {
+      time: {
+        unixS: this._currentTime,
+        localHour: clock.localHour,
+        localMinute: clock.localMinute,
+        localSecond: clock.localSecond,
+        dayOfWeek: 0,
+      },
+      sandbox: {
+        enableNuclear: true,
+        enableHydroReservoir: true,
+        enableHydroRunOfRiver: true,
+        enableWind: true,
+        enableSolar: true,
+        enableBioWasteCHP: true,
+        enableGasOilPeakers: false,
+        enableInterconnectors: false,
+        enableDemandResponse: false,
+      },
+      frequencyState: {
+        frequencyHz: freqHz,
+        rocofHzPerS: rocofHz,
+      },
+      reservesState: {
+        fcrActivatedMW: 0,
+        afrrActivatedMW: 0,
+        mfrrActivatedMW: 0,
+        fcrUpUsedMW: fcrUsed.up,
+        fcrDownUsedMW: fcrUsed.down,
+        afrrUpUsedMW: afrrUsed.up,
+        afrrDownUsedMW: afrrUsed.down,
+      },
+      forecast24h,
+      capabilities: {
+        nuclear: {
+          onlinePlantsMW: this._nuclearFleet.productionMW,
+          minMW: 5000,
+          maxMW: 7000,
+          rampUpMWPerS: 5,
+          rampDownMWPerS: 10,
+        },
+        hydroReservoir: {
+          minMW: 500,
+          maxMW: hydroBreakdown?.maxProductionMW ?? 14580,
+          rampUpMWPerS: 20,
+          rampDownMWPerS: 40,
+          reservoirEnergyMWh: hydroBreakdown?.energyBudgetTodayMWh ?? 300000,
+          reservoirEnergyMinMWh: 0,
+          reservoirEnergyMaxMWh: 350000,
+        },
+        hydroRunOfRiver: {
+          minMW: 0,
+          maxMW: 2500,
+        },
+        gasOilPeakers: {
+          minMW: 0,
+          maxMW: 2000,
+          rampUpMWPerS: 50,
+          rampDownMWPerS: 50,
+          startDelayS: 300,
+        },
+        interconnectors: {
+          netImportMinMW: -3000,
+          netImportMaxMW: 3000,
+          rampMWPerS: 100,
+        },
+        demandResponse: {
+          maxShedMW: 500,
+          maxShedRampMWPerS: 100,
+        },
+      },
+      policy: {
+        hydroPeakShaping01: 0.7,
+        preferImports01: 0.5,
+        preferDR01: 0.5,
+      },
+    }
+  }
+
+  private build24hForecast(clock: ClockState, weather: WeatherOutput): {
+    stepS: number
+    demandTotalMW: number[]
+    windGenerationMW: number[]
+    solarGenerationMW: number[]
+    runOfRiverGenerationMW: number[]
+    bioWasteChpGenerationMW: number[]
+  } {
+    // Hourly demand pattern (normalized)
+    const demandHourlyPattern = [0.75, 0.72, 0.70, 0.70, 0.72, 0.80, 0.95, 1.05, 1.02, 0.98, 0.95, 0.93,
+                                  0.92, 0.91, 0.92, 0.95, 1.00, 1.08, 1.10, 1.05, 0.98, 0.92, 0.85, 0.80]
+    
+    // Temperature-adjusted base demand (colder = higher demand)
+    const tempFactor = 1 + Math.max(0, (5 - weather.temperatureC) * 0.02)
+    const baseDemandMW = 15000 * tempFactor
+    
+    // Wind: estimate from weather, not current production
+    const windCapacity = 16000
+    const windSpeedMps = weather.windSpeed100mMps
+    // Simple wind power curve: cut-in 3 m/s, rated 12 m/s
+    const windCF = Math.pow(Math.max(0, Math.min(1, (windSpeedMps - 3) / 9)), 2) * 0.35
+    const baseWindMW = windCapacity * windCF
+    
+    // Solar: estimate from weather
+    const solarCapacity = 4000
+    const cloudFactor = 1 - weather.cloudCover01 * 0.3
+    
+    // RoR: seasonal estimate
+    const dayOfYear = clock.dayOfYear
+    const seasonalPhase = (dayOfYear - 140) / 365 * 2 * Math.PI
+    const rorSeasonalFactor = 0.5 + 0.4 * Math.cos(seasonalPhase)
+    const baseRoRMW = 2400 * rorSeasonalFactor
+    
+    // CHP: estimate from temperature (heat-led)
+    const heatingDegrees = Math.max(0, 15 - weather.temperatureC)
+    const chpHeatFactor = Math.min(1, heatingDegrees / 35)
+    const baseCHPMW = 2500 * (0.3 + 0.7 * chpHeatFactor) // Base + heating component
+    
+    const demandTotalMW: number[] = []
+    const windGenerationMW: number[] = []
+    const solarGenerationMW: number[] = []
+    const runOfRiverGenerationMW: number[] = []
+    const bioWasteChpGenerationMW: number[] = []
+    
+    for (let i = 0; i < 24; i++) {
+      const h = (clock.localHour + i) % 24
+      const pattern = demandHourlyPattern[h] ?? 1.0
+      
+      // Demand
+      demandTotalMW.push(baseDemandMW * pattern)
+      
+      // Wind varies ±30% over day
+      const windVariation = 1.0 + 0.3 * Math.sin((h - 6) / 24 * 2 * Math.PI)
+      windGenerationMW.push(baseWindMW * windVariation)
+      
+      // Solar follows sun
+      const solarHour = h - 12
+      const solarFactor = Math.max(0, Math.cos(solarHour / 12 * Math.PI) * 0.8)
+      const winterFactor = 0.15 * cloudFactor
+      solarGenerationMW.push(solarCapacity * solarFactor * winterFactor)
+      
+      // RoR with daily variation
+      const rorHourFactor = 0.95 + 0.1 * Math.sin((h - 6) / 24 * 2 * Math.PI)
+      runOfRiverGenerationMW.push(baseRoRMW * rorHourFactor)
+      
+      // CHP follows heating pattern
+      const chpHourFactor = demandHourlyPattern[h] ?? 1.0
+      bioWasteChpGenerationMW.push(baseCHPMW * chpHourFactor)
+    }
+    
+    return {
+      stepS: 3600,
+      demandTotalMW,
+      windGenerationMW,
+      solarGenerationMW,
+      runOfRiverGenerationMW,
+      bioWasteChpGenerationMW,
     }
   }
 
@@ -617,6 +824,14 @@ export class WorldSimulation {
     return this._mfrrModel.breakdown
   }
 
+  get dispatcherBreakdown(): DispatcherBreakdown | null {
+    return this._dispatcher.breakdown
+  }
+
+  get dispatcherHourlyPlan() {
+    return this._dispatcher.hourlyPlan
+  }
+
   getForecast(deltaS: number): ForecastOutput {
     return this._forecast.getForecast(deltaS)
   }
@@ -645,6 +860,7 @@ export class WorldSimulation {
     this._fcrModel.reset()
     this._afrrModel.reset()
     this._mfrrModel.reset()
+    this._dispatcher.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []

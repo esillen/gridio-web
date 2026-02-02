@@ -1,0 +1,538 @@
+model_part: dispatcher_day_ahead_plus_realtime
+version: 1.0
+tick_s: 1
+
+description: >
+  Combined day-ahead + intraday + real-time dispatcher (single-node).
+  - Day-ahead: builds an hourly plan (24 points) for dispatchable resources + reserve targets.
+  - Real-time: applies small fast corrections (hydro + interconnectors + peakers + DR) based on frequency and reserve saturation.
+  Designed to be sandbox-friendly: enable/disable nuclear/wind/solar/hydro etc via inputs.
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+  frequency: Hz
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+    day_of_week_0_6: int
+
+  sandbox:
+    enable_nuclear: bool
+    enable_hydro_reservoir: bool
+    enable_hydro_run_of_river: bool
+    enable_wind: bool
+    enable_solar: bool
+    enable_bio_waste_chp: bool
+    enable_industrial_chp: bool
+    enable_gas_oil_peakers: bool
+    enable_interconnectors: bool
+    enable_demand_response: bool
+
+  # System physics state
+  system_frequency_and_imbalance:
+    frequency_Hz: float
+    rocof_Hz_per_s: float
+    imbalance_MW_with_controls: float   # from system_frequency_and_imbalance.outputs.imbalance_MW.with_controls_MW (optional)
+    status_band: string                # normal/alert/emergency/blackout (optional)
+
+  # Reserve controllers states (optional; used for saturation escalation)
+  reserves_state:
+    fcr_activated_MW: float
+    afrr_activated_MW: float
+    mfrr_activated_MW: float
+    fcr_up_used_MW: float
+    fcr_down_used_MW: float
+    afrr_up_used_MW: float
+    afrr_down_used_MW: float
+
+  # Forecasts you should provide as system-level aggregates (cheapest integration).
+  # step_s should be 3600 for day-ahead plan, but any divisor of 86400 works.
+  forecast_24h:
+    step_s: int
+    demand_total_MW: [float]                 # includes all demand actors EXCEPT losses (dispatcher can include losses via a margin)
+    wind_generation_MW: [float]              # expected (un-curtailed) output
+    solar_generation_MW: [float]
+    run_of_river_generation_MW: [float]      # expected must-take (or max available)
+    bio_waste_chp_generation_MW: [float]     # expected heat-led electric output (before any curtailment)
+    industrial_chp_generation_MW: [float]    # expected byproduct output (mostly must-run)
+    net_import_available_up_MW: [float]      # how much additional import could be increased (optional)
+    net_import_available_down_MW: [float]    # how much import could be reduced / export increased (optional)
+
+  # Current capabilities from generator models (per second)
+  capabilities_now:
+    nuclear:
+      online_plants_MW: float                 # current total online MW
+      min_MW: float
+      max_MW: float
+      ramp_up_MW_per_s: float
+      ramp_down_MW_per_s: float
+
+    hydro_reservoir:
+      min_MW: float
+      max_MW: float
+      ramp_up_MW_per_s: float
+      ramp_down_MW_per_s: float
+      reservoir_energy_MWh: float            # usable energy now
+      reservoir_energy_min_MWh: float
+      reservoir_energy_max_MWh: float
+      target_end_of_day_energy_MWh: float    # optional policy constraint
+      max_daily_energy_draw_MWh: float       # optional cap
+
+    hydro_run_of_river:
+      min_MW: float
+      max_MW: float
+
+    gas_oil_peakers:
+      min_MW: float
+      max_MW: float
+      ramp_up_MW_per_s: float
+      ramp_down_MW_per_s: float
+      start_delay_s: float
+
+    interconnectors:
+      net_import_min_MW: float               # negative means can export
+      net_import_max_MW: float               # positive means can import
+      ramp_MW_per_s: float
+
+    demand_response:
+      max_shed_MW: float                     # fast curtailable load (contracts)
+      max_shed_ramp_MW_per_s: float
+
+  # Optional: player policy knobs
+  policy:
+    # How hard to avoid hydro depletion by evening
+    hydro_peak_shaping_0_1: float            # 0 flat, 1 strongly peak-shave (use hydro in peaks)
+    # Prefer imports over peakers (0..1)
+    prefer_imports_0_1: float
+    # Prefer DR over peakers (0..1)
+    prefer_dr_0_1: float
+
+state:
+  # Day-ahead hourly plan arrays (length = 24)
+  plan_hourly:
+    step_s: 3600
+    hydro_reservoir_MW: [float]
+    net_import_MW: [float]
+    peakers_MW: [float]
+    nuclear_MW: [float]                      # usually flat or slow schedule
+
+    # reserve targets (MW) per hour
+    fcr_up_MW: [float]
+    fcr_down_MW: [float]
+    afrr_up_MW: [float]
+    afrr_down_MW: [float]
+    mfrr_up_MW: [float]
+    mfrr_down_MW: [float]
+
+  # Current real-time setpoints (ramp-limited)
+  setpoints_now:
+    nuclear_MW: float
+    hydro_reservoir_MW: float
+    net_import_MW: float
+    peakers_MW: float
+    dr_shed_MW: float
+
+  # Internal timing
+  last_planning_day_id: int
+  seconds_since_last_replan: float
+
+constants:
+  # Planning cadence
+  day_ahead_step_s: 3600
+  replanning_interval_s: 900          # recompute plan every 15 minutes (uses latest forecasts)
+  plan_horizon_s: 86400
+
+  # Safety margins
+  forecast_error_margin_frac: 0.05     # add 5% to demand forecast for commitment sizing
+  losses_margin_frac: 0.03             # approximate losses as +3% of demand in commitment planning
+
+  # Reserve sizing heuristics (per-hour, based on demand level)
+  # Keep simple and tune in gameplay.
+  reserve_rules:
+    fcr_frac_of_load: 0.015            # 1.5% of load each direction
+    fcr_min_MW: 250.0
+    fcr_max_MW: 900.0
+
+    afrr_frac_of_load: 0.020           # 2.0% each direction
+    afrr_min_MW: 300.0
+    afrr_max_MW: 1200.0
+
+    mfrr_frac_of_load: 0.050           # 5.0% each direction
+    mfrr_min_MW: 600.0
+    mfrr_max_MW: 3000.0
+
+  # Real-time correction gains (hydro/imports/peakers/DR)
+  realtime:
+    freq_nom_Hz: 50.0
+    hydro_freq_gain_MW_per_Hz: 3500.0     # fast correction from hydro vs freq error
+    import_freq_gain_MW_per_Hz: 1500.0    # correction via imports/exports
+    peaker_trigger_Hz: 49.70              # start escalating peakers below this
+    dr_trigger_Hz: 49.75                  # start DR curtailment below this
+    emergency_Hz: 49.50                   # aggressive actions below this
+
+    # Saturation escalation thresholds (if reserves are "mostly used", start slow resources)
+    fcr_saturation_frac: 0.85
+    afrr_saturation_frac: 0.85
+
+  # Hydro daily energy policy (peak shaping)
+  hydro_policy:
+    end_of_day_target_frac_of_current: 0.90    # try to keep 90% of current energy by end of day (tunable)
+    min_end_of_day_frac: 0.70
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  hour_index: "hour_index(t_day_s, step_s)=floor(t_day_s/step_s)"
+  lerp: "lerp(a,b,u)=a+(b-a)*clamp01(u)"
+
+  compute_reserve_targets: >
+    # returns (fcr, afrr, mfrr) targets for given load MW.
+    func(load_MW):
+      fcr = clamp(load_MW*reserve_rules.fcr_frac_of_load, reserve_rules.fcr_min_MW, reserve_rules.fcr_max_MW)
+      afrr = clamp(load_MW*reserve_rules.afrr_frac_of_load, reserve_rules.afrr_min_MW, reserve_rules.afrr_max_MW)
+      mfrr = clamp(load_MW*reserve_rules.mfrr_frac_of_load, reserve_rules.mfrr_min_MW, reserve_rules.mfrr_max_MW)
+      return (fcr, afrr, mfrr)
+
+  ramp_toward: >
+    func(current, target, ramp_up, ramp_down, dt):
+      delta = target-current
+      if delta>=0: return current + min(delta, ramp_up*dt)
+      else: return current + max(delta, -ramp_down*dt)
+
+init:
+  last_planning_day_id: -1
+  seconds_since_last_replan: 1e9
+  setpoints_now:
+    nuclear_MW: 0.0
+    hydro_reservoir_MW: 0.0
+    net_import_MW: 0.0
+    peakers_MW: 0.0
+    dr_shed_MW: 0.0
+
+update_per_tick:
+  - t_day_s: "= time_now.local_hour_0_23*3600 + time_now.local_minute_0_59*60 + time_now.local_second_0_59"
+  - day_id: "= floor(time_now.unix_s / 86400)"
+
+  # 1) Decide whether to replan
+  - state.seconds_since_last_replan: "= state.seconds_since_last_replan + tick_s"
+  - should_replan: >
+      (day_id != state.last_planning_day_id)
+      or (state.seconds_since_last_replan >= replanning_interval_s)
+
+  # 2) Build day-ahead hourly plan (heuristic merit-order + hydro peak shaping + imports preference)
+  - if should_replan:
+      - state.last_planning_day_id: "= day_id"
+      - state.seconds_since_last_replan: 0.0
+
+      - N: "= 24"
+      - step: "= day_ahead_step_s"
+
+      # 2a) Build hourly net load forecast = demand*(1+margins) - (must-take generation)
+      - for h in 0..N-1:
+          - demand_h: "= forecast_24h.demand_total_MW[h] * (1 + forecast_error_margin_frac + losses_margin_frac)"
+
+          - vre_h: >
+              (sandbox.enable_wind ? forecast_24h.wind_generation_MW[h] : 0)
+              + (sandbox.enable_solar ? forecast_24h.solar_generation_MW[h] : 0)
+
+          - must_take_h: >
+              (sandbox.enable_hydro_run_of_river ? forecast_24h.run_of_river_generation_MW[h] : 0)
+              + (sandbox.enable_bio_waste_chp ? forecast_24h.bio_waste_chp_generation_MW[h] : 0)
+              + (sandbox.enable_industrial_chp ? forecast_24h.industrial_chp_generation_MW[h] : 0)
+              + vre_h
+
+          # Nuclear plan: default flat at "online/max" depending on sandbox and available now.
+          - nuclear_cap_h: "= (sandbox.enable_nuclear ? capabilities_now.nuclear.max_MW : 0)"
+          - nuclear_plan_h: "= nuclear_cap_h * 0.98"   # keep a tiny margin; tune
+          - state.plan_hourly.nuclear_MW[h]: "= nuclear_plan_h"
+
+          - residual_h: "= max(0, demand_h - must_take_h - nuclear_plan_h)"
+
+          # 2b) Reserve targets for the hour (based on demand level, not residual)
+          - (fcr_h, afrr_h, mfrr_h): "= compute_reserve_targets(demand_h)"
+          - state.plan_hourly.fcr_up_MW[h]: "= fcr_h"
+          - state.plan_hourly.fcr_down_MW[h]: "= fcr_h"
+          - state.plan_hourly.afrr_up_MW[h]: "= afrr_h"
+          - state.plan_hourly.afrr_down_MW[h]: "= afrr_h"
+          - state.plan_hourly.mfrr_up_MW[h]: "= mfrr_h"
+          - state.plan_hourly.mfrr_down_MW[h]: "= mfrr_h"
+
+          # 2c) Allocate hydro reservoir vs imports vs peakers to meet residual
+          # Hydro peak shaping: distribute hydro energy preferentially to peak hours.
+          # Use a simple "peak weight" based on residual magnitude.
+          - peak_weight_h: "= pow(max(0, residual_h), 1.0 + 1.5*clamp01(policy.hydro_peak_shaping_0_1))"
+
+      # 2d) Compute daily hydro energy budget and distribute by peak weights
+      - if sandbox.enable_hydro_reservoir:
+          - E_now: "= capabilities_now.hydro_reservoir.reservoir_energy_MWh"
+          - E_min: "= capabilities_now.hydro_reservoir.reservoir_energy_min_MWh"
+          - E_target: >
+              max(
+                E_min,
+                min(
+                  capabilities_now.hydro_reservoir.reservoir_energy_max_MWh,
+                  E_now * clamp(hydro_policy.end_of_day_target_frac_of_current, hydro_policy.min_end_of_day_frac, 1.0)
+                )
+              )
+          - E_budget_MWh: "= max(0, E_now - E_target)"
+          - if capabilities_now.hydro_reservoir.max_daily_energy_draw_MWh != null:
+              - E_budget_MWh: "= min(E_budget_MWh, max(0, capabilities_now.hydro_reservoir.max_daily_energy_draw_MWh))"
+
+          - W_sum: "= sum(peak_weight_h for h=0..N-1) + 1e-6"
+
+          - for h in 0..N-1:
+              - # energy allocated to this hour
+              - E_h: "= E_budget_MWh * (peak_weight_h / W_sum)"
+              - hydro_from_energy_MW: "= E_h / 1.0"   # per hour => MW
+              - hydro_cap_MW: "= capabilities_now.hydro_reservoir.max_MW"
+              - state.plan_hourly.hydro_reservoir_MW[h]: "= clamp(hydro_from_energy_MW, 0, hydro_cap_MW)"
+      - else:
+          - for h in 0..N-1:
+              - state.plan_hourly.hydro_reservoir_MW[h]: 0.0
+
+      # 2e) After planned hydro, use imports (preferred) and then peakers to cover remaining residual
+      - for h in 0..N-1:
+          - demand_h: "= forecast_24h.demand_total_MW[h] * (1 + forecast_error_margin_frac + losses_margin_frac)"
+          - vre_h: >
+              (sandbox.enable_wind ? forecast_24h.wind_generation_MW[h] : 0)
+              + (sandbox.enable_solar ? forecast_24h.solar_generation_MW[h] : 0)
+          - must_take_h: >
+              (sandbox.enable_hydro_run_of_river ? forecast_24h.run_of_river_generation_MW[h] : 0)
+              + (sandbox.enable_bio_waste_chp ? forecast_24h.bio_waste_chp_generation_MW[h] : 0)
+              + (sandbox.enable_industrial_chp ? forecast_24h.industrial_chp_generation_MW[h] : 0)
+              + vre_h
+          - nuclear_h: "= state.plan_hourly.nuclear_MW[h]"
+          - hydro_h: "= state.plan_hourly.hydro_reservoir_MW[h]"
+
+          - residual_after_hydro_h: "= max(0, demand_h - must_take_h - nuclear_h - hydro_h)"
+
+          - import_cap_h: "= (sandbox.enable_interconnectors ? capabilities_now.interconnectors.net_import_max_MW : 0)"
+          - import_use_h: "= min(import_cap_h, residual_after_hydro_h * clamp01(policy.prefer_imports_0_1))"
+          - state.plan_hourly.net_import_MW[h]: "= import_use_h"
+
+          - residual_after_import_h: "= max(0, residual_after_hydro_h - import_use_h)"
+
+          - peaker_cap_h: "= (sandbox.enable_gas_oil_peakers ? capabilities_now.gas_oil_peakers.max_MW : 0)"
+          - state.plan_hourly.peakers_MW[h]: "= min(peaker_cap_h, residual_after_import_h)"
+
+  # 3) Select current-hour plan setpoints (hourly plan => per-second setpoint)
+  - h_now: "= clamp(floor(t_day_s / day_ahead_step_s), 0, 23)"
+  - nuclear_plan_now: "= state.plan_hourly.nuclear_MW[h_now]"
+  - hydro_plan_now: "= state.plan_hourly.hydro_reservoir_MW[h_now]"
+  - import_plan_now: "= state.plan_hourly.net_import_MW[h_now]"
+  - peaker_plan_now: "= state.plan_hourly.peakers_MW[h_now]"
+
+  # 4) Real-time corrections based on frequency + reserve saturation (fast layer)
+  - f: "= system_frequency_and_imbalance.frequency_Hz"
+  - df: "= realtime.freq_nom_Hz - f"      # positive when low freq => need +MW
+
+  - fcr_up_sat: >
+      (state.plan_hourly.fcr_up_MW[h_now] > 1e-6)
+      ? (reserves_state.fcr_up_used_MW / state.plan_hourly.fcr_up_MW[h_now])
+      : 0.0
+  - afrr_up_sat: >
+      (state.plan_hourly.afrr_up_MW[h_now] > 1e-6)
+      ? (reserves_state.afrr_up_used_MW / state.plan_hourly.afrr_up_MW[h_now])
+      : 0.0
+
+  # 4a) Hydro correction (primary real-time actuator)
+  - hydro_corr_MW: >
+      (sandbox.enable_hydro_reservoir ? realtime.hydro_freq_gain_MW_per_Hz * df : 0.0)
+
+  - hydro_target_rt_MW: "= hydro_plan_now + hydro_corr_MW"
+
+  # keep within hydro limits and keep headroom for reserves (reserve headroom applied later)
+  - hydro_target_rt_MW: "= clamp(hydro_target_rt_MW, capabilities_now.hydro_reservoir.min_MW, capabilities_now.hydro_reservoir.max_MW)"
+
+  # 4b) Import correction (secondary actuator)
+  - import_corr_MW: >
+      (sandbox.enable_interconnectors ? realtime.import_freq_gain_MW_per_Hz * df : 0.0)
+  - import_target_rt_MW: "= import_plan_now + import_corr_MW"
+  - import_target_rt_MW: "= clamp(import_target_rt_MW, capabilities_now.interconnectors.net_import_min_MW, capabilities_now.interconnectors.net_import_max_MW)"
+
+  # 4c) If frequency is bad OR reserves saturated, escalate: DR then peakers
+  - need_escalation: >
+      (f <= realtime.peaker_trigger_Hz)
+      or (fcr_up_sat >= realtime.fcr_saturation_frac)
+      or (afrr_up_sat >= realtime.afrr_saturation_frac)
+
+  - dr_target_MW: 0.0
+  - if sandbox.enable_demand_response and need_escalation:
+      - if f <= realtime.dr_trigger_Hz:
+          - # scale DR from 0 at dr_trigger to full at emergency_Hz
+          - u: "= clamp01((realtime.dr_trigger_Hz - f) / max(1e-6, (realtime.dr_trigger_Hz - realtime.emergency_Hz)))"
+          - dr_target_MW: "= min(capabilities_now.demand_response.max_shed_MW, u * capabilities_now.demand_response.max_shed_MW * clamp01(policy.prefer_dr_0_1))"
+
+  - peaker_target_MW: "= peaker_plan_now"
+  - if sandbox.enable_gas_oil_peakers and need_escalation:
+      - if f <= realtime.peaker_trigger_Hz:
+          - u: "= clamp01((realtime.peaker_trigger_Hz - f) / max(1e-6, (realtime.peaker_trigger_Hz - realtime.emergency_Hz)))"
+          - peaker_target_MW: "= clamp(peaker_plan_now + u * capabilities_now.gas_oil_peakers.max_MW, capabilities_now.gas_oil_peakers.min_MW, capabilities_now.gas_oil_peakers.max_MW)"
+
+  # 5) Ramp-limit actual setpoints
+  - state.setpoints_now.nuclear_MW: >
+      ramp_toward(
+        state.setpoints_now.nuclear_MW,
+        (sandbox.enable_nuclear ? clamp(nuclear_plan_now, capabilities_now.nuclear.min_MW, capabilities_now.nuclear.max_MW) : 0.0),
+        capabilities_now.nuclear.ramp_up_MW_per_s,
+        capabilities_now.nuclear.ramp_down_MW_per_s,
+        tick_s
+      )
+
+  - state.setpoints_now.hydro_reservoir_MW: >
+      ramp_toward(
+        state.setpoints_now.hydro_reservoir_MW,
+        (sandbox.enable_hydro_reservoir ? hydro_target_rt_MW : 0.0),
+        capabilities_now.hydro_reservoir.ramp_up_MW_per_s,
+        capabilities_now.hydro_reservoir.ramp_down_MW_per_s,
+        tick_s
+      )
+
+  - state.setpoints_now.net_import_MW: >
+      ramp_toward(
+        state.setpoints_now.net_import_MW,
+        (sandbox.enable_interconnectors ? import_target_rt_MW : 0.0),
+        capabilities_now.interconnectors.ramp_MW_per_s,
+        capabilities_now.interconnectors.ramp_MW_per_s,
+        tick_s
+      )
+
+  - state.setpoints_now.peakers_MW: >
+      ramp_toward(
+        state.setpoints_now.peakers_MW,
+        (sandbox.enable_gas_oil_peakers ? peaker_target_MW : 0.0),
+        capabilities_now.gas_oil_peakers.ramp_up_MW_per_s,
+        capabilities_now.gas_oil_peakers.ramp_down_MW_per_s,
+        tick_s
+      )
+
+  - state.setpoints_now.dr_shed_MW: >
+      ramp_toward(
+        state.setpoints_now.dr_shed_MW,
+        (sandbox.enable_demand_response ? dr_target_MW : 0.0),
+        capabilities_now.demand_response.max_shed_ramp_MW_per_s,
+        capabilities_now.demand_response.max_shed_ramp_MW_per_s,
+        tick_s
+      )
+
+  # 6) Compute reserve availability allocations for the reserve controller models (FCR/aFRR/mFRR)
+  # Primary providers: hydro headroom (up/down), then peakers up, then imports up/down, then DR up (as "negawatts").
+  - hydro_up_headroom_MW: "= max(0, capabilities_now.hydro_reservoir.max_MW - state.setpoints_now.hydro_reservoir_MW)"
+  - hydro_down_headroom_MW: "= max(0, state.setpoints_now.hydro_reservoir_MW - capabilities_now.hydro_reservoir.min_MW)"
+
+  - peaker_up_headroom_MW: "= max(0, capabilities_now.gas_oil_peakers.max_MW - state.setpoints_now.peakers_MW)"
+  - peaker_down_headroom_MW: "= max(0, state.setpoints_now.peakers_MW - capabilities_now.gas_oil_peakers.min_MW)"
+
+  - import_up_headroom_MW: "= max(0, capabilities_now.interconnectors.net_import_max_MW - state.setpoints_now.net_import_MW)"
+  - import_down_headroom_MW: "= max(0, state.setpoints_now.net_import_MW - capabilities_now.interconnectors.net_import_min_MW)"
+
+  - dr_up_headroom_MW: "= max(0, capabilities_now.demand_response.max_shed_MW - state.setpoints_now.dr_shed_MW)"  # additional shedding available
+
+  # Reserve targets now (hourly)
+  - fcr_target: "= state.plan_hourly.fcr_up_MW[h_now]"
+  - afrr_target: "= state.plan_hourly.afrr_up_MW[h_now]"
+  - mfrr_target: "= state.plan_hourly.mfrr_up_MW[h_now]"
+
+  # Allocate: FCR first from hydro, then aFRR from remaining hydro+imports, then mFRR from peakers+imports+DR.
+  - fcr_up_available_MW: "= min(fcr_target, hydro_up_headroom_MW)"
+  - fcr_down_available_MW: "= min(fcr_target, hydro_down_headroom_MW)"
+
+  - hydro_up_remaining_after_fcr: "= max(0, hydro_up_headroom_MW - fcr_up_available_MW)"
+  - hydro_down_remaining_after_fcr: "= max(0, hydro_down_headroom_MW - fcr_down_available_MW)"
+
+  - afrr_up_available_MW: "= min(afrr_target, hydro_up_remaining_after_fcr + (sandbox.enable_interconnectors ? import_up_headroom_MW : 0))"
+  - afrr_down_available_MW: "= min(afrr_target, hydro_down_remaining_after_fcr + (sandbox.enable_interconnectors ? import_down_headroom_MW : 0))"
+
+  - mfrr_up_available_MW: >
+      min(
+        mfrr_target,
+        (sandbox.enable_gas_oil_peakers ? peaker_up_headroom_MW : 0)
+        + (sandbox.enable_interconnectors ? import_up_headroom_MW : 0)
+        + (sandbox.enable_demand_response ? dr_up_headroom_MW : 0)
+      )
+  - mfrr_down_available_MW: >
+      min(
+        mfrr_target,
+        (sandbox.enable_gas_oil_peakers ? peaker_down_headroom_MW : 0)
+        + (sandbox.enable_interconnectors ? import_down_headroom_MW : 0)
+      )
+
+outputs:
+  # Commands to generator / demand models (per second)
+  commands:
+    nuclear_fleet:
+      mode: "follow_target"
+      target_production_MW: "= state.setpoints_now.nuclear_MW"
+
+    generation_hydro_reservoir_fleet:
+      mode: "follow_target"
+      target_production_MW: "= state.setpoints_now.hydro_reservoir_MW"
+
+    generation_hydro_run_of_river:
+      mode: "must_take"
+      target_production_MW: "= capabilities_now.hydro_run_of_river.max_MW"  # RoR model will cap by inflow/energy anyway
+
+    generation_gas_oil_peakers_and_winter_reserve:
+      mode: "follow_target"
+      target_production_MW: "= state.setpoints_now.peakers_MW"
+
+    interconnectors:
+      mode: "follow_target"
+      target_net_import_MW: "= state.setpoints_now.net_import_MW"
+
+    demand_response:
+      # This should feed into your demand actors (industry/services/residential) as a manual curtailment request,
+      # or into a dedicated load-shed actor.
+      shed_MW: "= state.setpoints_now.dr_shed_MW"
+
+    renewable_curtailment:
+      # Use if you later need to curtail wind/solar due to oversupply; default 0 here.
+      wind_curtailment_frac_0_1: 0.0
+      solar_curtailment_frac_0_1: 0.0
+      chp_electric_curtailment_frac_0_1: 0.0
+
+  # Reserve availability for reserve controller models (per second)
+  reserve_availability:
+    fcr:
+      up_capacity_MW: "= fcr_up_available_MW"
+      down_capacity_MW: "= fcr_down_available_MW"
+    afrr:
+      up_capacity_MW: "= afrr_up_available_MW"
+      down_capacity_MW: "= afrr_down_available_MW"
+    mfrr:
+      up_capacity_MW: "= mfrr_up_available_MW"
+      down_capacity_MW: "= mfrr_down_available_MW"
+
+  # For UI/debug
+  plan_now:
+    hour_index: "= h_now"
+    nuclear_MW: "= state.plan_hourly.nuclear_MW[h_now]"
+    hydro_reservoir_MW: "= state.plan_hourly.hydro_reservoir_MW[h_now]"
+    net_import_MW: "= state.plan_hourly.net_import_MW[h_now]"
+    peakers_MW: "= state.plan_hourly.peakers_MW[h_now]"
+    fcr_target_MW: "= state.plan_hourly.fcr_up_MW[h_now]"
+    afrr_target_MW: "= state.plan_hourly.afrr_up_MW[h_now]"
+    mfrr_target_MW: "= state.plan_hourly.mfrr_up_MW[h_now]"
+
+  setpoints_now:
+    nuclear_MW: "= state.setpoints_now.nuclear_MW"
+    hydro_reservoir_MW: "= state.setpoints_now.hydro_reservoir_MW"
+    net_import_MW: "= state.setpoints_now.net_import_MW"
+    peakers_MW: "= state.setpoints_now.peakers_MW"
+    dr_shed_MW: "= state.setpoints_now.dr_shed_MW"
+
+  forecast_24h:
+    step_s: "= day_ahead_step_s"
+    nuclear_MW: "= state.plan_hourly.nuclear_MW"
+    hydro_reservoir_MW: "= state.plan_hourly.hydro_reservoir_MW"
+    net_import_MW: "= state.plan_hourly.net_import_MW"
+    peakers_MW: "= state.plan_hourly.peakers_MW"
+    fcr_up_MW: "= state.plan_hourly.fcr_up_MW"
+    afrr_up_MW: "= state.plan_hourly.afrr_up_MW"
+    mfrr_up_MW: "= state.plan_hourly.mfrr_up_MW"

@@ -142,8 +142,9 @@ export class FrequencyModel {
     const denom = 2.0 * hEquivS * sBaseMW
     this.rocofHzPerS = pDampedMW / safe(denom, 1e-6)
 
-    // Integrate frequency
+    // Integrate frequency (clamped to physically realistic bounds)
     this.frequencyHz += this.rocofHzPerS * dt
+    this.frequencyHz = clamp(this.frequencyHz, 45.0, 55.0) // Realistic bounds
 
     // Track energy imbalance integral
     this.energyImbalanceMWh += pNetMW * (dt / 3600.0)

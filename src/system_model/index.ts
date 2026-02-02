@@ -51,3 +51,16 @@ export type { AFRRInput, AFRRBreakdown } from './other/AFRRModel'
 
 export { MFRRModel } from './other/MFRRModel'
 export type { MFRRInput, MFRRBreakdown } from './other/MFRRModel'
+
+export { DispatcherModel } from './other/DispatcherModel'
+export type { 
+  DispatcherInput, 
+  DispatcherBreakdown, 
+  HourlyPlan, 
+  SetpointsNow, 
+  ReserveAvailability,
+  SandboxConfig,
+  PolicyInput,
+  Forecast24h,
+  CapabilitiesNow
+} from './other/DispatcherModel'

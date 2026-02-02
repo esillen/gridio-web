@@ -1,0 +1,100 @@
+model_part: generation_industrial_chp_and_byproduct
+version: 1.0
+tick_s: 1
+
+description: >
+  Electricity generation from Swedish industrial CHP and byproduct processes.
+  Includes black-liquor CHP in pulp & paper, blast furnace gas / coke oven gas CHP in steel,
+  and other process-integrated generation.
+  Generation is strongly heat/process-led and largely must-run with limited modulation.
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+
+  activity:
+    industrial_activity_0_1: float   # 1.0 normal production, <1 reduced output
+
+  dispatch:
+    mode: enum  # ["must_run", "cap_at_target"]
+    target_production_MW: float      # used only if cap_at_target
+
+  availability:
+    availability_0_1: float           # outages / maintenance (default 1.0)
+
+state:
+  production_MW: float
+
+constants:
+  # --- Real-world anchors ---
+  # Industrial CHP + byproduct electricity in Sweden ~6–7 TWh/year (order of magnitude).
+  annual_energy_TWh: 6.5
+  avg_MW: "= (annual_energy_TWh * 1_000_000) / 8760.0"
+
+  # Peak-to-average ratio is modest; most plants run fairly flat.
+  max_MW: "= avg_MW * 1.20"
+  min_MW: "= avg_MW * 0.70"
+
+  # Limited flexibility
+  max_down_modulation_frac: 0.20     # can reduce up to 20% from normal
+  max_up_modulation_frac: 0.05       # small extra via condensing / process tweaks
+
+  ramp_up_MW_per_s: 2.0
+  ramp_down_MW_per_s: 3.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+init:
+  production_MW: "= avg_MW"
+
+update_per_tick:
+  - avail: "= clamp01(availability.availability_0_1)"
+  - act: "= clamp01(activity.industrial_activity_0_1)"
+
+  # Baseline process-driven output
+  - base_MW: "= avg_MW * act * avail"
+
+  - min_allowed_MW: "= min_MW * act * avail"
+  - max_allowed_MW: "= max_MW * act * avail"
+
+  # Dispatcher interaction
+  - if dispatch.mode == "cap_at_target":
+      - target_MW: "= clamp(dispatch.target_production_MW, min_allowed_MW, max_allowed_MW)"
+  - else:
+      - target_MW: "= base_MW"
+
+  # Ramp-limited movement
+  - delta: "= target_MW - state.production_MW"
+  - delta_limited: >
+      if delta >= 0:
+        min(delta, ramp_up_MW_per_s * tick_s)
+      else:
+        max(delta, -ramp_down_MW_per_s * tick_s)
+
+  - state.production_MW: "= state.production_MW + delta_limited"
+
+outputs:
+  production_MW: "= state.production_MW"
+  consumption_MW: 0.0
+
+  breakdown:
+    base_MW: "= base_MW"
+    min_MW: "= min_allowed_MW"
+    max_MW: "= max_allowed_MW"
+
+  forecast_24h:
+    step_s: 3600
+    production_MW: >
+      let N = 24;
+      let out = [];
+      for h in 0..N-1:
+        out[h] = avg_MW * clamp01(activity.industrial_activity_0_1) * clamp01(availability.availability_0_1)
+      return out

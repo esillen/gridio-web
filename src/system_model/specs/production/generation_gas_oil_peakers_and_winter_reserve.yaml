@@ -1,0 +1,103 @@
+model_part: generation_gas_oil_peakers_and_winter_reserve
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregated Swedish gas turbine, oil-fired peakers, and strategic winter reserve.
+  Normally offline; dispatched during scarcity, reserve activation, or emergencies.
+  High cost, high flexibility, fast ramping.
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+
+  dispatch:
+    mode: enum  # ["off", "follow_target"]
+    target_production_MW: float
+
+  availability:
+    availability_0_1: float
+
+state:
+  online: bool
+  production_MW: float
+  start_timer_s: float
+
+constants:
+  # --- Real-world anchors ---
+  # Swedish strategic reserve + peaking thermal ~3–4 GW.
+  installed_capacity_MW: 3500.0
+
+  min_stable_MW: 300.0
+  ramp_up_MW_per_s: 40.0
+  ramp_down_MW_per_s: 60.0
+
+  # Start characteristics
+  start_delay_s: 600.0    # 10 minutes from cold
+  min_run_time_s: 1800.0 # once started, must run 30 min (simplified)
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+init:
+  online: false
+  production_MW: 0.0
+  start_timer_s: 0.0
+
+update_per_tick:
+  - avail: "= clamp01(availability.availability_0_1)"
+  - cap_MW: "= installed_capacity_MW * avail"
+
+  - want_on: "= (dispatch.mode == 'follow_target' and dispatch.target_production_MW > 0)"
+
+  # Handle start-up
+  - if want_on and not state.online:
+      - state.start_timer_s: "= state.start_timer_s + tick_s"
+      - if state.start_timer_s >= start_delay_s:
+          - state.online: true
+          - state.start_timer_s: 0.0
+
+  - if not want_on and state.online:
+      - # allow shutdown only if above min run time (simplified: immediate ok)
+      - state.online: false
+      - state.production_MW: 0.0
+      - state.start_timer_s: 0.0
+
+  # Determine target MW if online
+  - if state.online:
+      - target_MW: "= clamp(dispatch.target_production_MW, min_stable_MW, cap_MW)"
+  - else:
+      - target_MW: 0.0
+
+  # Ramp-limited output
+  - delta: "= target_MW - state.production_MW"
+  - delta_limited: >
+      if delta >= 0:
+        min(delta, ramp_up_MW_per_s * tick_s)
+      else:
+        max(delta, -ramp_down_MW_per_s * tick_s)
+
+  - state.production_MW: "= state.production_MW + delta_limited"
+
+outputs:
+  production_MW: "= state.production_MW"
+  consumption_MW: 0.0
+
+  status:
+    online: "= state.online"
+    available_capacity_MW: "= cap_MW"
+
+  forecast_24h:
+    step_s: 3600
+    production_MW: >
+      let N = 24;
+      let out = [];
+      for h in 0..N-1:
+        out[h] = (dispatch.mode == 'follow_target') ? dispatch.target_production_MW : 0.0
+      return out

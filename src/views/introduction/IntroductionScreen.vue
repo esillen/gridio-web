@@ -129,6 +129,7 @@ onUnmounted(() => {
       />
     </div>
     
+    <!--
     <div class="navigation">
       <button 
         v-if="currentSlideIndex > 0 || currentStep > 0" 
@@ -141,6 +142,7 @@ onUnmounted(() => {
         {{ currentSlideIndex === totalSlides - 1 && currentStep === currentSlide.maxSteps - 1 ? 'Start Game' : 'Continue' }}
       </button>
     </div>
+    -->
 
     <button class="skip-btn" @click="router.push('/game')">
       Skip Introduction

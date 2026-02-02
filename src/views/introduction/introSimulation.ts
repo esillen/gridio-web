@@ -20,30 +20,92 @@ export interface DemandCategory {
   key: keyof HourlyData
   label: string
   color: string
+  image: string
 }
 
 export interface ProductionCategory {
   key: keyof HourlyData
   label: string
   color: string
+  image: string
 }
 
 export const DEMAND_CATEGORIES: DemandCategory[] = [
-  { key: 'heating', label: 'Space Heating', color: '#EF4444' },
-  { key: 'industry', label: 'Industry', color: '#8B5CF6' },
-  { key: 'services', label: 'Services & Commercial', color: '#F59E0B' },
-  { key: 'nonHeating', label: 'Residential (non-heating)', color: '#EC4899' },
-  { key: 'transport', label: 'Transport (Rail + EV)', color: '#06B6D4' },
-  { key: 'losses', label: 'Grid Losses', color: '#6B7280' },
+  { 
+    key: 'heating', 
+    label: 'Space Heating', 
+    color: '#EF4444',
+    image: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=1200&q=80' // Cozy home interior
+  },
+  { 
+    key: 'industry', 
+    label: 'Industry', 
+    color: '#8B5CF6',
+    image: 'https://images.unsplash.com/photo-1513828583688-c52646db42da?w=1200&q=80' // Steel mill/factory
+  },
+  { 
+    key: 'services', 
+    label: 'Services & Commercial', 
+    color: '#F59E0B',
+    image: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&q=80' // Office building
+  },
+  { 
+    key: 'nonHeating', 
+    label: 'Residential (non-heating)', 
+    color: '#EC4899',
+    image: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1200&q=80' // Modern kitchen
+  },
+  { 
+    key: 'transport', 
+    label: 'Transport (Rail + EV)', 
+    color: '#06B6D4',
+    image: 'https://images.unsplash.com/photo-1474487548417-781cb71495f3?w=1200&q=80' // Train
+  },
+  { 
+    key: 'losses', 
+    label: 'Grid Losses', 
+    color: '#6B7280',
+    image: 'https://images.unsplash.com/photo-1473341304170-971dccb5ac1e?w=1200&q=80' // Power lines
+  },
 ]
 
 export const PRODUCTION_CATEGORIES: ProductionCategory[] = [
-  { key: 'nuclear', label: 'Nuclear', color: '#F0A679' },
-  { key: 'hydroReservoir', label: 'Hydro (Reservoir)', color: '#4467FE' },
-  { key: 'hydroRoR', label: 'Hydro (Run-of-River)', color: '#7B9FFF' },
-  { key: 'chp', label: 'CHP (Biofuel & Waste)', color: '#E879F9' },
-  { key: 'wind', label: 'Wind', color: '#95957F' },
-  { key: 'solar', label: 'Solar', color: '#FFC877' },
+  { 
+    key: 'nuclear', 
+    label: 'Nuclear', 
+    color: '#F0A679',
+    image: 'https://images.unsplash.com/photo-1591363090985-009a12a4e81f?w=1200&q=80' // Nuclear plant
+  },
+  { 
+    key: 'hydroReservoir', 
+    label: 'Hydro (Reservoir)', 
+    color: '#4467FE',
+    image: 'https://images.unsplash.com/photo-1504701954957-2010ec3bcec1?w=1200&q=80' // Dam
+  },
+  { 
+    key: 'hydroRoR', 
+    label: 'Hydro (Run-of-River)', 
+    color: '#7B9FFF',
+    image: 'https://images.unsplash.com/photo-1432405972618-c60b0225b8f9?w=1200&q=80' // River/waterfall
+  },
+  { 
+    key: 'chp', 
+    label: 'CHP (Biofuel & Waste)', 
+    color: '#E879F9',
+    image: 'https://images.unsplash.com/photo-1611273426858-450d8e3c9fce?w=1200&q=80' // Biomass plant
+  },
+  { 
+    key: 'wind', 
+    label: 'Wind', 
+    color: '#95957F',
+    image: 'https://images.unsplash.com/photo-1532601224476-15c79f2f7a51?w=1200&q=80' // Wind turbines
+  },
+  { 
+    key: 'solar', 
+    label: 'Solar', 
+    color: '#FFC877',
+    image: 'https://images.unsplash.com/photo-1509391366360-2e959784a276?w=1200&q=80' // Solar panels
+  },
 ]
 
 const INTRO_SEED = 12345

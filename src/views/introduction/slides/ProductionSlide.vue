@@ -57,6 +57,8 @@ const currentCategory = computed(() => {
   return PRODUCTION_CATEGORIES[props.step - 1] || null
 })
 
+const currentImage = computed(() => currentCategory.value?.image || null)
+
 const explanation = computed(() => {
   if (props.step === 0) {
     return 'This consumption must be met with electricity production. Let\'s see how different sources contribute.'
@@ -85,46 +87,99 @@ const title = computed(() => {
 
 <template>
   <div class="slide">
-    <h2 class="slide-title">{{ title }}</h2>
-    
-    <div class="chart-container">
-      <IntroChart 
-        :data="dataWithTotals" 
-        :series="series"
-        :maxY="22000"
-      />
-    </div>
-    
-    <div class="legend">
-      <div class="legend-item consumption">
-        <span class="legend-line" style="background: #EF4444"></span>
-        <span class="legend-label">Consumption</span>
-      </div>
+    <!-- Background image with fade-through-white transition -->
+    <Transition name="bg-fade" mode="out-in">
       <div 
-        v-for="cat in visibleCategories" 
-        :key="cat.key" 
-        class="legend-item"
-        :class="{ highlight: cat.key === currentCategory?.key }"
-      >
-        <span class="legend-color" :style="{ background: cat.color }"></span>
-        <span class="legend-label">{{ cat.label }}</span>
+        v-if="currentImage"
+        :key="currentImage"
+        class="background-image"
+        :style="{ backgroundImage: `url(${currentImage})` }"
+      ></div>
+    </Transition>
+    
+    <div class="slide-content">
+      <h2 class="slide-title">{{ title }}</h2>
+      
+      <div class="chart-container">
+        <IntroChart 
+          :data="dataWithTotals" 
+          :series="series"
+          :maxY="22000"
+        />
       </div>
-    </div>
-    
-    <p class="explanation">{{ explanation }}</p>
-    
-    <div class="hint">
-      Press <kbd>Space</kbd> to continue
+      
+      <div class="legend">
+        <div class="legend-item consumption">
+          <span class="legend-line" style="background: #EF4444"></span>
+          <span class="legend-label">Consumption</span>
+        </div>
+        <div 
+          v-for="cat in visibleCategories" 
+          :key="cat.key" 
+          class="legend-item"
+          :class="{ highlight: cat.key === currentCategory?.key }"
+        >
+          <span class="legend-color" :style="{ background: cat.color }"></span>
+          <span class="legend-label">{{ cat.label }}</span>
+        </div>
+      </div>
+      
+      <p class="explanation">{{ explanation }}</p>
+      
+      <div class="hint">
+        Press <kbd>Space</kbd> to continue
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
 .slide {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 1rem;
+  overflow: hidden;
+}
+
+.background-image {
+  position: fixed;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  z-index: 0;
+}
+
+/* Fade through white transition */
+.bg-fade-enter-active {
+  transition: opacity 0.4s ease-out;
+  transition-delay: 0.15s;
+}
+
+.bg-fade-leave-active {
+  transition: opacity 0.35s ease-in;
+}
+
+.bg-fade-enter-from,
+.bg-fade-leave-to {
+  opacity: 0;
+}
+
+.background-overlay {
+  display: none;
+}
+
+.slide-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 1.5rem;
+  margin: 1rem;
+  background: rgba(255, 255, 255, 0.90);
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15);
 }
 
 .slide-title {
@@ -139,9 +194,9 @@ const title = computed(() => {
   flex: 1;
   min-height: 250px;
   background: white;
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 1rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--color-gray-200);
 }
 
 .legend {
@@ -164,9 +219,9 @@ const title = computed(() => {
 }
 
 .legend-item.highlight {
-  background: var(--color-gray-100);
   color: var(--color-gray-900);
   font-weight: 500;
+  background: var(--color-gray-100);
 }
 
 .legend-item.consumption {
@@ -196,7 +251,7 @@ const title = computed(() => {
   font-size: 1rem;
   line-height: 1.6;
   margin-top: 1rem;
-  padding: 0 1rem;
+  padding: 0.75rem 1rem;
   min-height: 3rem;
 }
 
