@@ -2,11 +2,11 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import type { GridSnapshot } from '../game/PowerGrid'
+import type { FrequencySnapshot } from '../game/WorldSimulation'
 import { DAY_DURATION_SECONDS } from '../game/GameState'
 
 const props = defineProps<{
-  history: GridSnapshot[]
+  history: FrequencySnapshot[]
   version: number
 }>()
 
@@ -14,9 +14,12 @@ const chartEl = ref<HTMLDivElement>()
 let chart: uPlot | null = null
 
 const COLORS = {
-  production: '#55D379',
-  consumption: '#F2555D',
-  imbalance: '#95957F',
+  frequency: '#10B981',
+  rocof: '#F59E0B',
+  imbalance: '#EF4444',
+  normalBand: '#D1FAE5',
+  alertBand: '#FEF3C7',
+  emergencyBand: '#FEE2E2',
   axis: '#6b7280',
   grid: '#e5e7eb',
 }
@@ -30,18 +33,16 @@ function formatHours(hours: number): string {
 
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
-  const production: number[] = []
-  const consumption: number[] = []
+  const frequency: number[] = []
   const imbalance: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
-    production.push(s.production)
-    consumption.push(s.consumption)
-    imbalance.push(s.imbalance)
+    frequency.push(s.frequencyHz)
+    imbalance.push(s.imbalanceMW)
   }
 
-  return [times, production, consumption, imbalance]
+  return [times, frequency, imbalance]
 }
 
 function getOpts(width: number, height: number): uPlot.Options {
@@ -53,6 +54,13 @@ function getOpts(width: number, height: number): uPlot.Options {
         auto: false,
         range: () => [0, DAY_DURATION_SECONDS / 3600],
       },
+      y: {
+        auto: false,
+        range: () => [49.0, 51.0],
+      },
+      imbalance: {
+        auto: true,
+      },
     },
     axes: [
       {
@@ -63,10 +71,21 @@ function getOpts(width: number, height: number): uPlot.Options {
         font: '12px system-ui',
       },
       {
-        stroke: COLORS.axis,
+        stroke: COLORS.frequency,
         grid: { stroke: COLORS.grid },
         ticks: { stroke: COLORS.grid },
-        label: 'Power (MW)',
+        label: 'Frequency (Hz)',
+        font: '12px system-ui',
+        labelFont: '12px system-ui',
+        values: (_, vals) => vals.map(v => v.toFixed(2)),
+      },
+      {
+        scale: 'imbalance',
+        stroke: COLORS.imbalance,
+        side: 1,
+        grid: { show: false },
+        ticks: { stroke: COLORS.grid },
+        label: 'Imbalance (MW)',
         font: '12px system-ui',
         labelFont: '12px system-ui',
       },
@@ -77,22 +96,16 @@ function getOpts(width: number, height: number): uPlot.Options {
         value: (_, v) => v != null ? formatHours(v) : '--',
       },
       {
-        label: 'Production',
-        stroke: COLORS.production,
+        label: 'Frequency',
+        stroke: COLORS.frequency,
         width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
-      },
-      {
-        label: 'Consumption',
-        stroke: COLORS.consumption,
-        width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+        value: (_, v) => v != null ? `${v.toFixed(3)} Hz` : '--',
       },
       {
         label: 'Imbalance',
+        scale: 'imbalance',
         stroke: COLORS.imbalance,
-        width: 2,
-        dash: [5, 5],
+        width: 1,
         value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
     ],
@@ -101,6 +114,31 @@ function getOpts(width: number, height: number): uPlot.Options {
     },
     cursor: {
       show: true,
+    },
+    hooks: {
+      drawAxes: [
+        (u: uPlot) => {
+          const ctx = u.ctx
+          const { left, width } = u.bbox
+
+          // Normal band (49.9 - 50.1 Hz)
+          const y1 = u.valToPos(50.1, 'y', true)
+          const y2 = u.valToPos(49.9, 'y', true)
+          ctx.fillStyle = COLORS.normalBand
+          ctx.fillRect(left, y1, width, y2 - y1)
+
+          // 50 Hz line
+          const y50 = u.valToPos(50.0, 'y', true)
+          ctx.strokeStyle = '#059669'
+          ctx.lineWidth = 1
+          ctx.setLineDash([4, 4])
+          ctx.beginPath()
+          ctx.moveTo(left, y50)
+          ctx.lineTo(left + width, y50)
+          ctx.stroke()
+          ctx.setLineDash([])
+        },
+      ],
     },
   }
 }

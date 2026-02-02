@@ -1,0 +1,137 @@
+model_part: distribution_and_transmission_losses
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregate Swedish grid losses (MW) for a one-day power-grid game.
+  Models two components:
+    1) Load-dependent copper losses ~ k * (power_flow)^2 (quadratic in total load / total flow)
+    2) Fixed "no-load" losses (transformer core losses, substation auxiliaries, corona etc.)
+  Output is always a positive consumption_MW (losses consume electricity).
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+
+  # You should pass in the system-wide totals you already compute each tick.
+  system_totals:
+    total_generation_MW: float      # sum of all generation actors
+    total_consumption_MW: float     # sum of all demand actors (excluding losses)
+    net_import_MW: float            # imports - exports from interconnectors (can be 0 if not modeled yet)
+
+  # Optional: if you model bidding zones later, you can feed aggregate "internal transfer" as extra stress.
+  # If not provided, assume 0.
+  internal_transfer:
+    se1_to_se2_MW: float
+    se2_to_se3_MW: float
+    se3_to_se4_MW: float
+
+state:
+  # Smooth the loss estimate so it doesn't jitter as dispatch toggles.
+  flow_smooth_MW: float
+  last_losses_MW: float
+
+constants:
+  # -----------------------
+  # Real-world anchor
+  # -----------------------
+  # Sweden grid losses are typically on the order of ~6–9 TWh/year (varies by year), i.e. single-digit percent.
+  # We anchor an average loss fraction and then add a quadratic component that grows at high load.
+  avg_loss_fraction_of_load_0_1: 0.065      # 6.5% average at "typical" load
+  fixed_loss_fraction_of_avg_0_1: 0.30      # 30% of average losses are fixed, rest variable
+
+  # Typical national average load used to convert fractions into MW.
+  # If you want, you can compute this from your own annual totals. For a game, use a stable constant.
+  typical_avg_system_load_MW: 14000.0
+
+  # Derived average losses (MW) and split into fixed vs variable at the typical load.
+  avg_losses_MW: "= typical_avg_system_load_MW * avg_loss_fraction_of_load_0_1"
+  fixed_losses_MW: "= avg_losses_MW * fixed_loss_fraction_of_avg_0_1"
+  variable_losses_MW_at_typical: "= avg_losses_MW - fixed_losses_MW"
+
+  # Quadratic loss coefficient k such that:
+  # variable_losses_MW = k * (flow_MW)^2
+  # and at flow = typical_avg_system_load_MW => variable_losses_MW_at_typical
+  k_quadratic_loss: "= variable_losses_MW_at_typical / (typical_avg_system_load_MW * typical_avg_system_load_MW)"
+
+  # Internal transfer adds extra flow stress (more MW "moved around" => more losses).
+  # This is a simple additive proxy.
+  internal_transfer_weight_0_1: 0.35
+
+  # Smoothing
+  tau_flow_smooth_s: 30.0
+  tau_losses_smooth_s: 10.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+update_per_tick:
+  # 1) Estimate system "flow" magnitude that drives I^2R losses.
+  # For a single-node game, use total_consumption as the primary driver.
+  # Use internal transfers (if present) as additional effective flow.
+  - base_flow_MW: "= max(0, system_totals.total_consumption_MW)"
+
+  - internal_transfer_abs_MW: >
+      max(0,
+        abs(internal_transfer.se1_to_se2_MW)
+        + abs(internal_transfer.se2_to_se3_MW)
+        + abs(internal_transfer.se3_to_se4_MW)
+      )
+
+  - effective_flow_MW: "= base_flow_MW + internal_transfer_weight_0_1 * internal_transfer_abs_MW"
+
+  # 2) Smooth effective flow to reduce jitter
+  - state.flow_smooth_MW: >
+      state.flow_smooth_MW
+      + (effective_flow_MW - state.flow_smooth_MW) * (tick_s / tau_flow_smooth_s)
+
+  # 3) Compute fixed + quadratic variable losses
+  - variable_losses_MW: "= k_quadratic_loss * state.flow_smooth_MW * state.flow_smooth_MW"
+  - losses_instant_MW: "= fixed_losses_MW + variable_losses_MW"
+
+  # 4) Smooth losses slightly for visual stability
+  - state.last_losses_MW: >
+      state.last_losses_MW
+      + (losses_instant_MW - state.last_losses_MW) * (tick_s / tau_losses_smooth_s)
+
+outputs:
+  consumption_MW: "= state.last_losses_MW"
+  production_MW: 0.0
+
+  breakdown:
+    fixed_losses_MW: "= fixed_losses_MW"
+    variable_losses_MW: "= variable_losses_MW"
+    effective_flow_MW: "= effective_flow_MW"
+    flow_smooth_MW: "= state.flow_smooth_MW"
+    k_quadratic_loss: "= k_quadratic_loss"
+
+  forecast_24h:
+    # Deterministic forecast using the system net-load / generation forecast if you have it.
+    # If you don't, you can approximate by using total_consumption forecast arrays from your demand actors.
+    step_s: 900
+    consumption_MW: >
+      let step = 900;
+      let N = 86400/step;
+      let out = [];
+      let flow_s = state.flow_smooth_MW;
+      let loss_s = state.last_losses_MW;
+      for i in 0..N-1:
+        # Provide an external total_consumption_forecast_MW[i] when integrating the full system.
+        # If missing, assume current consumption constant.
+        base_flow = max(0, system_totals.total_consumption_MW)
+        internal_abs = abs(internal_transfer.se1_to_se2_MW)+abs(internal_transfer.se2_to_se3_MW)+abs(internal_transfer.se3_to_se4_MW)
+        eff_flow = base_flow + internal_transfer_weight_0_1 * internal_abs
+
+        flow_s = flow_s + (eff_flow - flow_s) * (step / tau_flow_smooth_s)
+        var_loss = k_quadratic_loss * flow_s * flow_s
+        inst = fixed_losses_MW + var_loss
+        loss_s = loss_s + (inst - loss_s) * (step / tau_losses_smooth_s)
+        out[i] = loss_s
+      return out

@@ -19,6 +19,7 @@ const COLORS = {
   nonHeating: '#F0A679',
   services: '#4467FE',
   transport: '#55D379',
+  losses: '#9CA3AF',
   axis: '#6b7280',
   grid: '#e5e7eb',
 }
@@ -26,10 +27,11 @@ const COLORS = {
 function formatHours(hours: number): string {
   const h = Math.floor(hours)
   const m = Math.floor((hours - h) * 60)
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+  const s = Math.floor(((hours - h) * 60 - m) * 60)
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-// Build stacked data: heating (bottom), industry, services, non-heating, transport (top)
+// Build stacked data: heating (bottom), industry, services, non-heating, transport, losses (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const heating: number[] = []
@@ -37,6 +39,7 @@ function buildData(): uPlot.AlignedData {
   const services: number[] = []
   const nonHeating: number[] = []
   const transport: number[] = []
+  const losses: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
@@ -46,16 +49,18 @@ function buildData(): uPlot.AlignedData {
     const servicesVal = industryVal + s.servicesMW
     const nonHeatingVal = servicesVal + s.nonHeatingMW
     const transportVal = nonHeatingVal + s.transportMW
+    const lossesVal = transportVal + s.lossesMW
     
     heating.push(heatingVal)
     industry.push(industryVal)
     services.push(servicesVal)
     nonHeating.push(nonHeatingVal)
     transport.push(transportVal)
+    losses.push(lossesVal)
   }
 
   // Order: time, then top-to-bottom for rendering
-  return [times, transport, nonHeating, services, industry, heating]
+  return [times, losses, transport, nonHeating, services, industry, heating]
 }
 
 function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
@@ -143,6 +148,18 @@ function getOpts(width: number, height: number): uPlot.Options {
       {
         label: 'Time',
         value: (_, v) => v != null ? formatHours(v) : '--',
+      },
+      {
+        label: 'Losses',
+        stroke: COLORS.losses,
+        fill: COLORS.losses + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
       },
       {
         label: 'Transport',

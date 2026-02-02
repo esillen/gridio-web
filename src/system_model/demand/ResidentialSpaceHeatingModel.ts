@@ -15,6 +15,11 @@ export interface HeatingBreakdown {
   copWeighted: number
   effectiveOutdoorTempC: number
   requestedThermalMW: number
+  scheduleFactorRaw: number
+  scheduleFactorSmooth: number
+  tempFactor01: number
+  windFactor: number
+  curtailmentFactor: number
 }
 
 const CONSTANTS = {
@@ -22,6 +27,9 @@ const CONSTANTS = {
   heatingBalanceTempC: 17.0,
   designTempC: -20.0,
   buildingTauS: 7200.0,
+
+  // Schedule smoothing
+  tauScheduleSmoothS: 1800.0,
 
   // Capacity caps (MW)
   hpCompressorElectricCapMW: 4500.0,
@@ -59,6 +67,9 @@ const CONSTANTS = {
   // Peak thermal
   thermalSpaceheatDesignMW: 25000.0,
   hpPreferredThermalShare: 0.70,
+
+  // Curtailment clamp
+  curtailmentMinFactor: 0.70,
 }
 
 // Precompute weights
@@ -71,7 +82,7 @@ function clamp(x: number, min: number, max: number): number {
   return Math.min(Math.max(x, min), max)
 }
 
-function getScheduleFactor(localHour: number): number {
+function getScheduleFactorRaw(localHour: number): number {
   for (const [start, end, multiplier] of CONSTANTS.schedule) {
     if (localHour >= start && localHour < end) {
       return multiplier
@@ -85,6 +96,7 @@ export class ResidentialSpaceHeatingModel implements Actor {
   name: string
   
   private effectiveOutdoorTempC: number
+  private scheduleFactorSmooth: number
   private lastConsumptionMW = 0
   private lastBreakdown: HeatingBreakdown | null = null
 
@@ -92,6 +104,7 @@ export class ResidentialSpaceHeatingModel implements Actor {
     this.id = id
     this.name = name
     this.effectiveOutdoorTempC = initialTempC
+    this.scheduleFactorSmooth = 1.0
   }
 
   tick(input: HeatingModelInput): HeatingBreakdown {
@@ -102,23 +115,27 @@ export class ResidentialSpaceHeatingModel implements Actor {
     this.effectiveOutdoorTempC += 
       (input.temperatureOutdoorC - this.effectiveOutdoorTempC) * (dt / C.buildingTauS)
 
-    // 2) Compute demand multipliers
+    // 2) Compute raw schedule factor then smooth it
+    const scheduleFactorRaw = getScheduleFactorRaw(input.localHour)
+    this.scheduleFactorSmooth += 
+      (scheduleFactorRaw - this.scheduleFactorSmooth) * (dt / C.tauScheduleSmoothS)
+
+    // 3) Compute demand multipliers
     const heatingDegreeC = Math.max(0, C.heatingBalanceTempC - this.effectiveOutdoorTempC)
     const tempFactor01 = clamp(heatingDegreeC / HEATING_DEGREE_DESIGN_C, 0, 1)
     
     const windFactor = 1 + C.windLossCoeffPerMps * Math.max(0, input.windSpeedMps - C.windRefMps)
-    const scheduleFactor = getScheduleFactor(input.localHour)
-    const curtailmentFactor = clamp(1 - (input.curtailmentFrac01 ?? 0), 0, 1)
+    const curtailmentFactor = clamp(1 - (input.curtailmentFrac01 ?? 0), C.curtailmentMinFactor, 1.0)
 
-    // 3) Requested thermal space-heating (MW_th)
+    // 4) Requested thermal space-heating (MW_th)
     const requestedThermalSpaceheatMW = 
-      C.thermalSpaceheatDesignMW * tempFactor01 * windFactor * scheduleFactor * curtailmentFactor
+      C.thermalSpaceheatDesignMW * tempFactor01 * windFactor * this.scheduleFactorSmooth * curtailmentFactor
 
-    // 4) Allocate between HP and direct electric
+    // 5) Allocate between HP and direct electric
     const thermalHpRequestMW = requestedThermalSpaceheatMW * C.hpPreferredThermalShare
     const thermalDirectRequestMW = requestedThermalSpaceheatMW * (1 - C.hpPreferredThermalShare)
 
-    // 5) COP (weighted)
+    // 6) COP (weighted)
     const copAir = clamp(
       C.copAirAt7C - C.copAirSlopePerC * (7 - this.effectiveOutdoorTempC),
       C.copAirMin,
@@ -129,19 +146,19 @@ export class ResidentialSpaceHeatingModel implements Actor {
       W_AIR_WATER_OR_EXHAUST * C.copExhaustConstant +
       W_GROUND_OR_LAKE * C.copGroundConstant
 
-    // 6) HP compressor electricity
+    // 7) HP compressor electricity
     const hpCompressorElecNeededMW = thermalHpRequestMW / copWeighted
     const hpCompressorElecMW = Math.min(C.hpCompressorElectricCapMW, hpCompressorElecNeededMW)
     const thermalServedByHpMW = hpCompressorElecMW * copWeighted
     const thermalHpRemainingMW = Math.max(0, thermalHpRequestMW - thermalServedByHpMW)
 
-    // 7) Auxiliary resistive
+    // 8) Auxiliary resistive
     const hpAuxResistiveElecMW = Math.min(C.hpAuxResistiveCapMW, thermalHpRemainingMW)
 
-    // 8) Direct electric
+    // 9) Direct electric
     const directSpaceheatElecMW = Math.min(C.directElectricSpaceheatCapMW, thermalDirectRequestMW)
 
-    // 9) Total consumption
+    // 10) Total consumption
     const consumptionMW = 
       hpCompressorElecMW + 
       hpAuxResistiveElecMW + 
@@ -157,6 +174,11 @@ export class ResidentialSpaceHeatingModel implements Actor {
       copWeighted,
       effectiveOutdoorTempC: this.effectiveOutdoorTempC,
       requestedThermalMW: requestedThermalSpaceheatMW,
+      scheduleFactorRaw,
+      scheduleFactorSmooth: this.scheduleFactorSmooth,
+      tempFactor01,
+      windFactor,
+      curtailmentFactor,
     }
 
     return this.lastBreakdown
@@ -179,6 +201,7 @@ export class ResidentialSpaceHeatingModel implements Actor {
 
   reset(initialTempC: number = -5): void {
     this.effectiveOutdoorTempC = initialTempC
+    this.scheduleFactorSmooth = 1.0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

@@ -7,11 +7,14 @@ import {
   ServicesCommercialModel,
   TransportModel,
   IndustryProcessModel,
+  GridLossesModel,
   NuclearFleetModel,
   HydroReservoirFleetModel,
   HydroRunOfRiverModel,
   WindFleetModel,
   SolarPVFleetModel,
+  BiofuelWasteCHPModel,
+  FrequencyModel,
   type WeatherOutput, 
   type ForecastOutput, 
   type ForecastArrays,
@@ -20,11 +23,15 @@ import {
   type ServicesBreakdown,
   type TransportBreakdown,
   type IndustryBreakdown,
+  type GridLossesBreakdown,
   type NuclearBreakdown,
   type HydroBreakdown,
   type RoRBreakdown,
   type WindBreakdown,
-  type SolarBreakdown
+  type SolarBreakdown,
+  type CHPBreakdown,
+  type FrequencyBreakdown,
+  type FrequencyBand
 } from '../system_model'
 
 export interface ClockState {
@@ -51,6 +58,7 @@ export interface ConsumptionSnapshot {
   servicesMW: number
   transportMW: number
   industryMW: number
+  lossesMW: number
   totalMW: number
 }
 
@@ -61,7 +69,18 @@ export interface ProductionSnapshot {
   hydroRoRMW: number
   windMW: number
   solarMW: number
+  chpMW: number
   totalMW: number
+}
+
+export interface FrequencySnapshot {
+  time: number
+  frequencyHz: number
+  rocofHzPerS: number
+  imbalanceMW: number
+  band: FrequencyBand
+  hEquivS: number
+  sBaseMW: number
 }
 
 export interface WorldConfig {
@@ -77,15 +96,19 @@ export class WorldSimulation {
   private _servicesDemand: ServicesCommercialModel
   private _transportDemand: TransportModel
   private _industryDemand: IndustryProcessModel
+  private _gridLosses: GridLossesModel
   private _nuclearFleet: NuclearFleetModel
   private _hydroReservoir: HydroReservoirFleetModel
   private _hydroRoR: HydroRunOfRiverModel
   private _windFleet: WindFleetModel
   private _solarFleet: SolarPVFleetModel
+  private _chpFleet: BiofuelWasteCHPModel
+  private _frequencyModel: FrequencyModel
   private _currentTime = 0
   private _weatherHistory: WeatherSnapshot[] = []
   private _consumptionHistory: ConsumptionSnapshot[] = []
   private _productionHistory: ProductionSnapshot[] = []
+  private _frequencyHistory: FrequencySnapshot[] = []
   private _config: WorldConfig
 
   constructor(config: WorldConfig) {
@@ -113,11 +136,17 @@ export class WorldSimulation {
       'industry-process',
       'Industrial Process'
     )
+    this._gridLosses = new GridLossesModel(
+      'grid-losses',
+      'Grid Losses'
+    )
     this._nuclearFleet = new NuclearFleetModel()
     this._hydroReservoir = new HydroReservoirFleetModel()
     this._hydroRoR = new HydroRunOfRiverModel()
     this._windFleet = new WindFleetModel()
     this._solarFleet = new SolarPVFleetModel()
+    this._chpFleet = new BiofuelWasteCHPModel()
+    this._frequencyModel = new FrequencyModel()
   }
 
   initialize(): void {
@@ -129,15 +158,19 @@ export class WorldSimulation {
     this._servicesDemand.reset()
     this._transportDemand.reset()
     this._industryDemand.reset()
+    this._gridLosses.reset()
     this._nuclearFleet.reset()
     this._hydroReservoir.reset()
     this._hydroRoR.reset()
     this._windFleet.reset()
     this._solarFleet.reset()
+    this._chpFleet.reset()
+    this._frequencyModel.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
     this._productionHistory = []
+    this._frequencyHistory = []
 
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
@@ -145,6 +178,7 @@ export class WorldSimulation {
     this._grid.connect(this._hydroRoR)
     this._grid.connect(this._windFleet)
     this._grid.connect(this._solarFleet)
+    this._grid.connect(this._chpFleet)
 
     // Connect demand models
     this._grid.connect(this._heatingDemand)
@@ -152,6 +186,7 @@ export class WorldSimulation {
     this._grid.connect(this._servicesDemand)
     this._grid.connect(this._transportDemand)
     this._grid.connect(this._industryDemand)
+    this._grid.connect(this._gridLosses)
   }
 
   tick(): void {
@@ -195,6 +230,13 @@ export class WorldSimulation {
       precipitationSnowMmph: weatherOutput.precipitationSnowMmph,
     })
 
+    // Update CHP fleet (heat-led, using temperature-based district heat demand proxy)
+    const districtHeatDemandMWth = this.computeDistrictHeatDemand(weatherOutput.temperatureC, clock.localHour)
+    this._chpFleet.tick({
+      heatDemandMWth: districtHeatDemandMWth,
+      nonChpHeatSupplyMWth: districtHeatDemandMWth * 0.45, // ~45% from heat-only boilers/heat pumps
+    })
+
     // Update heating demand model with current weather
     this._heatingDemand.tick({
       temperatureOutdoorC: weatherOutput.temperatureC,
@@ -236,6 +278,16 @@ export class WorldSimulation {
       dayOfWeek: 0,
     })
 
+    // Update grid losses (based on total consumption from all other demand models)
+    const baseConsumptionMW = this._heatingDemand.consumptionMW
+      + this._nonHeatingDemand.consumptionMW
+      + this._servicesDemand.consumptionMW
+      + this._transportDemand.consumptionMW
+      + this._industryDemand.consumptionMW
+    this._gridLosses.tick({
+      totalConsumptionMW: baseConsumptionMW,
+    })
+
     // Record weather snapshot
     const weatherSnapshot: WeatherSnapshot = {
       time: this._currentTime,
@@ -253,6 +305,7 @@ export class WorldSimulation {
     const servicesMW = this._servicesDemand.consumptionMW
     const transportMW = this._transportDemand.consumptionMW
     const industryMW = this._industryDemand.consumptionMW
+    const lossesMW = this._gridLosses.consumptionMW
     this._consumptionHistory.push({
       time: this._currentTime,
       heatingMW,
@@ -260,7 +313,8 @@ export class WorldSimulation {
       servicesMW,
       transportMW,
       industryMW,
-      totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW,
+      lossesMW,
+      totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW,
     })
 
     // Record production breakdown
@@ -269,6 +323,8 @@ export class WorldSimulation {
     const hydroRoRMW = this._hydroRoR.productionMW
     const windMW = this._windFleet.productionMW
     const solarMW = this._solarFleet.productionMW
+    const chpMW = this._chpFleet.productionMW
+    const totalProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW
     this._productionHistory.push({
       time: this._currentTime,
       nuclearMW,
@@ -276,7 +332,32 @@ export class WorldSimulation {
       hydroRoRMW,
       windMW,
       solarMW,
-      totalMW: nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW,
+      chpMW,
+      totalMW: totalProductionMW,
+    })
+
+    // Update frequency model
+    const totalConsumptionMW = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW
+    const motorLoadMW = industryMW * 0.6 + transportMW * 0.3 // rough motor load estimate
+    const freqBreakdown = this._frequencyModel.tick({
+      totalGenerationMW: totalProductionMW,
+      totalConsumptionMW,
+      inertia: {
+        nuclearMW,
+        hydroReservoirMW,
+        hydroRoRMW,
+        bioWasteChpMW: chpMW,
+        motorLoadMW,
+      },
+    })
+    this._frequencyHistory.push({
+      time: this._currentTime,
+      frequencyHz: freqBreakdown.frequencyHz,
+      rocofHzPerS: freqBreakdown.rocofHzPerS,
+      imbalanceMW: freqBreakdown.imbalanceRawMW,
+      band: freqBreakdown.band,
+      hEquivS: freqBreakdown.hEquivS,
+      sBaseMW: freqBreakdown.sBaseMW,
     })
 
     // Update grid (collects updates from all connected actors)
@@ -309,6 +390,28 @@ export class WorldSimulation {
 
     const inflowFraction = seasonalFactor * hourFactor * precipBoost * tempEffect
     return baseCapacity * Math.min(1.2, inflowFraction)
+  }
+
+  private computeDistrictHeatDemand(temperatureC: number, localHour: number): number {
+    // Simple district heat demand model based on outdoor temperature
+    // Swedish district heat is ~50 TWh/year, roughly 5700 MW average
+    // Peak in winter can be 2-3x average
+    const baseLoadMWth = 3000 // Base load (hot water, process heat)
+    const heatingBalanceC = 15
+    const designTempC = -20
+
+    // Temperature-driven heating demand
+    const heatingDegrees = Math.max(0, heatingBalanceC - temperatureC)
+    const designDegrees = heatingBalanceC - designTempC
+    const tempFactor = Math.min(1, heatingDegrees / designDegrees)
+    const heatingLoadMWth = 8000 * tempFactor // Up to 8000 MWth heating
+
+    // Daily pattern: higher in morning and evening
+    const hourlyFactors = [0.85, 0.82, 0.80, 0.80, 0.82, 0.90, 1.05, 1.15, 1.10, 1.00, 0.95, 0.92,
+                          0.90, 0.88, 0.88, 0.90, 0.95, 1.05, 1.12, 1.08, 1.00, 0.95, 0.90, 0.88]
+    const hourFactor = hourlyFactors[localHour] ?? 1.0
+
+    return (baseLoadMWth + heatingLoadMWth) * hourFactor
   }
 
   private getClock(): ClockState {
@@ -346,6 +449,10 @@ export class WorldSimulation {
     return this._productionHistory
   }
 
+  get frequencyHistory(): FrequencySnapshot[] {
+    return this._frequencyHistory
+  }
+
   get latestGridSnapshot(): GridSnapshot | null {
     return this._grid.latestSnapshot
   }
@@ -378,6 +485,10 @@ export class WorldSimulation {
     return this._industryDemand.breakdown
   }
 
+  get gridLossesBreakdown(): GridLossesBreakdown | null {
+    return this._gridLosses.breakdown
+  }
+
   get nuclearBreakdown(): NuclearBreakdown | null {
     return this._nuclearFleet.breakdown
   }
@@ -398,6 +509,22 @@ export class WorldSimulation {
     return this._solarFleet.breakdown
   }
 
+  get chpBreakdown(): CHPBreakdown | null {
+    return this._chpFleet.breakdown
+  }
+
+  get frequencyBreakdown(): FrequencyBreakdown | null {
+    return this._frequencyModel.breakdown
+  }
+
+  get currentFrequencyHz(): number {
+    return this._frequencyModel.currentFrequencyHz
+  }
+
+  get currentFrequencyBand(): FrequencyBand {
+    return this._frequencyModel.currentBand
+  }
+
   getForecast(deltaS: number): ForecastOutput {
     return this._forecast.getForecast(deltaS)
   }
@@ -415,14 +542,18 @@ export class WorldSimulation {
     this._servicesDemand.reset()
     this._transportDemand.reset()
     this._industryDemand.reset()
+    this._gridLosses.reset()
     this._nuclearFleet.reset()
     this._hydroReservoir.reset()
     this._hydroRoR.reset()
     this._windFleet.reset()
     this._solarFleet.reset()
+    this._chpFleet.reset()
+    this._frequencyModel.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
     this._productionHistory = []
+    this._frequencyHistory = []
   }
 }

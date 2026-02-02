@@ -6,17 +6,19 @@ import PowerChart from '../components/PowerChart.vue'
 import WeatherChart from '../components/WeatherChart.vue'
 import ConsumptionChart from '../components/ConsumptionChart.vue'
 import ProductionChart from '../components/ProductionChart.vue'
+import FrequencyChart from '../components/FrequencyChart.vue'
 
 const router = useRouter()
 
-const speeds: SimulationSpeed[] = [1, 10, 50, 1000]
+const speeds: SimulationSpeed[] = [1, 10, 50, 1000, 2000, 3000]
 
-type SecondaryChart = 'weather' | 'consumption' | 'production'
-const chartOptions: SecondaryChart[] = ['weather', 'consumption', 'production']
+type SecondaryChart = 'weather' | 'consumption' | 'production' | 'frequency'
+const chartOptions: SecondaryChart[] = ['weather', 'consumption', 'production', 'frequency']
 const chartLabels: Record<SecondaryChart, string> = {
   weather: 'Weather',
   consumption: 'Consumption Breakdown',
   production: 'Production Breakdown',
+  frequency: 'System Frequency',
 }
 
 const activeChart = ref<SecondaryChart>('weather')
@@ -34,7 +36,7 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (e.key === 'Tab') {
     e.preventDefault()
     cycleChart()
-  } else if (e.key >= '1' && e.key <= '4') {
+  } else if (e.key >= '1' && e.key <= '6') {
     const speedIndex = parseInt(e.key) - 1
     const speed = speeds[speedIndex]
     if (speed !== undefined) {
@@ -60,7 +62,8 @@ const currentTime = computed(() => gameState.currentTime)
 function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600)
   const mins = Math.floor((seconds % 3600) / 60)
-  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`
+  const secs = seconds % 60
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
 function endDayEarly() {
@@ -73,8 +76,13 @@ function endDayEarly() {
   <div class="day-screen">
     <header class="header">
       <h1>Day Simulation</h1>
-      <div class="time-display">
-        {{ formatTime(currentTime) }} / 24:00
+      <div class="header-stats">
+        <div class="frequency-display" :class="gameState.currentFrequencyBand">
+          {{ gameState.currentFrequencyHz.toFixed(3) }} Hz
+        </div>
+        <div class="time-display">
+          {{ formatTime(currentTime) }} / 24:00:00
+        </div>
       </div>
     </header>
 
@@ -132,6 +140,11 @@ function endDayEarly() {
         :history="gameState.productionHistory"
         :version="gameState.historyVersion"
       />
+      <FrequencyChart
+        v-else-if="activeChart === 'frequency'"
+        :history="gameState.frequencyHistory"
+        :version="gameState.historyVersion"
+      />
     </div>
 
     <button class="end-btn" @click="endDayEarly">End Day Early</button>
@@ -159,6 +172,12 @@ h1 {
   font-weight: 600;
 }
 
+.header-stats {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
 .time-display {
   background: white;
   padding: 0.5rem 1rem;
@@ -167,6 +186,49 @@ h1 {
   font-family: monospace;
   font-weight: 500;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.frequency-display {
+  background: #D1FAE5;
+  padding: 0.5rem 1rem;
+  border-radius: 12px;
+  font-family: monospace;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  color: #059669;
+  transition: all 0.3s;
+}
+
+.frequency-display.normal {
+  background: #D1FAE5;
+  color: #059669;
+}
+
+.frequency-display.off_normal {
+  background: #FEF3C7;
+  color: #D97706;
+}
+
+.frequency-display.alert {
+  background: #FED7AA;
+  color: #C2410C;
+}
+
+.frequency-display.emergency {
+  background: #FEE2E2;
+  color: #DC2626;
+  animation: pulse 1s infinite;
+}
+
+.frequency-display.blackout {
+  background: #7F1D1D;
+  color: white;
+  animation: pulse 0.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
 }
 
 .controls {

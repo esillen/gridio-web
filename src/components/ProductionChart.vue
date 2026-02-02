@@ -17,6 +17,7 @@ const COLORS = {
   nuclear: '#F0A679',
   hydroReservoir: '#4467FE',
   hydroRoR: '#7B9FFF',
+  chp: '#E879F9',
   wind: '#95957F',
   solar: '#FFC877',
   axis: '#6b7280',
@@ -26,15 +27,17 @@ const COLORS = {
 function formatHours(hours: number): string {
   const h = Math.floor(hours)
   const m = Math.floor((hours - h) * 60)
-  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+  const s = Math.floor(((hours - h) * 60 - m) * 60)
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, wind, solar (top)
+// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, chp, wind, solar (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const nuclear: number[] = []
   const hydroReservoir: number[] = []
   const hydroRoR: number[] = []
+  const chp: number[] = []
   const wind: number[] = []
   const solar: number[] = []
 
@@ -44,18 +47,20 @@ function buildData(): uPlot.AlignedData {
     const nuclearVal = s.nuclearMW
     const hydroResVal = nuclearVal + s.hydroReservoirMW
     const hydroRoRVal = hydroResVal + s.hydroRoRMW
-    const windVal = hydroRoRVal + s.windMW
+    const chpVal = hydroRoRVal + s.chpMW
+    const windVal = chpVal + s.windMW
     const solarVal = windVal + s.solarMW
     
     nuclear.push(nuclearVal)
     hydroReservoir.push(hydroResVal)
     hydroRoR.push(hydroRoRVal)
+    chp.push(chpVal)
     wind.push(windVal)
     solar.push(solarVal)
   }
 
   // Order: time, then top-to-bottom for rendering
-  return [times, solar, wind, hydroRoR, hydroReservoir, nuclear]
+  return [times, solar, wind, chp, hydroRoR, hydroReservoir, nuclear]
 }
 
 function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
@@ -160,6 +165,18 @@ function getOpts(width: number, height: number): uPlot.Options {
         label: 'Wind',
         stroke: COLORS.wind,
         fill: COLORS.wind + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
+        label: 'CHP',
+        stroke: COLORS.chp,
+        fill: COLORS.chp + '80',
         width: 1,
         paths: stackedAreaPaths,
         value: (u, v, si, i) => {

@@ -1,10 +1,10 @@
 import { reactive, markRaw } from 'vue'
-import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot } from './WorldSimulation'
+import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
-import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown } from '../system_model'
+import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
 
 export type GamePhase = 'start' | 'day' | 'end'
-export type SimulationSpeed = 1 | 10 | 50 | 1000
+export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000
 
 export const DAY_DURATION_SECONDS = 86400 // 24 hours
 
@@ -34,6 +34,9 @@ class GameState {
   hydroRoRBreakdown: RoRBreakdown | null = null
   windBreakdown: WindBreakdown | null = null
   solarBreakdown: SolarBreakdown | null = null
+  frequencyBreakdown: FrequencyBreakdown | null = null
+  currentFrequencyHz = 50.0
+  currentFrequencyBand: FrequencyBand = 'normal'
   historyVersion = 0
   weatherHistoryVersion = 0
 
@@ -102,6 +105,9 @@ class GameState {
     this.hydroRoRBreakdown = this._world.hydroRoRBreakdown
     this.windBreakdown = this._world.windBreakdown
     this.solarBreakdown = this._world.solarBreakdown
+    this.frequencyBreakdown = this._world.frequencyBreakdown
+    this.currentFrequencyHz = this._world.currentFrequencyHz
+    this.currentFrequencyBand = this._world.currentFrequencyBand
     this.historyVersion++
     this.weatherHistoryVersion++
   }
@@ -120,6 +126,10 @@ class GameState {
 
   get productionHistory(): ProductionSnapshot[] {
     return this._world?.productionHistory ?? []
+  }
+
+  get frequencyHistory(): FrequencySnapshot[] {
+    return this._world?.frequencyHistory ?? []
   }
 
   get forecastArrays(): ForecastArrays | null {
@@ -170,6 +180,9 @@ class GameState {
     this.hydroRoRBreakdown = null
     this.windBreakdown = null
     this.solarBreakdown = null
+    this.frequencyBreakdown = null
+    this.currentFrequencyHz = 50.0
+    this.currentFrequencyBand = 'normal'
     this.historyVersion = 0
     this.weatherHistoryVersion = 0
     this.phase = 'start'

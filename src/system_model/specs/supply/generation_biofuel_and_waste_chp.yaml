@@ -1,0 +1,284 @@
+model_part: generation_biofuel_and_waste_chp
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregated Swedish district-heating CHP electricity generation from (A) solid biofuels (wood fuels, black liquor,
+  tall oil etc. in district-heating CHP plants) and (B) waste-to-energy CHP (municipal/industrial waste incineration).
+  CHP output is primarily heat-led: electricity production depends on how much district heat is produced.
+  Within-day horizon <= 24h.
+
+  Notes for game:
+  - Waste CHP has a relatively high must-run level (waste disposal obligation) and limited modulation.
+  - Biofuel CHP is more dispatchable but still constrained by district heat demand and unit minimum load.
+  - This model outputs electricity (MW) and also exposes heat_output_MWth for coupling to a simple heat-system.
+
+units:
+  power: MW
+  heat_power: MWth
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    day_of_week_0_6: int
+
+  # Heat system coupling (provide from a separate "district_heat_demand" actor, or approximate externally)
+  heat_system:
+    heat_demand_MWth: float              # total district heat demand now (MWth)
+    non_chp_heat_supply_MWth: float      # heat already supplied by heat-only boilers/heat pumps (MWth)
+
+  heat_system_forecast_24h:
+    step_s: int
+    heat_demand_MWth: [float]
+    non_chp_heat_supply_MWth: [float]
+
+  # Dispatcher signals (optional)
+  dispatch:
+    mode: enum  # ["heat_follow", "electric_target", "cap_electric"]
+    electric_target_MW: float            # used if electric_target / cap_electric
+    heat_priority: enum                  # ["waste_first", "biofuel_first"] default waste_first
+
+  curtailment:
+    electric_curtailment_frac_0_1: float # 0..1, forced curtailment of CHP electricity output
+
+  # Optional operational scalars (per second)
+  availability:
+    biofuel_availability_0_1: float      # default 1.0
+    waste_availability_0_1: float        # default 1.0
+
+state:
+  biofuel_electric_MW: float
+  waste_electric_MW: float
+  biofuel_heat_MWth: float
+  waste_heat_MWth: float
+
+constants:
+  # -----------------------
+  # Fleet-scale anchors (game-appropriate, aligned to Swedish totals)
+  # -----------------------
+  # 2024 Swedish "conventional thermal power" electricity production: 11.8 TWh (includes CHP and other thermal).
+  # Use this to anchor order-of-magnitude for CHP electricity contribution. :contentReference[oaicite:0]{index=0}
+  annual_conventional_thermal_electricity_TWh_2024: 11.8
+
+  # 2024 Swedish district heat: CHP heat production 22,738 GWh, heat-only 18,598 GWh (context/scale). :contentReference[oaicite:1]{index=1}
+  annual_dh_chp_heat_GWh_2024: 22738.0
+
+  # CHP share is dominated by wood fuels and waste among non-nuclear fuel inputs (wood 49.5%, waste 28.7%). :contentReference[oaicite:2]{index=2}
+  # Split electricity capacity into biofuel CHP vs waste CHP (tunable).
+  biofuel:
+    electric_capacity_MW: 2800.0
+    heat_capacity_MWth: 6000.0
+    min_load_frac_0_1: 0.20
+    # Power-to-heat ratio (electric MW per MWth) at typical CHP operation.
+    # Example large biomass CHP (Värtaverket KVV8): 130 MW el / 280 MW heat => 0.46. :contentReference[oaicite:3]{index=3}
+    p_to_h_ratio: 0.42
+    # Small condensing capability: can produce a bit more electricity with less useful heat (limited & less efficient).
+    condensing_extra_electric_frac_of_cap: 0.08
+    condensing_allowed_if_heat_load_low_frac: 0.35  # allow condensing when (heat_needed / heat_capacity) below this
+
+    ramp_up_MW_per_s: 6.0
+    ramp_down_MW_per_s: 8.0
+
+    net_electric_loss_factor_0_1: 0.98
+
+  waste:
+    electric_capacity_MW: 1200.0
+    heat_capacity_MWth: 5200.0
+    # Waste incineration tends to be steadier: keep a higher must-run fraction.
+    must_run_frac_0_1: 0.55
+    min_load_frac_0_1: 0.45
+    # Lower power-to-heat ratio than biomass CHP (game-friendly typical).
+    p_to_h_ratio: 0.23
+
+    ramp_up_MW_per_s: 3.0
+    ramp_down_MW_per_s: 4.0
+
+    net_electric_loss_factor_0_1: 0.985
+
+  # Default availabilities if not supplied
+  default_availability_0_1: 0.98
+
+  # Electric curtailment clamp
+  curtailment_min_factor: 0.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+update_per_tick:
+  # 0) Inputs sanitation
+  - bio_avail: "= (availability.biofuel_availability_0_1 != null) ? clamp01(availability.biofuel_availability_0_1) : default_availability_0_1"
+  - was_avail: "= (availability.waste_availability_0_1 != null) ? clamp01(availability.waste_availability_0_1) : default_availability_0_1"
+  - elec_curtail_factor: "= clamp(1 - curtailment.electric_curtailment_frac_0_1, curtailment_min_factor, 1.0)"
+
+  # 1) Heat needed from CHP (MWth)
+  - heat_needed_MWth: "= max(0, heat_system.heat_demand_MWth - heat_system.non_chp_heat_supply_MWth)"
+
+  # 2) Decide which fleet is allocated heat first
+  - waste_first: "= (dispatch.heat_priority == null) ? 1 : (dispatch.heat_priority == 'waste_first' ? 1 : 0)"
+
+  # 3) Waste CHP heat target: must-run + additional to meet heat need
+  - waste_heat_min_MWth: "= waste.heat_capacity_MWth * waste.must_run_frac_0_1 * was_avail"
+  - waste_heat_cap_MWth: "= waste.heat_capacity_MWth * was_avail"
+  - waste_heat_target_MWth: >
+      if waste_first == 1:
+        clamp(heat_needed_MWth, waste_heat_min_MWth, waste_heat_cap_MWth)
+      else:
+        waste_heat_min_MWth
+
+  # 4) Remaining heat after waste (if waste_first)
+  - heat_remaining_after_waste_MWth: "= max(0, heat_needed_MWth - waste_heat_target_MWth)"
+
+  # 5) Biofuel CHP heat target
+  - bio_heat_min_MWth: "= biofuel.heat_capacity_MWth * biofuel.min_load_frac_0_1 * bio_avail"
+  - bio_heat_cap_MWth: "= biofuel.heat_capacity_MWth * bio_avail"
+  - bio_heat_target_MWth: >
+      if waste_first == 1:
+        clamp(heat_remaining_after_waste_MWth, 0, bio_heat_cap_MWth)
+      else:
+        # biofuel_first: serve heat first, then waste runs at minimum
+        clamp(heat_needed_MWth, bio_heat_min_MWth, bio_heat_cap_MWth)
+
+  # 6) If biofuel_first, allocate remaining heat to waste above minimum
+  - heat_remaining_after_bio_MWth: "= max(0, heat_needed_MWth - bio_heat_target_MWth)"
+  - waste_heat_target_MWth: >
+      if waste_first == 0:
+        clamp(heat_remaining_after_bio_MWth, waste_heat_min_MWth, waste_heat_cap_MWth)
+      else:
+        waste_heat_target_MWth
+
+  # 7) Convert heat targets to ideal electricity (before caps)
+  - waste_elec_ideal_MW: "= waste_heat_target_MWth * waste.p_to_h_ratio"
+  - bio_elec_ideal_MW: "= bio_heat_target_MWth * biofuel.p_to_h_ratio"
+
+  # 8) Condensing extra (biofuel only) when heat load is low and dispatcher wants electricity
+  - bio_heat_load_frac: "= (bio_heat_cap_MWth > 0) ? (bio_heat_target_MWth / bio_heat_cap_MWth) : 0"
+  - condensing_allowed: "= (bio_heat_load_frac <= biofuel.condensing_allowed_if_heat_load_low_frac) ? 1 : 0"
+  - bio_condensing_extra_MW: >
+      if condensing_allowed == 1 and dispatch.mode == 'electric_target':
+        biofuel.electric_capacity_MW * biofuel.condensing_extra_electric_frac_of_cap * bio_avail
+      else:
+        0.0
+
+  # 9) Apply electric caps and losses, then optional dispatcher modes
+  - waste_elec_cap_MW: "= waste.electric_capacity_MW * was_avail"
+  - bio_elec_cap_MW: "= biofuel.electric_capacity_MW * bio_avail"
+
+  - waste_elec_target_MW: "= min(waste_elec_cap_MW, waste_elec_ideal_MW) * waste.net_electric_loss_factor_0_1"
+  - bio_elec_target_MW: >
+      min(bio_elec_cap_MW, bio_elec_ideal_MW + bio_condensing_extra_MW) * biofuel.net_electric_loss_factor_0_1
+
+  - total_elec_target_MW: "= (waste_elec_target_MW + bio_elec_target_MW) * elec_curtail_factor"
+
+  # If cap_electric: scale both down proportionally to not exceed electric_target
+  - if dispatch.mode == "cap_electric":
+      - cap_MW: "= max(0, dispatch.electric_target_MW)"
+      - scale: "= (total_elec_target_MW > 1e-6) ? min(1.0, cap_MW / total_elec_target_MW) : 0.0"
+      - waste_elec_target_MW: "= waste_elec_target_MW * scale"
+      - bio_elec_target_MW: "= bio_elec_target_MW * scale"
+
+  # If electric_target: try to reach target by using biofuel condensing if allowed (already added);
+  # if still short, accept shortfall; if over, scale down proportionally (keeps heat-follow behavior).
+  - if dispatch.mode == "electric_target":
+      - target_MW: "= max(0, dispatch.electric_target_MW)"
+      - if total_elec_target_MW > target_MW:
+          - scale: "= target_MW / total_elec_target_MW"
+          - waste_elec_target_MW: "= waste_elec_target_MW * scale"
+          - bio_elec_target_MW: "= bio_elec_target_MW * scale"
+
+  # 10) Ramp actual electric outputs toward targets (per-second)
+  - waste_delta: "= waste_elec_target_MW - state.waste_electric_MW"
+  - waste_delta_limited: >
+      if waste_delta >= 0:
+        min(waste_delta, waste.ramp_up_MW_per_s * tick_s)
+      else:
+        max(waste_delta, -waste.ramp_down_MW_per_s * tick_s)
+  - state.waste_electric_MW: "= state.waste_electric_MW + waste_delta_limited"
+
+  - bio_delta: "= bio_elec_target_MW - state.biofuel_electric_MW"
+  - bio_delta_limited: >
+      if bio_delta >= 0:
+        min(bio_delta, biofuel.ramp_up_MW_per_s * tick_s)
+      else:
+        max(bio_delta, -biofuel.ramp_down_MW_per_s * tick_s)
+  - state.biofuel_electric_MW: "= state.biofuel_electric_MW + bio_delta_limited"
+
+  # 11) Back-calculate heat outputs consistent with actual electricity (heat-led, but for coupling)
+  - state.waste_heat_MWth: >
+      clamp(
+        (state.waste_electric_MW / max(1e-6, waste.p_to_h_ratio)),
+        waste_heat_min_MWth,
+        waste_heat_cap_MWth
+      )
+  - state.biofuel_heat_MWth: >
+      clamp(
+        (state.biofuel_electric_MW / max(1e-6, biofuel.p_to_h_ratio)),
+        0,
+        bio_heat_cap_MWth
+      )
+
+outputs:
+  production_MW: "= state.waste_electric_MW + state.biofuel_electric_MW"
+  consumption_MW: 0.0
+
+  breakdown_MW:
+    waste_electric_MW: "= state.waste_electric_MW"
+    biofuel_electric_MW: "= state.biofuel_electric_MW"
+
+  heat_output_MWth:
+    waste_heat_MWth: "= state.waste_heat_MWth"
+    biofuel_heat_MWth: "= state.biofuel_heat_MWth"
+    total_heat_MWth: "= state.waste_heat_MWth + state.biofuel_heat_MWth"
+
+  capacities:
+    waste_electric_capacity_MW: "= waste.electric_capacity_MW * was_avail"
+    biofuel_electric_capacity_MW: "= biofuel.electric_capacity_MW * bio_avail"
+    waste_heat_capacity_MWth: "= waste.heat_capacity_MWth * was_avail"
+    biofuel_heat_capacity_MWth: "= biofuel.heat_capacity_MWth * bio_avail"
+
+  forecast_24h:
+    step_s: "= heat_system_forecast_24h.step_s"
+    production_MW: >
+      let step = heat_system_forecast_24h.step_s;
+      let N = len(heat_system_forecast_24h.heat_demand_MWth);
+      let out = [];
+      # Simple deterministic forecast: assume we can reach targets (ignore ramp constraints in forecast)
+      for i in 0..N-1:
+        heat_needed = max(0, heat_system_forecast_24h.heat_demand_MWth[i] - heat_system_forecast_24h.non_chp_heat_supply_MWth[i])
+
+        waste_min = waste.heat_capacity_MWth * waste.must_run_frac_0_1 * was_avail
+        waste_cap = waste.heat_capacity_MWth * was_avail
+        bio_cap = biofuel.heat_capacity_MWth * bio_avail
+
+        if ((dispatch.heat_priority == null) or (dispatch.heat_priority == 'waste_first')):
+          waste_heat = clamp(heat_needed, waste_min, waste_cap)
+          rem = max(0, heat_needed - waste_heat)
+          bio_heat = clamp(rem, 0, bio_cap)
+        else:
+          bio_heat = clamp(heat_needed, biofuel.heat_capacity_MWth * biofuel.min_load_frac_0_1 * bio_avail, bio_cap)
+          rem = max(0, heat_needed - bio_heat)
+          waste_heat = clamp(rem, waste_min, waste_cap)
+
+        waste_e = min(waste.electric_capacity_MW * was_avail, waste_heat * waste.p_to_h_ratio) * waste.net_electric_loss_factor_0_1
+        bio_e_base = min(biofuel.electric_capacity_MW * bio_avail, bio_heat * biofuel.p_to_h_ratio) * biofuel.net_electric_loss_factor_0_1
+
+        # Optional condensing boost (forecast) if electric_target mode and low heat
+        bio_heat_frac = (bio_cap > 0) ? (bio_heat / bio_cap) : 0
+        cond_ok = (bio_heat_frac <= biofuel.condensing_allowed_if_heat_load_low_frac) ? 1 : 0
+        bio_e = bio_e_base
+        if dispatch.mode == 'electric_target' and cond_ok == 1:
+          bio_e = min(biofuel.electric_capacity_MW * bio_avail, bio_e_base + biofuel.electric_capacity_MW*biofuel.condensing_extra_electric_frac_of_cap*bio_avail)
+
+        total = (waste_e + bio_e) * clamp(1 - curtailment.electric_curtailment_frac_0_1, curtailment_min_factor, 1.0)
+
+        if dispatch.mode == 'cap_electric':
+          total = min(total, max(0, dispatch.electric_target_MW))
+
+        if dispatch.mode == 'electric_target':
+          total = min(total, max(0, dispatch.electric_target_MW))  # accept shortfall if not reachable
+
+        out[i] = total
+      return out

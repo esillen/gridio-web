@@ -25,6 +25,12 @@ export type { WindInput, WindBreakdown } from './supply/WindFleetModel'
 export { SolarPVFleetModel } from './supply/SolarPVFleetModel'
 export type { SolarInput, SolarBreakdown } from './supply/SolarPVFleetModel'
 
+export { BiofuelWasteCHPModel } from './supply/BiofuelWasteCHPModel'
+export type { CHPDispatchMode, CHPHeatPriority, CHPInput, CHPBreakdown } from './supply/BiofuelWasteCHPModel'
+
+export { FrequencyModel } from './other/FrequencyModel'
+export type { FrequencyBand, InertiaInputs, FrequencyInput, FrequencyBreakdown } from './other/FrequencyModel'
+
 export { HydroRunOfRiverModel } from './supply/HydroRunOfRiverModel'
 export type { RoRDispatchMode, RoRDispatch, RoRInput, RoRBreakdown } from './supply/HydroRunOfRiverModel'
 
@@ -33,3 +39,6 @@ export type { TransportInput, TransportBreakdown } from './demand/TransportModel
 
 export { IndustryProcessModel } from './demand/IndustryProcessModel'
 export type { IndustryInput, IndustryBreakdown } from './demand/IndustryProcessModel'
+
+export { GridLossesModel } from './demand/GridLossesModel'
+export type { GridLossesInput, GridLossesBreakdown } from './demand/GridLossesModel'

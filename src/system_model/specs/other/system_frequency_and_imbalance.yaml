@@ -1,0 +1,251 @@
+model_part: system_frequency_and_imbalance
+version: 1.0
+tick_s: 1
+
+description: >
+  Single-node synchronous frequency model for Sweden/Nordic-style 50 Hz system.
+  Converts instantaneous MW imbalance into ROCOF and frequency deviation using a simplified swing equation:
+    d(f)/dt = (P_imbalance - D*(f-50)) / (2 * H_equiv * S_base)
+  where H_equiv is computed from ONLINE synchronous generation + motor-load inertia + optional virtual inertia.
+  Designed for sandbox toggles (nuclear/wind/solar/hydro on/off) by feeding online MW by type.
+
+units:
+  power: MW
+  frequency: Hz
+  time: s
+  energy: MWh
+
+inputs:
+  time_now:
+    unix_s: int
+
+  system_totals:
+    total_generation_MW: float        # sum of all generation actors (MW)
+    total_consumption_MW: float       # sum of all demand actors INCLUDING losses (MW)
+    # Optional: if you already compute it elsewhere; otherwise derived inside this model
+    net_imbalance_MW: float           # generation - consumption (MW); if not provided, compute
+
+  # Inertia drivers (feed these each tick from your current sandbox configuration)
+  inertia_inputs:
+    # ONLINE synchronous generation (MW electrical) by type
+    online_MW:
+      nuclear: float
+      hydro_reservoir: float
+      hydro_run_of_river: float
+      bio_waste_chp: float
+      industrial_chp: float
+      gas_oil_peakers: float
+      other_synchronous: float
+
+    # Demand-side motor inertia proxy (MW of motor-driven load)
+    motor_load_MW: float   # e.g. fraction of total consumption; see helper note below
+
+    # Optional: inverter-based "virtual inertia" contribution (MW-equivalent) from grid-forming converters/BESS
+    virtual_inertia:
+      enabled: bool
+      virtual_inertia_MW_equiv: float   # MW-equivalent that behaves like synchronous inertia
+      H_virtual_s: float                # inertia constant for that MW-equivalent
+
+  # Optional frequency control actions applied in THIS model (keep small; most control belongs in reserves model)
+  control_inputs:
+    # Fast frequency response injected by your reserves model (MW), positive adds generation / reduces deficit
+    ffr_MW: float
+    # Load shedding applied externally (MW), positive reduces consumption; if you implement shedding elsewhere, feed it.
+    load_shed_MW: float
+
+state:
+  frequency_Hz: float
+  rocof_Hz_per_s: float
+  energy_imbalance_MWh: float  # integral of imbalance over time (useful for UI)
+  last_H_equiv_s: float
+  last_S_base_MW: float
+
+constants:
+  f_nom_Hz: 50.0
+
+  # --- Typical inertia constants (seconds) per synchronous type (tunable) ---
+  # These are not "right" for every unit; they are gameplay-calibrated.
+  H_by_type_s:
+    nuclear: 6.0
+    hydro: 3.5
+    chp_steam: 3.0
+    gas_oil: 4.0
+    other_synchronous: 3.0
+
+  # Demand-side motor inertia constant (seconds) applied to motor_load_MW (tunable)
+  H_motor_s: 1.5
+
+  # --- Damping / self-regulation (MW per Hz) ---
+  # Represents load-frequency sensitivity and inherent damping (not primary reserves).
+  D_MW_per_Hz: 450.0
+
+  # --- Numerical safety / clamping ---
+  S_base_min_MW: 2000.0         # prevent division by near-zero inertia when everything is off
+  H_equiv_min_s: 0.5
+  H_equiv_max_s: 12.0
+
+  # Frequency limits for UI / events (tunable)
+  limits:
+    normal_low_Hz: 49.90
+    normal_high_Hz: 50.10
+    alert_low_Hz: 49.70
+    alert_high_Hz: 50.30
+    emergency_low_Hz: 49.50
+    emergency_high_Hz: 50.50
+    blackout_low_Hz: 49.00
+    blackout_high_Hz: 51.00
+
+  # Optional automatic emergency load shedding request (does not execute shedding; just outputs a request)
+  auto_shed:
+    enabled: true
+    # Start requesting shedding below this frequency
+    shed_start_Hz: 49.40
+    # Full shed request at blackout_low_Hz (linear ramp)
+    shed_full_at_Hz: 49.00
+    # Max request size (MW)
+    shed_max_MW: 3000.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  safe: "safe(x,eps)= (abs(x) < eps) ? (x >= 0 ? eps : -eps) : x"
+
+update_per_tick:
+  # 0) Compute imbalance if not provided
+  - P_imbalance_MW: >
+      if system_totals.net_imbalance_MW != null:
+        system_totals.net_imbalance_MW
+      else:
+        system_totals.total_generation_MW - system_totals.total_consumption_MW
+
+  # 0b) Apply control actions (FFR and load shedding) as net help to balance
+  # Convention:
+  # - ffr_MW positive means extra supply (reduces deficit / increases surplus)
+  # - load_shed_MW positive means reduced consumption (also reduces deficit / increases surplus)
+  - P_control_MW: "= (control_inputs.ffr_MW != null ? control_inputs.ffr_MW : 0.0) + (control_inputs.load_shed_MW != null ? control_inputs.load_shed_MW : 0.0)"
+  - P_net_MW: "= P_imbalance_MW + P_control_MW"
+
+  # 1) Compute synchronous online MW total
+  - syn_nuclear_MW: "= max(0, inertia_inputs.online_MW.nuclear)"
+  - syn_hydro_MW: "= max(0, inertia_inputs.online_MW.hydro_reservoir) + max(0, inertia_inputs.online_MW.hydro_run_of_river)"
+  - syn_chp_MW: "= max(0, inertia_inputs.online_MW.bio_waste_chp) + max(0, inertia_inputs.online_MW.industrial_chp)"
+  - syn_gas_oil_MW: "= max(0, inertia_inputs.online_MW.gas_oil_peakers)"
+  - syn_other_MW: "= max(0, inertia_inputs.online_MW.other_synchronous)"
+  - syn_total_MW: "= syn_nuclear_MW + syn_hydro_MW + syn_chp_MW + syn_gas_oil_MW + syn_other_MW"
+
+  # 2) Motor-load inertia MW
+  - motor_MW: "= max(0, inertia_inputs.motor_load_MW)"
+
+  # 3) Virtual inertia (optional)
+  - virt_enabled: "= (inertia_inputs.virtual_inertia.enabled == true) ? 1 : 0"
+  - virt_MW: "= virt_enabled == 1 ? max(0, inertia_inputs.virtual_inertia.virtual_inertia_MW_equiv) : 0"
+  - H_virt_s: "= virt_enabled == 1 ? max(0, inertia_inputs.virtual_inertia.H_virtual_s) : 0"
+
+  # 4) Define S_base_MW for swing equation (system "inertial base")
+  # We use total inertial base = synchronous MW + motor MW + virtual MW.
+  - S_base_MW_raw: "= syn_total_MW + motor_MW + virt_MW"
+  - S_base_MW: "= max(S_base_min_MW, S_base_MW_raw)"
+
+  # 5) Compute equivalent inertia constant H_equiv (weighted by MW on base)
+  - H_syn_weighted: >
+      (
+        syn_nuclear_MW * H_by_type_s.nuclear
+        + syn_hydro_MW  * H_by_type_s.hydro
+        + syn_chp_MW    * H_by_type_s.chp_steam
+        + syn_gas_oil_MW* H_by_type_s.gas_oil
+        + syn_other_MW  * H_by_type_s.other_synchronous
+      )
+
+  - H_motor_weighted: "= motor_MW * H_motor_s"
+  - H_virt_weighted: "= virt_MW * H_virt_s"
+
+  - H_equiv_s_raw: "= (H_syn_weighted + H_motor_weighted + H_virt_weighted) / S_base_MW"
+  - H_equiv_s: "= clamp(H_equiv_s_raw, H_equiv_min_s, H_equiv_max_s)"
+
+  - state.last_H_equiv_s: "= H_equiv_s"
+  - state.last_S_base_MW: "= S_base_MW"
+
+  # 6) Damping term (self-regulating load response)
+  - delta_f_Hz: "= state.frequency_Hz - f_nom_Hz"
+  - P_damped_MW: "= P_net_MW - D_MW_per_Hz * delta_f_Hz"
+
+  # 7) Swing equation (simplified): df/dt = P / (2 * H * S_base)
+  - denom: "= 2.0 * H_equiv_s * S_base_MW"
+  - state.rocof_Hz_per_s: "= P_damped_MW / safe(denom, 1e-6)"
+
+  # 8) Integrate frequency
+  - state.frequency_Hz: "= state.frequency_Hz + state.rocof_Hz_per_s * tick_s"
+
+  # 9) Track energy imbalance integral (useful for UI / scoring)
+  - state.energy_imbalance_MWh: "= state.energy_imbalance_MWh + (P_net_MW * (tick_s / 3600.0))"
+
+  # 10) Automatic load-shed request (output only; actual shedding should be done elsewhere)
+  - if auto_shed.enabled == true:
+      - shed_req_frac_0_1: >
+          clamp01(
+            (auto_shed.shed_start_Hz - state.frequency_Hz) /
+            max(1e-6, (auto_shed.shed_start_Hz - auto_shed.shed_full_at_Hz))
+          )
+      - shed_request_MW: "= auto_shed.shed_max_MW * shed_req_frac_0_1"
+  - else:
+      - shed_request_MW: 0.0
+
+init:
+  frequency_Hz: 50.0
+  rocof_Hz_per_s: 0.0
+  energy_imbalance_MWh: 0.0
+  last_H_equiv_s: 4.0
+  last_S_base_MW: 20000.0
+
+outputs:
+  frequency_Hz: "= state.frequency_Hz"
+  rocof_Hz_per_s: "= state.rocof_Hz_per_s"
+
+  imbalance_MW:
+    raw_MW: "= P_imbalance_MW"
+    with_controls_MW: "= P_net_MW"
+    damped_MW: "= P_damped_MW"
+
+  inertia_metrics:
+    S_base_MW: "= state.last_S_base_MW"
+    H_equiv_s: "= state.last_H_equiv_s"
+    synchronous_online_MW: "= syn_total_MW"
+    motor_load_MW: "= motor_MW"
+    virtual_inertia_MW: "= virt_MW"
+
+  energy_imbalance_MWh: "= state.energy_imbalance_MWh"
+
+  status:
+    band: >
+      if state.frequency_Hz < limits.blackout_low_Hz or state.frequency_Hz > limits.blackout_high_Hz:
+        "blackout"
+      else if state.frequency_Hz < limits.emergency_low_Hz or state.frequency_Hz > limits.emergency_high_Hz:
+        "emergency"
+      else if state.frequency_Hz < limits.alert_low_Hz or state.frequency_Hz > limits.alert_high_Hz:
+        "alert"
+      else if state.frequency_Hz < limits.normal_low_Hz or state.frequency_Hz > limits.normal_high_Hz:
+        "off_normal"
+      else:
+        "normal"
+
+  shed_request_MW: "= shed_request_MW"
+
+  forecast_24h:
+    # Optional: frequency is inherently path-dependent; this forecast assumes you provide a net imbalance forecast.
+    # If you don't have it, return a constant-frequency forecast.
+    step_s: 60
+    frequency_Hz: >
+      let step = 60;
+      let N = 86400/step;
+      let out = [];
+      let f = state.frequency_Hz;
+      let H = state.last_H_equiv_s;
+      let S = state.last_S_base_MW;
+      for i in 0..N-1:
+        # If you later provide net_imbalance_forecast_MW[i], use it here; else assume P_net_MW constant.
+        P = P_net_MW;
+        # Simple Euler integration with damping
+        dfdt = (P - D_MW_per_Hz*(f - f_nom_Hz)) / safe(2*H*S, 1e-6);
+        f = f + dfdt * step;
+        out[i] = f;
+      return out
