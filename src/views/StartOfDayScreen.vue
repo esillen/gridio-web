@@ -15,34 +15,38 @@ function startDay() {
     <h1>Power Grid Simulator</h1>
     
     <div class="config-section">
-      <h2>Day Configuration</h2>
-      
-      <div class="config-group">
-        <label>
-          Power Plants
-          <input type="number" v-model.number="gameState.config.powerPlantCount" min="0" max="20" />
-        </label>
-        <label>
-          MW per Plant
-          <input type="number" v-model.number="gameState.config.powerPlantMW" min="1" max="1000" />
-        </label>
+      <h2>Nuclear Fleet</h2>
+      <p class="info">
+        6 reactors totaling 7,012 MW capacity operate as baseload generation.
+        Slow ramp rate (0.05 MW/s per unit).
+      </p>
+      <div class="reactor-list">
+        <div class="reactor">Forsmark 1-3: 3,397 MW</div>
+        <div class="reactor">Ringhals 3-4: 2,215 MW</div>
+        <div class="reactor">Oskarshamn 3: 1,400 MW</div>
       </div>
-      
-      <div class="config-group">
-        <label>
-          Consumers
-          <input type="number" v-model.number="gameState.config.consumerCount" min="0" max="50" />
-        </label>
-        <label>
-          MW per Consumer
-          <input type="number" v-model.number="gameState.config.consumerMW" min="1" max="500" />
-        </label>
-      </div>
+    </div>
 
-      <div class="summary">
-        <p>Total Production: <strong class="production">{{ gameState.config.powerPlantCount * gameState.config.powerPlantMW }} MW</strong></p>
-        <p>Total Consumption: <strong class="consumption">{{ gameState.config.consumerCount * gameState.config.consumerMW }} MW</strong></p>
-        <p>Expected Imbalance: <strong>{{ gameState.config.powerPlantCount * gameState.config.powerPlantMW - gameState.config.consumerCount * gameState.config.consumerMW }} MW</strong></p>
+    <div class="config-section">
+      <h2>Hydro Reservoir Fleet</h2>
+      <p class="info">
+        ~14,580 MW dispatchable capacity with daily energy budget.
+        Fast ramping (20 MW/s up, 40 MW/s down). Storage: 34 TWh.
+      </p>
+    </div>
+
+    <div class="config-section">
+      <h2>Demand (Weather-Driven)</h2>
+      <p class="info">
+        Residential heating demand is simulated based on weather conditions.
+        Peak demand can reach ~14,000 MW on very cold days.
+      </p>
+      
+      <div class="config-group">
+        <label>
+          Start Day of Year
+          <input type="number" v-model.number="gameState.config.startDayOfYear" min="1" max="365" />
+        </label>
       </div>
     </div>
 
@@ -88,6 +92,27 @@ h2 {
   margin-bottom: 1rem;
 }
 
+.info {
+  color: var(--color-gray-600);
+  font-size: 0.875rem;
+  margin-bottom: 1rem;
+  line-height: 1.5;
+}
+
+.reactor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.reactor {
+  color: var(--color-gray-700);
+  font-size: 0.875rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--color-gray-50);
+  border-radius: 8px;
+}
+
 label {
   flex: 1;
   display: flex;
@@ -111,30 +136,6 @@ input:focus {
   outline: none;
   border-color: var(--gridio-sky-vivid);
   box-shadow: 0 0 0 3px var(--gridio-sky-weak);
-}
-
-.summary {
-  margin-top: 1.5rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--color-gray-200);
-}
-
-.summary p {
-  margin: 0.5rem 0;
-  color: var(--color-gray-600);
-  font-size: 0.875rem;
-}
-
-.summary strong {
-  color: var(--color-gray-900);
-}
-
-.summary .production {
-  color: var(--gridio-grass-vivid);
-}
-
-.summary .consumption {
-  color: var(--gridio-clay-vivid);
 }
 
 .start-btn {

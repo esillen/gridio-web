@@ -1,7 +1,7 @@
 import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
-import type { WeatherOutput, ForecastArrays } from '../system_model'
+import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NuclearBreakdown, HydroBreakdown } from '../system_model'
 
 export type GamePhase = 'start' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000
@@ -9,10 +9,6 @@ export type SimulationSpeed = 1 | 10 | 50 | 1000
 export const DAY_DURATION_SECONDS = 86400 // 24 hours
 
 export interface GameConfig {
-  powerPlantCount: number
-  consumerCount: number
-  powerPlantMW: number
-  consumerMW: number
   startDayOfYear: number
 }
 
@@ -20,10 +16,6 @@ class GameState {
   phase: GamePhase = 'start'
   private _world: WorldSimulation | null = null
   config: GameConfig = {
-    powerPlantCount: 3,
-    consumerCount: 5,
-    powerPlantMW: 100,
-    consumerMW: 50,
     startDayOfYear: 15, // Mid-January
   }
   speed: SimulationSpeed = 1
@@ -33,6 +25,9 @@ class GameState {
   currentTime = 0
   currentSnapshot: GridSnapshot | null = null
   currentWeather: WeatherOutput | null = null
+  heatingBreakdown: HeatingBreakdown | null = null
+  nuclearBreakdown: NuclearBreakdown | null = null
+  hydroBreakdown: HydroBreakdown | null = null
   historyVersion = 0
   weatherHistoryVersion = 0
 
@@ -92,6 +87,9 @@ class GameState {
     this.currentTime = this._world.currentTime
     this.currentSnapshot = this._world.latestGridSnapshot
     this.currentWeather = this._world.currentWeather
+    this.heatingBreakdown = this._world.heatingBreakdown
+    this.nuclearBreakdown = this._world.nuclearBreakdown
+    this.hydroBreakdown = this._world.hydroBreakdown
     this.historyVersion++
     this.weatherHistoryVersion++
   }
@@ -143,6 +141,9 @@ class GameState {
     this.currentTime = 0
     this.currentSnapshot = null
     this.currentWeather = null
+    this.heatingBreakdown = null
+    this.nuclearBreakdown = null
+    this.hydroBreakdown = null
     this.historyVersion = 0
     this.weatherHistoryVersion = 0
     this.phase = 'start'

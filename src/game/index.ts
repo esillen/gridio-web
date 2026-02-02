@@ -7,6 +7,4 @@ export type { ClockState, WeatherSnapshot, WorldConfig } from './WorldSimulation
 export { PowerGrid } from './PowerGrid'
 export type { GridSnapshot } from './PowerGrid'
 
-export { PowerPlant } from './PowerPlant'
-export { Consumer } from './Consumer'
 export type { Actor, PowerUpdate } from './Actor'

@@ -42,16 +42,6 @@ function formatTime(seconds: number): string {
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`
 }
 
-function formatTemp(temp: number | undefined): string {
-  if (temp === undefined) return '--'
-  return `${temp.toFixed(1)}°C`
-}
-
-function formatWind(wind: number | undefined): string {
-  if (wind === undefined) return '--'
-  return `${wind.toFixed(1)} m/s`
-}
-
 function endDayEarly() {
   gameState.endDay()
   router.push('/end')
@@ -82,40 +72,6 @@ function endDayEarly() {
       <button class="pause-btn" :class="{ paused: gameState.paused }" @click="gameState.togglePause()">
         {{ gameState.paused ? 'Resume' : 'Pause' }} <span class="hotkey">(Space)</span>
       </button>
-    </div>
-
-    <div class="stats" v-if="gameState.currentSnapshot">
-      <div class="stat production">
-        <span class="label">Production</span>
-        <span class="value">{{ gameState.currentSnapshot.production }} MW</span>
-      </div>
-      <div class="stat consumption">
-        <span class="label">Consumption</span>
-        <span class="value">{{ gameState.currentSnapshot.consumption }} MW</span>
-      </div>
-      <div class="stat imbalance" :class="{ negative: gameState.currentSnapshot.imbalance < 0, positive: gameState.currentSnapshot.imbalance > 0 }">
-        <span class="label">Imbalance</span>
-        <span class="value">{{ gameState.currentSnapshot.imbalance > 0 ? '+' : '' }}{{ gameState.currentSnapshot.imbalance }} MW</span>
-      </div>
-    </div>
-
-    <div class="weather-stats" v-if="gameState.currentWeather">
-      <div class="stat temp">
-        <span class="label">Temperature</span>
-        <span class="value">{{ formatTemp(gameState.currentWeather.temperatureC) }}</span>
-      </div>
-      <div class="stat wind">
-        <span class="label">Wind</span>
-        <span class="value">{{ formatWind(gameState.currentWeather.windSpeed100mMps) }}</span>
-      </div>
-      <div class="stat solar">
-        <span class="label">Solar</span>
-        <span class="value">{{ gameState.currentWeather.solarIrradianceWm2.toFixed(0) }} W/m²</span>
-      </div>
-      <div class="stat cloud">
-        <span class="label">Clouds</span>
-        <span class="value">{{ (gameState.currentWeather.cloudCover01 * 100).toFixed(0) }}%</span>
-      </div>
     </div>
 
     <div class="section-label">Power Grid</div>

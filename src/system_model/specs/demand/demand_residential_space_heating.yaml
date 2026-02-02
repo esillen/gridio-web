@@ -1,0 +1,208 @@
+model_part: demand_residential_space_heating
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregate Swedish residential *electric* space-heating demand (MW) for a cold winter day.
+  Includes: heat pumps (compressor electricity), auxiliary resistive "spets" electricity,
+  and direct electric space heating (incl. electric boilers used for space heat).
+  Excludes: household appliances ("hushållsel") and non-electric fuels (biobränsle/olja/gas/fjärrvärme).
+  Horizon: think-ahead <= 24h.
+
+inputs:
+  # From your weather actors (per second)
+  weather_now_sweden:
+    temperature_outdoor_C: float
+    wind_speed_mps: float
+  weather_forecast_24h:
+    # Must provide forecasts sampled on a fixed time grid (recommended: 300 s).
+    step_s: int                # e.g. 300
+    temperature_outdoor_C: [float]  # length = 86400/step_s
+    wind_speed_mps: [float]         # length = 86400/step_s
+
+  # Time (per second)
+  time_now:
+    unix_s: int                # seconds since epoch (UTC)
+    local_hour_0_23: int       # local time hour in Sweden
+    local_minute_0_59: int
+    day_of_week_0_6: int       # 0=Mon ... 6=Sun
+
+  # Optional game controls (per second)
+  demand_response:
+    # Player/AI can reduce electric heating via thermostat setbacks or price response
+    # (applies as a multiplier on requested space-heat demand).
+    curtailment_frac_0_1: float   # 0=no curtailment, 0.1 = -10% space-heating demand
+
+state:
+  # Low-pass filtered outdoor temperature to emulate building thermal inertia.
+  # This makes demand respond smoothly even if the weather inputs "jump".
+  effective_outdoor_temp_C: float
+
+  # For stable visuals (optional)
+  last_consumption_MW: float
+
+constants:
+  # --- Climate / heating control ---
+  heating_balance_temp_C: 17.0     # above this, space-heating demand ~0
+  design_temp_C: -20.0             # "very cold winter day" anchor
+  building_tau_s: 7200.0           # 2h time constant for temp smoothing
+
+  # --- Stock / scale anchors (Sweden) ---
+  # These constants define plausible peak MW for a winter day.
+  # The annual electricity used for heating+hot water in small houses (småhus) is used as a magnitude anchor,
+  # but this actor outputs *space heating only*.
+  annual_electric_heat_and_hotwater_smallhouses_TWh: 15.3
+  fraction_hotwater_of_electric_heat_and_hotwater: 0.20
+  annual_electric_spaceheating_smallhouses_TWh: "= annual_electric_heat_and_hotwater_smallhouses_TWh * (1 - fraction_hotwater_of_electric_heat_and_hotwater)"
+
+  # Heat pump stock (counts from 2016 baseline; used to set relative weights)
+  n_heatpumps_smallhouses_total: 1286000
+  n_heatpumps_smallhouses_air_air: 543000
+  n_heatpumps_smallhouses_air_water_or_exhaust: 286000
+  n_heatpumps_smallhouses_ground_or_lake: 457000
+
+  # --- Capacity caps (MW) for a cold day (tunable but should stay realistic) ---
+  # Compressor electricity capacity (roughly "how much can the installed compressors draw at once")
+  hp_compressor_electric_cap_MW: 4500.0
+
+  # Installed resistive auxiliary ("spets") in heat-pump homes; not all homes have it or use it simultaneously.
+  hp_aux_resistive_cap_MW: 6500.0
+
+  # Direct electric space heating outside heat pumps (e.g., direct resistive, electric boiler for radiators).
+  direct_electric_spaceheat_cap_MW: 3000.0
+
+  # Small fixed electric loads directly tied to heating systems (circulation pumps, control electronics)
+  hvac_parasitic_MW: 150.0
+
+  # --- Temperature -> thermal demand shape (dimensionless) ---
+  # Normalize heating degree demand to [0..1] between balance temp and design temp.
+  # heating_degree_C = max(0, heating_balance_temp_C - effective_outdoor_temp_C)
+  # heating_degree_design_C = heating_balance_temp_C - design_temp_C
+  # temp_factor = clamp(heating_degree_C / heating_degree_design_C, 0, 1)
+  wind_ref_mps: 3.0
+  wind_loss_coeff_per_mps: 0.02    # +2% demand per (m/s) above wind_ref_mps
+
+  # --- Daily behavior pattern (dimensionless multiplier) ---
+  # A simple piecewise schedule for a winter day:
+  # - night setback (lower)
+  # - morning peak
+  # - daytime plateau
+  # - evening peak
+  schedule:
+    # Each segment is [start_hour_inclusive, end_hour_exclusive, multiplier]
+    # Assumes local time.
+    - [0, 5, 0.88]
+    - [5, 9, 1.08]
+    - [9, 16, 0.98]
+    - [16, 22, 1.10]
+    - [22, 24, 0.92]
+
+  # --- Heat pump COP model (simple, weather-driven) ---
+  # Weighted COP across installed types.
+  # Air-source COP drops in cold; ground-source is steadier.
+  # COP_air = clamp(COP_air_at_7C - COP_air_slope_per_C * (7 - T), COP_air_min, COP_air_max)
+  COP_air_at_7C: 3.0
+  COP_air_slope_per_C: 0.045
+  COP_air_min: 1.2
+  COP_air_max: 3.6
+
+  COP_ground_constant: 3.4
+  COP_exhaust_constant: 2.6
+
+  # Weights based on counts (normalized):
+  w_air_air: "= n_heatpumps_smallhouses_air_air / n_heatpumps_smallhouses_total"
+  w_air_water_or_exhaust: "= n_heatpumps_smallhouses_air_water_or_exhaust / n_heatpumps_smallhouses_total"
+  w_ground_or_lake: "= n_heatpumps_smallhouses_ground_or_lake / n_heatpumps_smallhouses_total"
+
+  # --- Peak calibration for space heating (MW thermal requested) ---
+  # At temp_factor=1, wind_factor=1, schedule=1, curtailment=0:
+  # requested_thermal_spaceheat_MW = thermal_spaceheat_design_MW
+  #
+  # Choose design thermal such that resulting electric peaks are in the right ballpark for Sweden.
+  thermal_spaceheat_design_MW: 25000.0
+
+  # Split of thermal space-heating that *prefers* being served by heat pumps vs direct electric.
+  # This is a behavioral/stock approximation; tune for gameplay.
+  hp_preferred_thermal_share: 0.70
+
+update_per_tick:
+  # 1) Smooth outdoor temperature to emulate building thermal inertia.
+  - effective_outdoor_temp_C: >
+      effective_outdoor_temp_C
+      + (weather_now_sweden.temperature_outdoor_C - effective_outdoor_temp_C) * (tick_s / building_tau_s)
+
+  # 2) Compute demand multipliers.
+  - heating_degree_C: "max(0, heating_balance_temp_C - effective_outdoor_temp_C)"
+  - heating_degree_design_C: "= heating_balance_temp_C - design_temp_C"
+  - temp_factor_0_1: "clamp(heating_degree_C / heating_degree_design_C, 0, 1)"
+  - wind_factor: >
+      1 + wind_loss_coeff_per_mps * max(0, weather_now_sweden.wind_speed_mps - wind_ref_mps)
+
+  - schedule_factor: >
+      let h = time_now.local_hour_0_23;
+      find the first [start,end,m] in schedule with start <= h < end; return m; default 1.0
+
+  - curtailment_factor: "clamp(1 - demand_response.curtailment_frac_0_1, 0, 1)"
+
+  # 3) Requested thermal space-heating (MW_th).
+  - requested_thermal_spaceheat_MW: >
+      thermal_spaceheat_design_MW
+      * temp_factor_0_1
+      * wind_factor
+      * schedule_factor
+      * curtailment_factor
+
+  # 4) Allocate requested thermal between heat-pump-preferred and direct-electric-preferred.
+  - thermal_hp_request_MW: "= requested_thermal_spaceheat_MW * hp_preferred_thermal_share"
+  - thermal_direct_request_MW: "= requested_thermal_spaceheat_MW * (1 - hp_preferred_thermal_share)"
+
+  # 5) COP (weighted).
+  - COP_air: >
+      clamp(COP_air_at_7C - COP_air_slope_per_C * (7 - effective_outdoor_temp_C), COP_air_min, COP_air_max)
+  - COP_weighted: >
+      (w_air_air * COP_air)
+      + (w_air_water_or_exhaust * COP_exhaust_constant)
+      + (w_ground_or_lake * COP_ground_constant)
+
+  # 6) Heat pump compressor electricity (MW_e), limited by installed compressor cap.
+  #    compressor_elec_needed = thermal / COP
+  - hp_compressor_elec_needed_MW: "= thermal_hp_request_MW / COP_weighted"
+  - hp_compressor_elec_MW: "min(hp_compressor_electric_cap_MW, hp_compressor_elec_needed_MW)"
+  - thermal_served_by_hp_MW: "= hp_compressor_elec_MW * COP_weighted"
+  - thermal_hp_remaining_MW: "max(0, thermal_hp_request_MW - thermal_served_by_hp_MW)"
+
+  # 7) Auxiliary resistive electricity to cover unmet thermal (1 MW_e -> 1 MW_th), limited by aux cap.
+  - hp_aux_resistive_elec_MW: "min(hp_aux_resistive_cap_MW, thermal_hp_remaining_MW)"
+
+  # 8) Direct electric space heating (1 MW_e -> 1 MW_th), limited by cap.
+  - direct_spaceheat_elec_MW: "min(direct_electric_spaceheat_cap_MW, thermal_direct_request_MW)"
+
+  # 9) Total electric consumption (MW).
+  - consumption_MW: >
+      hp_compressor_elec_MW
+      + hp_aux_resistive_elec_MW
+      + direct_spaceheat_elec_MW
+      + hvac_parasitic_MW
+
+outputs:
+  consumption_MW: float
+  production_MW: 0.0
+
+  breakdown_MW:
+    hp_compressor_elec_MW: float
+    hp_aux_resistive_elec_MW: float
+    direct_spaceheat_elec_MW: float
+    hvac_parasitic_MW: float
+    COP_weighted: float
+    effective_outdoor_temp_C: float
+
+  # Think-ahead: compute deterministic forecast on the weather_forecast_24h grid.
+  forecast_24h:
+    step_s: "= weather_forecast_24h.step_s"
+    consumption_MW: >
+      for i in 0..len-1:
+        use T = weather_forecast_24h.temperature_outdoor_C[i]
+            W = weather_forecast_24h.wind_speed_mps[i]
+            schedule_factor from the implied local time (time_now.unix_s + i*step_s)
+        run the same formulas as update_per_tick (but without the low-pass filter and without randomness)
+        return array of consumption_MW[i]

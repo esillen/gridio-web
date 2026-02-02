@@ -1,0 +1,231 @@
+model_part: generation_hydro_reservoir_fleet
+version: 1.0
+tick_s: 1
+
+description: >
+  Swedish reservoir hydropower fleet as one dispatchable actor with an internal daily energy budget,
+  fast ramping, and reserve holdback. Outputs production in MW each second and provides a 24h
+  availability forecast based on remaining daily water/energy budget + inflow.
+  Horizon: think-ahead <= 24h (single-day planning).
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+
+  # Dispatcher setpoint (per second)
+  dispatch:
+    target_production_MW: float      # desired MW now
+    mode: enum                       # ["follow_target", "must_run_min", "water_saver"]
+    # follow_target: track target_production_MW within constraints
+    # must_run_min: keep at least must_run_min_MW (if water budget allows)
+    # water_saver: cap output in anticipation of later peaks (uses net_load_forecast)
+
+  # Reserve requirement (per second)
+  reserves:
+    holdback_MW: float               # capacity kept for reserves (FCR/aFRR/mFRR etc.)
+
+  # Weather-driven inputs (per second and forecast) used only for "water_saver" planning.
+  # You can feed net load forecast directly and skip demand/wind/solar here.
+  net_load_forecast_24h:
+    step_s: int                      # recommended 300 or 900
+    net_load_MW: [float]             # length = 86400/step_s, index 0 = now
+
+  # Inflow proxy (per second + forecast). For a one-day horizon this can be constant.
+  inflow_forecast_24h:
+    step_s: int
+    inflow_MW_equiv: [float]         # "energy inflow rate" expressed as MW-equivalent (avg power)
+
+state:
+  # Daily energy budget remaining (MWh). Resets each local day.
+  energy_budget_today_MWh: float
+
+  # Optional long-run storage state (MWh). Not necessary for a 1-day game loop,
+  # but useful if you extend later. Update even if you don't use it for constraints.
+  reservoir_storage_MWh: float
+  reservoir_storage_level_0_1: float
+
+  # Output state
+  current_production_MW: float
+
+  # For daily reset detection
+  last_local_day_index: int          # e.g., floor(unix_s / 86400) in local time
+
+constants:
+  # ----- Real-world anchored magnitude -----
+  # Sweden installed hydropower capacity ~16.2 GW, storage energy capacity ~34 TWh,
+  # average production ~65 TWh/year (used for plausibility). (Sources cited below)
+  installed_hydro_capacity_MW: 16200.0
+  storage_energy_capacity_MWh: 34000000.0   # 34 TWh
+  avg_annual_generation_MWh: 65000000.0     # 65 TWh/year
+
+  # For this actor we treat "reservoir fleet" as most of installed capacity.
+  # If you later add run-of-river separately, reduce this fraction.
+  reservoir_fraction_of_installed: 0.90
+  max_power_MW: "= installed_hydro_capacity_MW * reservoir_fraction_of_installed"  # ~14580 MW
+
+  # ----- Efficiency / losses -----
+  turbine_efficiency_0_1: 0.92   # converts water energy budget to electric output (simplified)
+
+  # ----- Ramping (hydro is fast) -----
+  ramp_rate_up_MW_per_s: 20.0
+  ramp_rate_down_MW_per_s: 40.0
+
+  # ----- Minimum output / ecological constraints (kept simple) -----
+  must_run_min_MW: 500.0         # minimum generation if plants are online (tunable)
+
+  # ----- Daily water/energy release constraint (single-day gameplay) -----
+  # Even though total storage is huge, rivers/permits/flow constraints limit how much can be released in one day.
+  # Use a "sustainable for one-day" cap as an energy budget. Default: 95% of max_power for 24h.
+  sustainable_fraction_for_day: 0.95
+  daily_energy_budget_max_MWh: "= max_power_MW * 24.0 * sustainable_fraction_for_day"  # MWh/day
+
+  # ----- Inflow mapping -----
+  # inflow_MW_equiv is treated as *electric* MW-equivalent added to the daily budget (after efficiency).
+  # If you want inflow in "water-energy" terms, divide/multiply by efficiency accordingly.
+  inflow_smoothing_tau_s: 3600.0
+
+  # ----- Water-saver planning -----
+  # Keep water for later if forecasted net load has higher peaks.
+  # This is a soft cap (MW) computed from upcoming peak quantiles.
+  lookahead_peak_window_s: 6_000      # 100 minutes
+  water_saver_strength_0_1: 0.6       # how strongly to reduce now to save for peak
+  water_saver_min_fraction_of_target: 0.50
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+init:
+  # Start the day with a full daily budget by default
+  energy_budget_today_MWh: "= daily_energy_budget_max_MWh"
+  reservoir_storage_MWh: "= storage_energy_capacity_MWh * 0.60"
+  reservoir_storage_level_0_1: "= reservoir_storage_MWh / storage_energy_capacity_MWh"
+  current_production_MW: "= must_run_min_MW"
+  last_local_day_index: 0
+
+update_per_tick:
+  # 0) Local day index for daily reset (simple: if you already maintain local-day in clock actor, use that)
+  - local_day_index: "= floor(time_now.unix_s / 86400)"  # replace with local-time day index if needed
+  - if local_day_index != state.last_local_day_index:
+      - state.energy_budget_today_MWh: "= daily_energy_budget_max_MWh"
+      - state.last_local_day_index: "= local_day_index"
+
+  # 1) Available capacity after reserve holdback
+  - holdback_MW: "= max(0, reserves.holdback_MW)"
+  - available_power_MW: "= max(0, max_power_MW - holdback_MW)"
+
+  # 2) Compute inflow (MW-equivalent) for this second using the forecast array (piecewise constant)
+  - inflow_step_s: "= inflow_forecast_24h.step_s"
+  - inflow_idx: "= clamp(floor(0 / inflow_step_s), 0, len(inflow_forecast_24h.inflow_MW_equiv)-1)"  # index 0 = now
+  - inflow_MW_equiv_now: "= inflow_forecast_24h.inflow_MW_equiv[inflow_idx]"
+
+  # 3) Update today's energy budget with inflow (MWh)
+  - inflow_MWh_this_tick: "= inflow_MW_equiv_now * (tick_s / 3600.0)"
+  - state.energy_budget_today_MWh: "= state.energy_budget_today_MWh + inflow_MWh_this_tick"
+  - state.energy_budget_today_MWh: "= min(state.energy_budget_today_MWh, daily_energy_budget_max_MWh)"
+
+  # 4) Compute energy-limited maximum average power for the rest of the day
+  - t_day_s: "= time_now.local_hour_0_23*3600 + time_now.local_minute_0_59*60 + time_now.local_second_0_59"
+  - remaining_day_s: "= max(1, 86400 - t_day_s)"
+  - energy_limited_power_MW: >
+      (state.energy_budget_today_MWh * 3600.0 / remaining_day_s)
+
+  # 5) Determine raw target based on mode
+  - if dispatch.mode == "follow_target":
+      - raw_target_MW: "= dispatch.target_production_MW"
+
+  - if dispatch.mode == "must_run_min":
+      - raw_target_MW: "= max(dispatch.target_production_MW, must_run_min_MW)"
+
+  - if dispatch.mode == "water_saver":
+      # Softly reduce output now if the near-future net load is higher than current net load.
+      - nl_step_s: "= net_load_forecast_24h.step_s"
+      - nl_now_MW: "= net_load_forecast_24h.net_load_MW[0]"
+      - window_steps: "= clamp(floor(lookahead_peak_window_s / nl_step_s), 1, len(net_load_forecast_24h.net_load_MW)-1)"
+      - nl_peak_MW: "= max(net_load_forecast_24h.net_load_MW[1:window_steps])"
+      - peak_gap_MW: "= max(0, nl_peak_MW - nl_now_MW)"
+
+      # Convert "peak_gap" into a saving bias: higher future peak => reduce now.
+      - save_bias_MW: "= water_saver_strength_0_1 * peak_gap_MW"
+
+      - raw_target_MW: "= max(must_run_min_MW, dispatch.target_production_MW - save_bias_MW)"
+      - raw_target_MW: "= max(raw_target_MW, water_saver_min_fraction_of_target * dispatch.target_production_MW)"
+
+  # 6) Apply physical constraints: power cap + energy cap + minimum
+  - constrained_target_MW: >
+      clamp(
+        raw_target_MW,
+        must_run_min_MW,
+        min(available_power_MW, energy_limited_power_MW)
+      )
+
+  # 7) Ramp toward constrained target
+  - delta_MW: "= constrained_target_MW - state.current_production_MW"
+  - delta_limited_MW: >
+      if delta_MW >= 0:
+        min(delta_MW, ramp_rate_up_MW_per_s * tick_s)
+      else:
+        max(delta_MW, -ramp_rate_down_MW_per_s * tick_s)
+
+  - new_production_MW: "= state.current_production_MW + delta_limited_MW"
+  - new_production_MW: "= clamp(new_production_MW, 0, available_power_MW)"
+
+  # 8) Spend energy budget according to produced electricity
+  - produced_MWh_this_tick: "= new_production_MW * (tick_s / 3600.0)"
+  - required_budget_MWh_this_tick: "= produced_MWh_this_tick / turbine_efficiency_0_1"
+
+  - if required_budget_MWh_this_tick <= state.energy_budget_today_MWh:
+      - state.energy_budget_today_MWh: "= state.energy_budget_today_MWh - required_budget_MWh_this_tick"
+      - state.current_production_MW: "= new_production_MW"
+  - else:
+      # Not enough budget left; clamp to remaining
+      - max_MWh_possible: "= state.energy_budget_today_MWh * turbine_efficiency_0_1"
+      - state.current_production_MW: "= max_MWh_possible * (3600.0 / tick_s)"
+      - state.energy_budget_today_MWh: 0.0
+
+  # 9) Optional: update long-run storage state (not binding within a single day by default)
+  - state.reservoir_storage_MWh: >
+      clamp(
+        state.reservoir_storage_MWh
+        - required_budget_MWh_this_tick
+        + (inflow_MWh_this_tick / turbine_efficiency_0_1),
+        0,
+        storage_energy_capacity_MWh
+      )
+  - state.reservoir_storage_level_0_1: "= state.reservoir_storage_MWh / storage_energy_capacity_MWh"
+
+outputs:
+  production_MW: "= state.current_production_MW"
+  consumption_MW: 0.0
+
+  available_power_MW: "= max(0, max_power_MW - max(0, reserves.holdback_MW))"
+  energy_budget_today_MWh: "= state.energy_budget_today_MWh"
+  energy_limited_power_MW: "= energy_limited_power_MW"
+
+  # Think-ahead availability forecast for the next 24h on the inflow forecast grid.
+  # This is "how much you could produce" if you wanted, considering remaining daily budget.
+  forecast_24h:
+    step_s: "= inflow_forecast_24h.step_s"
+    max_available_MW: >
+      let step = inflow_forecast_24h.step_s;
+      let N = len(inflow_forecast_24h.inflow_MW_equiv);
+      let E = state.energy_budget_today_MWh;  # start from remaining
+      let out = [];
+      for i in 0..N-1:
+        let remaining_s = max(1, 86400 - i*step);  # coarse
+        let inflow_MWh = inflow_forecast_24h.inflow_MW_equiv[i] * (step/3600.0);
+        E = min(daily_energy_budget_max_MWh, E + inflow_MWh);
+        let energy_limited = (E * 3600.0 / remaining_s);
+        let cap = max(0, max_power_MW - max(0, reserves.holdback_MW));
+        out[i] = min(cap, energy_limited);
+      return out
+
+  max_production_MW: "= max_power_MW"
