@@ -6,6 +6,7 @@ import {
   ResidentialNonHeatingModel,
   ServicesCommercialModel,
   TransportModel,
+  IndustryProcessModel,
   NuclearFleetModel,
   HydroReservoirFleetModel,
   HydroRunOfRiverModel,
@@ -18,6 +19,7 @@ import {
   type NonHeatingBreakdown,
   type ServicesBreakdown,
   type TransportBreakdown,
+  type IndustryBreakdown,
   type NuclearBreakdown,
   type HydroBreakdown,
   type RoRBreakdown,
@@ -48,6 +50,7 @@ export interface ConsumptionSnapshot {
   nonHeatingMW: number
   servicesMW: number
   transportMW: number
+  industryMW: number
   totalMW: number
 }
 
@@ -73,6 +76,7 @@ export class WorldSimulation {
   private _nonHeatingDemand: ResidentialNonHeatingModel
   private _servicesDemand: ServicesCommercialModel
   private _transportDemand: TransportModel
+  private _industryDemand: IndustryProcessModel
   private _nuclearFleet: NuclearFleetModel
   private _hydroReservoir: HydroReservoirFleetModel
   private _hydroRoR: HydroRunOfRiverModel
@@ -105,6 +109,10 @@ export class WorldSimulation {
       'transport',
       'Transport (Rail + EV)'
     )
+    this._industryDemand = new IndustryProcessModel(
+      'industry-process',
+      'Industrial Process'
+    )
     this._nuclearFleet = new NuclearFleetModel()
     this._hydroReservoir = new HydroReservoirFleetModel()
     this._hydroRoR = new HydroRunOfRiverModel()
@@ -120,6 +128,7 @@ export class WorldSimulation {
     this._nonHeatingDemand.reset()
     this._servicesDemand.reset()
     this._transportDemand.reset()
+    this._industryDemand.reset()
     this._nuclearFleet.reset()
     this._hydroReservoir.reset()
     this._hydroRoR.reset()
@@ -142,6 +151,7 @@ export class WorldSimulation {
     this._grid.connect(this._nonHeatingDemand)
     this._grid.connect(this._servicesDemand)
     this._grid.connect(this._transportDemand)
+    this._grid.connect(this._industryDemand)
   }
 
   tick(): void {
@@ -220,6 +230,12 @@ export class WorldSimulation {
       temperatureC: weatherOutput.temperatureC,
     })
 
+    // Update industry demand model
+    this._industryDemand.tick({
+      localHour: clock.localHour,
+      dayOfWeek: 0,
+    })
+
     // Record weather snapshot
     const weatherSnapshot: WeatherSnapshot = {
       time: this._currentTime,
@@ -236,13 +252,15 @@ export class WorldSimulation {
     const nonHeatingMW = this._nonHeatingDemand.consumptionMW
     const servicesMW = this._servicesDemand.consumptionMW
     const transportMW = this._transportDemand.consumptionMW
+    const industryMW = this._industryDemand.consumptionMW
     this._consumptionHistory.push({
       time: this._currentTime,
       heatingMW,
       nonHeatingMW,
       servicesMW,
       transportMW,
-      totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW,
+      industryMW,
+      totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW,
     })
 
     // Record production breakdown
@@ -356,6 +374,10 @@ export class WorldSimulation {
     return this._transportDemand.breakdown
   }
 
+  get industryBreakdown(): IndustryBreakdown | null {
+    return this._industryDemand.breakdown
+  }
+
   get nuclearBreakdown(): NuclearBreakdown | null {
     return this._nuclearFleet.breakdown
   }
@@ -392,6 +414,7 @@ export class WorldSimulation {
     this._nonHeatingDemand.reset()
     this._servicesDemand.reset()
     this._transportDemand.reset()
+    this._industryDemand.reset()
     this._nuclearFleet.reset()
     this._hydroReservoir.reset()
     this._hydroRoR.reset()

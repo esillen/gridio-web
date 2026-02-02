@@ -30,3 +30,6 @@ export type { RoRDispatchMode, RoRDispatch, RoRInput, RoRBreakdown } from './sup
 
 export { TransportModel } from './demand/TransportModel'
 export type { TransportInput, TransportBreakdown } from './demand/TransportModel'
+
+export { IndustryProcessModel } from './demand/IndustryProcessModel'
+export type { IndustryInput, IndustryBreakdown } from './demand/IndustryProcessModel'

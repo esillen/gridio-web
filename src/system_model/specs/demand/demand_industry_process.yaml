@@ -1,0 +1,340 @@
+model_part: demand_industry_process
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregate Swedish industrial process electricity demand (MW) by major subsectors.
+  Mostly steady (continuous processes), with modest weekday/weekend & shift-pattern shaping.
+  Includes simple demand response: a curtailable/shiftable fraction that can be reduced now and
+  optionally "paid back" later within the same day (energy conservation).
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+    day_of_week_0_6: int  # 0=Mon ... 6=Sun
+
+  # Optional macro activity (per second)
+  activity:
+    industrial_activity_0_1: float   # 1.0 normal, <1 reduced output
+
+  # Simple DR / scarcity signals (per second)
+  grid_stress_0_1:
+    value: float   # 0..1 (0 normal, 1 extreme scarcity)
+  price_signal_0_1:
+    value: float   # 0..1 (0 cheap, 1 expensive)
+
+  demand_response:
+    # how aggressively industry participates in DR (player/AI policy knob)
+    participation_0_1: float   # 0..1
+    # optional manual curtailment request (additional to automatic)
+    manual_curtailment_frac_0_1: float  # 0..1
+
+  # Optional: if you want deterministic forecasts for stress/price, feed them.
+  stress_forecast_24h:
+    step_s: int
+    grid_stress_0_1: [float]   # length = 86400/step_s
+  price_forecast_24h:
+    step_s: int
+    price_signal_0_1: [float]
+
+state:
+  # Deferred energy due to load shifting (MWh) that should be repaid later the same day.
+  deferred_MWh: float
+
+  # For stable visuals
+  last_consumption_MW: float
+
+constants:
+  # -----------------------
+  # Real-world electricity-use anchors (SCB industry table, 2025 preliminary Jan–Nov)
+  # -----------------------
+  # TOTAL all mines/quarries + manufacturing industries (Jan–Nov 2025): 38 347 GWh.
+  # Subsector sums (Jan–Nov 2025), GWh:
+  # - Pulp/paper: 14 171
+  # - Basic metals: 5 908
+  # - Chemicals/petroleum etc.: 4 262
+  # - Mines/quarries: 3 567
+  # - Food/beverage/tobacco: 1 936
+  # - Wood products: 1 198
+  # - Machinery/equipment: 1 496
+  # - Transport equipment: 1 459
+  # - Others smaller: remainder
+  scb_total_industry_GWh_JanNov_2025: 38347.0
+  scb_pulp_paper_GWh_JanNov_2025: 14171.0
+  scb_basic_metals_GWh_JanNov_2025: 5908.0
+  scb_chemicals_refining_GWh_JanNov_2025: 4262.0
+  scb_mining_quarrying_GWh_JanNov_2025: 3567.0
+  scb_food_GWh_JanNov_2025: 1936.0
+  scb_wood_products_GWh_JanNov_2025: 1198.0
+  scb_machinery_equipment_GWh_JanNov_2025: 1496.0
+  scb_transport_equipment_GWh_JanNov_2025: 1459.0
+
+  # Annualize Jan–Nov to a full-year proxy for magnitude.
+  annualization_factor: "= 12.0 / 11.0"
+
+  annual_total_industry_GWh: "= scb_total_industry_GWh_JanNov_2025 * annualization_factor"
+  annual_total_industry_MWh: "= annual_total_industry_GWh * 1000.0"
+  avg_total_industry_MW: "= annual_total_industry_MWh / 8760.0"
+
+  annual_pulp_paper_MW: "= (scb_pulp_paper_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_basic_metals_MW: "= (scb_basic_metals_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_chemicals_refining_MW: "= (scb_chemicals_refining_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_mining_quarrying_MW: "= (scb_mining_quarrying_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_food_MW: "= (scb_food_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_wood_products_MW: "= (scb_wood_products_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_machinery_equipment_MW: "= (scb_machinery_equipment_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+  annual_transport_equipment_MW: "= (scb_transport_equipment_GWh_JanNov_2025 * annualization_factor * 1000.0) / 8760.0"
+
+  # Remaining "other industry" MW (cement/minerals, plastics, fabricated metals, textiles, etc.)
+  annual_other_industry_MW: >
+    max(
+      0,
+      avg_total_industry_MW
+      - annual_pulp_paper_MW
+      - annual_basic_metals_MW
+      - annual_chemicals_refining_MW
+      - annual_mining_quarrying_MW
+      - annual_food_MW
+      - annual_wood_products_MW
+      - annual_machinery_equipment_MW
+      - annual_transport_equipment_MW
+    )
+
+  # -----------------------
+  # Intra-day patterns (dimensionless multipliers)
+  # -----------------------
+  # Continuous-process sectors: mostly flat.
+  cont_base: 1.00
+  cont_night: 0.98
+  cont_day: 1.02
+
+  # Discrete manufacturing: more day-peaky (weekday) and reduced on weekends.
+  manuf_night: 0.75
+  manuf_day: 1.20
+  manuf_weekend_multiplier: 0.80
+
+  # Mining: moderately day-peaky, some weekend reduction.
+  mining_night: 0.85
+  mining_day: 1.10
+  mining_weekend_multiplier: 0.90
+
+  # Time segments [start_hour, end_hour, multiplier]
+  schedule_continuous:
+    - [0, 6, "= cont_night"]
+    - [6, 18, "= cont_day"]
+    - [18, 24, "= cont_night"]
+  schedule_manufacturing:
+    - [0, 6, "= manuf_night"]
+    - [6, 18, "= manuf_day"]
+    - [18, 24, "= manuf_night"]
+  schedule_mining:
+    - [0, 6, "= mining_night"]
+    - [6, 18, "= mining_day"]
+    - [18, 24, "= mining_night"]
+
+  # -----------------------
+  # Demand response / flexibility (simple)
+  # -----------------------
+  # Curtailable/shiftable shares by subsector (fraction of that sector load that can be reduced temporarily)
+  flex_share_pulp_paper: 0.05
+  flex_share_basic_metals: 0.07
+  flex_share_chemicals_refining: 0.08
+  flex_share_mining_quarrying: 0.06
+  flex_share_food: 0.05
+  flex_share_wood_products: 0.06
+  flex_share_machinery_equipment: 0.10
+  flex_share_transport_equipment: 0.10
+  flex_share_other: 0.08
+
+  # DR trigger mapping: how much of flexible share to shed at a given stress/price
+  # dr_request = clamp01( a*grid_stress + b*price + manual )
+  dr_a_stress: 0.90
+  dr_b_price: 0.40
+
+  # Keep a minimum fraction even under max DR (industrial processes can't go to zero)
+  flex_min_factor: 0.30   # i.e. at most 70% of flexible share can be curtailed
+
+  # Payback: how quickly deferred energy can be repaid (MW cap)
+  payback_max_MW: 2500.0
+  # Only pay back when stress is low
+  payback_allowed_if_grid_stress_below: 0.35
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+  schedule_factor: >
+    # schedule_factor(schedule, hour) -> multiplier
+    # schedule is list of [start,end,m]
+    func(schedule, hour):
+      for seg in schedule:
+        if seg[0] <= hour < seg[1]: return seg[2]
+      return 1.0
+
+update_per_tick:
+  - is_weekend: "= (time_now.day_of_week_0_6 >= 5)"
+  - hour: "= time_now.local_hour_0_23"
+
+  # 1) Sector baseline MWs (annual averages) shaped by time-of-day and weekend
+  - pulp_paper_MW_base: "= annual_pulp_paper_MW * schedule_factor(schedule_continuous, hour)"
+  - basic_metals_MW_base: "= annual_basic_metals_MW * schedule_factor(schedule_continuous, hour)"
+  - chemicals_refining_MW_base: "= annual_chemicals_refining_MW * schedule_factor(schedule_continuous, hour)"
+  - mining_quarrying_MW_base: >
+      annual_mining_quarrying_MW
+      * schedule_factor(schedule_mining, hour)
+      * (is_weekend ? mining_weekend_multiplier : 1.0)
+
+  - food_MW_base: >
+      annual_food_MW
+      * schedule_factor(schedule_manufacturing, hour)
+      * (is_weekend ? manuf_weekend_multiplier : 1.0)
+
+  - wood_products_MW_base: >
+      annual_wood_products_MW
+      * schedule_factor(schedule_manufacturing, hour)
+      * (is_weekend ? manuf_weekend_multiplier : 1.0)
+
+  - machinery_equipment_MW_base: >
+      annual_machinery_equipment_MW
+      * schedule_factor(schedule_manufacturing, hour)
+      * (is_weekend ? manuf_weekend_multiplier : 1.0)
+
+  - transport_equipment_MW_base: >
+      annual_transport_equipment_MW
+      * schedule_factor(schedule_manufacturing, hour)
+      * (is_weekend ? manuf_weekend_multiplier : 1.0)
+
+  - other_industry_MW_base: >
+      annual_other_industry_MW
+      * schedule_factor(schedule_manufacturing, hour)
+      * (is_weekend ? manuf_weekend_multiplier : 1.0)
+
+  # 2) Apply industrial activity scalar (macro)
+  - activity_factor: "= clamp01(activity.industrial_activity_0_1)"
+  - pulp_paper_MW_base: "= pulp_paper_MW_base * activity_factor"
+  - basic_metals_MW_base: "= basic_metals_MW_base * activity_factor"
+  - chemicals_refining_MW_base: "= chemicals_refining_MW_base * activity_factor"
+  - mining_quarrying_MW_base: "= mining_quarrying_MW_base * activity_factor"
+  - food_MW_base: "= food_MW_base * activity_factor"
+  - wood_products_MW_base: "= wood_products_MW_base * activity_factor"
+  - machinery_equipment_MW_base: "= machinery_equipment_MW_base * activity_factor"
+  - transport_equipment_MW_base: "= transport_equipment_MW_base * activity_factor"
+  - other_industry_MW_base: "= other_industry_MW_base * activity_factor"
+
+  # 3) Compute DR request level (0..1)
+  - dr_request_0_1: >
+      clamp01(
+        dr_a_stress * clamp01(grid_stress_0_1.value)
+        + dr_b_price * clamp01(price_signal_0_1.value)
+        + clamp01(demand_response.manual_curtailment_frac_0_1)
+      )
+  - dr_request_0_1: "= dr_request_0_1 * clamp01(demand_response.participation_0_1)"
+
+  # 4) Curtail flexible shares, accumulate deferred energy (MWh)
+  # curtailed_MW_sector = base_MW * flex_share * (1 - flex_min_factor) * dr_request
+  - pulp_paper_curtailed_MW: "= pulp_paper_MW_base * flex_share_pulp_paper * (1 - flex_min_factor) * dr_request_0_1"
+  - basic_metals_curtailed_MW: "= basic_metals_MW_base * flex_share_basic_metals * (1 - flex_min_factor) * dr_request_0_1"
+  - chemicals_refining_curtailed_MW: "= chemicals_refining_MW_base * flex_share_chemicals_refining * (1 - flex_min_factor) * dr_request_0_1"
+  - mining_quarrying_curtailed_MW: "= mining_quarrying_MW_base * flex_share_mining_quarrying * (1 - flex_min_factor) * dr_request_0_1"
+  - food_curtailed_MW: "= food_MW_base * flex_share_food * (1 - flex_min_factor) * dr_request_0_1"
+  - wood_products_curtailed_MW: "= wood_products_MW_base * flex_share_wood_products * (1 - flex_min_factor) * dr_request_0_1"
+  - machinery_equipment_curtailed_MW: "= machinery_equipment_MW_base * flex_share_machinery_equipment * (1 - flex_min_factor) * dr_request_0_1"
+  - transport_equipment_curtailed_MW: "= transport_equipment_MW_base * flex_share_transport_equipment * (1 - flex_min_factor) * dr_request_0_1"
+  - other_industry_curtailed_MW: "= other_industry_MW_base * flex_share_other * (1 - flex_min_factor) * dr_request_0_1"
+
+  - total_curtailed_MW: >
+      pulp_paper_curtailed_MW + basic_metals_curtailed_MW + chemicals_refining_curtailed_MW
+      + mining_quarrying_curtailed_MW + food_curtailed_MW + wood_products_curtailed_MW
+      + machinery_equipment_curtailed_MW + transport_equipment_curtailed_MW + other_industry_curtailed_MW
+
+  - curtailed_MWh_this_tick: "= total_curtailed_MW * (tick_s / 3600.0)"
+  - state.deferred_MWh: "= state.deferred_MWh + curtailed_MWh_this_tick"
+
+  # 5) Payback (rebound) when stress is low: repay deferred energy within day
+  - payback_allowed: "= (grid_stress_0_1.value <= payback_allowed_if_grid_stress_below) ? 1 : 0"
+  - payback_MW: >
+      if payback_allowed == 1:
+        min(payback_max_MW, state.deferred_MWh * (3600.0 / tick_s))
+      else:
+        0.0
+  - payback_MWh_this_tick: "= payback_MW * (tick_s / 3600.0)"
+  - state.deferred_MWh: "= max(0, state.deferred_MWh - payback_MWh_this_tick)"
+
+  # 6) Final sector MWs after curtailment (payback added as an aggregate rebound)
+  - pulp_paper_MW: "= pulp_paper_MW_base - pulp_paper_curtailed_MW"
+  - basic_metals_MW: "= basic_metals_MW_base - basic_metals_curtailed_MW"
+  - chemicals_refining_MW: "= chemicals_refining_MW_base - chemicals_refining_curtailed_MW"
+  - mining_quarrying_MW: "= mining_quarrying_MW_base - mining_quarrying_curtailed_MW"
+  - food_MW: "= food_MW_base - food_curtailed_MW"
+  - wood_products_MW: "= wood_products_MW_base - wood_products_curtailed_MW"
+  - machinery_equipment_MW: "= machinery_equipment_MW_base - machinery_equipment_curtailed_MW"
+  - transport_equipment_MW: "= transport_equipment_MW_base - transport_equipment_curtailed_MW"
+  - other_industry_MW: "= other_industry_MW_base - other_industry_curtailed_MW"
+
+  - consumption_MW: >
+      pulp_paper_MW + basic_metals_MW + chemicals_refining_MW + mining_quarrying_MW
+      + food_MW + wood_products_MW + machinery_equipment_MW + transport_equipment_MW
+      + other_industry_MW
+      + payback_MW
+
+  - state.last_consumption_MW: "= consumption_MW"
+
+outputs:
+  consumption_MW: float
+  production_MW: 0.0
+
+  breakdown_MW:
+    pulp_paper_MW: float
+    basic_metals_MW: float
+    chemicals_refining_MW: float
+    mining_quarrying_MW: float
+    food_MW: float
+    wood_products_MW: float
+    machinery_equipment_MW: float
+    transport_equipment_MW: float
+    other_industry_MW: float
+    payback_MW: float
+    deferred_MWh: "= state.deferred_MWh"
+    dr_request_0_1: float
+    activity_factor: float
+
+  forecast_24h:
+    # Deterministic forecast using the same shaping rules.
+    # If stress/price forecasts are provided, use them; otherwise assume current values.
+    step_s: 900
+    consumption_MW: >
+      let step = 900;
+      let N = 86400/step;
+      let out = [];
+      let deferred = state.deferred_MWh;
+      for i in 0..N-1:
+        derive hour/day_of_week for (time_now.unix_s + i*step)
+        is_weekend = (day_of_week >= 5)
+
+        # bases (same formulas as above) using the derived hour/weekend
+        # (omit here for brevity in forecast; reuse the same code path as update_per_tick)
+
+        stress = if exists(stress_forecast_24h.grid_stress_0_1) then stress_forecast_24h.grid_stress_0_1[i] else grid_stress_0_1.value
+        price  = if exists(price_forecast_24h.price_signal_0_1) then price_forecast_24h.price_signal_0_1[i] else price_signal_0_1.value
+
+        dr_req = clamp01((dr_a_stress*clamp01(stress) + dr_b_price*clamp01(price) + clamp01(demand_response.manual_curtailment_frac_0_1)) * clamp01(demand_response.participation_0_1))
+
+        curtailed_MW = compute_total_curtailed_MW_from_bases(dr_req)  # same sector-by-sector formulas
+
+        deferred += curtailed_MW * (step/3600.0)
+
+        payback_allowed = (stress <= payback_allowed_if_grid_stress_below)
+        payback_MW = payback_allowed ? min(payback_max_MW, deferred * (3600.0/step)) : 0
+        deferred = max(0, deferred - payback_MW*(step/3600.0))
+
+        out[i] = compute_total_base_MW_minus_curtailment_plus_payback(dr_req, payback_MW)  # same as above
+      return out
