@@ -89,6 +89,50 @@ function formatPrice(price: number): string {
   return price.toFixed(0)
 }
 
+const daPriceRange = computed(() => {
+  const prices = gameState.marketPrices.daEurPerMWh
+  const min = Math.min(...prices)
+  const max = Math.max(...prices)
+  return { min, max, range: max - min }
+})
+
+const fcrPriceRange = computed(() => {
+  const prices = gameState.marketPrices.fcrEurPerMWPerH
+  const min = Math.min(...prices)
+  const max = Math.max(...prices)
+  return { min, max, range: max - min }
+})
+
+function getDAPriceStyle(hour: number) {
+  const price = gameState.marketPrices.daEurPerMWh[hour] ?? 0
+  const { min, range } = daPriceRange.value
+  const t = range > 0 ? (price - min) / range : 0.5
+  const fontSize = 0.55 + t * 0.35
+  const r = Math.round(80 + t * 175)
+  const g = Math.round(80 + (1 - t) * 100)
+  const b = Math.round(80)
+  return {
+    fontSize: `${fontSize}rem`,
+    color: `rgb(${r}, ${g}, ${b})`,
+    fontWeight: t > 0.6 ? '600' : '400',
+  }
+}
+
+function getFCRPriceStyle(hour: number) {
+  const price = gameState.marketPrices.fcrEurPerMWPerH[hour] ?? 0
+  const { min, range } = fcrPriceRange.value
+  const t = range > 0 ? (price - min) / range : 0.5
+  const fontSize = 0.55 + t * 0.35
+  const r = Math.round(80 + t * 175)
+  const g = Math.round(100 + (1 - t) * 80)
+  const b = Math.round(80)
+  return {
+    fontSize: `${fontSize}rem`,
+    color: `rgb(${r}, ${g}, ${b})`,
+    fontWeight: t > 0.6 ? '600' : '400',
+  }
+}
+
 const totalDARevenue = computed(() => {
   let total = 0
   for (let h = 0; h < 24; h++) {
@@ -155,7 +199,7 @@ const totalFCRRevenue = computed(() => {
           @mousedown="onBarMouseDown(h - 1, $event, 'da')"
           @mousemove="onBarMouseMove(h - 1, $event, 'da')"
         >
-          <div class="price-label">{{ formatPrice(gameState.marketPrices.daEurPerMWh[h - 1] ?? 0) }}</div>
+          <div class="price-label" :style="getDAPriceStyle(h - 1)">{{ formatPrice(gameState.marketPrices.daEurPerMWh[h - 1] ?? 0) }}</div>
           <div class="bar-area">
             <div 
               class="bar" 
@@ -186,7 +230,7 @@ const totalFCRRevenue = computed(() => {
           @mousedown="onBarMouseDown(h - 1, $event, 'fcr')"
           @mousemove="onBarMouseMove(h - 1, $event, 'fcr')"
         >
-          <div class="price-label">{{ formatPrice(gameState.marketPrices.fcrEurPerMWPerH[h - 1] ?? 0) }}</div>
+          <div class="price-label" :style="getFCRPriceStyle(h - 1)">{{ formatPrice(gameState.marketPrices.fcrEurPerMWPerH[h - 1] ?? 0) }}</div>
           <div class="bar-area">
             <div 
               class="bar fcr" 
@@ -382,11 +426,10 @@ h1 {
 }
 
 .price-label {
-  font-size: 0.6rem;
-  color: var(--color-gray-500);
   text-align: center;
-  height: 16px;
-  line-height: 16px;
+  height: 20px;
+  line-height: 20px;
+  transition: font-size 0.1s, color 0.1s;
 }
 
 .bar-area {
