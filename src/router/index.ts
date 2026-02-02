@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import IntroductionScreen from '../views/IntroductionScreen.vue'
 import StartOfDayScreen from '../views/StartOfDayScreen.vue'
 import DayScreen from '../views/DayScreen.vue'
 import EndOfDayScreen from '../views/EndOfDayScreen.vue'
@@ -9,6 +10,14 @@ const router = createRouter({
   routes: [
     {
       path: '/',
+      redirect: '/game'
+    },
+    {
+      path: '/introduction',
+      component: IntroductionScreen
+    },
+    {
+      path: '/game',
       component: StartOfDayScreen
     },
     {
@@ -16,7 +25,7 @@ const router = createRouter({
       component: DayScreen,
       beforeEnter: () => {
         if (gameState.phase !== 'day') {
-          return '/'
+          return '/game'
         }
       }
     },
@@ -25,7 +34,7 @@ const router = createRouter({
       component: EndOfDayScreen,
       beforeEnter: () => {
         if (gameState.phase !== 'end') {
-          return '/'
+          return '/game'
         }
       }
     }

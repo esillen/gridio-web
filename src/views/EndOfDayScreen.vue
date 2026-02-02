@@ -24,7 +24,7 @@ const stats = computed(() => {
 
 function restart() {
   gameState.restart()
-  router.push('/')
+  router.push('/game')
 }
 </script>
 

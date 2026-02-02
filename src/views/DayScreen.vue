@@ -51,7 +51,7 @@ onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   
   if (gameState.phase !== 'day') {
-    router.push('/')
+    router.push('/game')
   }
 })
 
