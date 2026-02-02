@@ -7,12 +7,14 @@ export interface BESSConfig {
   initialSoC01: number
 }
 
-export type BESSMode = 'idle' | 'auto' | 'charge' | 'discharge'
+export type BESSMode = 'charge' | 'discharge'
+export type BESSMarket = 'da' | 'fcr' | 'inactive'
 
 export interface BESSState {
   soc01: number
   currentPowerMW: number
-  mode: BESSMode
+  mode: BESSMode | null
+  market: BESSMarket
   energyChargedMWh: number
   energyDischargedMWh: number
 }
@@ -42,7 +44,8 @@ export class BESSUnit {
     this._state = {
       soc01: config.initialSoC01,
       currentPowerMW: 0,
-      mode: 'auto',
+      mode: null,
+      market: 'da',
       energyChargedMWh: 0,
       energyDischargedMWh: 0,
     }
@@ -119,12 +122,20 @@ export class BESSUnit {
     return this._state.currentPowerMW
   }
 
-  get mode(): BESSMode {
+  get mode(): BESSMode | null {
     return this._state.mode
   }
 
-  set mode(m: BESSMode) {
+  set mode(m: BESSMode | null) {
     this._state.mode = m
+  }
+
+  get market(): BESSMarket {
+    return this._state.market
+  }
+
+  set market(m: BESSMarket) {
+    this._state.market = m
   }
 
   get availableChargeMW(): number {
@@ -151,7 +162,8 @@ export class BESSUnit {
     this._state = {
       soc01: this.config.initialSoC01,
       currentPowerMW: 0,
-      mode: 'auto',
+      mode: null,
+      market: 'da',
       energyChargedMWh: 0,
       energyDischargedMWh: 0,
     }
@@ -201,30 +213,6 @@ export class BESSFleet {
       results.set(unit.config.id, unit.tick(dtS, cmd))
     }
     return results
-  }
-
-  dispatchPower(targetMW: number, dtS: number): number {
-    // Distribute power proportionally across units based on their capacity
-    let remaining = targetMW
-    let totalActual = 0
-
-    for (const unit of this.units) {
-      if (unit.mode !== 'auto') continue
-      
-      const share = unit.config.maxPowerMW / this.totalMaxPowerMW
-      const unitTarget = remaining * share
-      const result = unit.tick(dtS, { targetPowerMW: unitTarget, source: 'da' })
-      totalActual += result.actualPowerMW
-      remaining -= result.actualPowerMW
-    }
-
-    return totalActual
-  }
-
-  setAllMode(mode: BESSMode): void {
-    for (const unit of this.units) {
-      unit.mode = mode
-    }
   }
 
   reset(): void {

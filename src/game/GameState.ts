@@ -2,11 +2,12 @@ import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot, type BalancingSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
 import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
-import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode } from '../system_model'
+import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket } from '../system_model'
+import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
 export type GamePhase = 'start' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000
-export type { BESSMode }
+export type { BESSMode, BESSMarket }
 
 export const DAY_DURATION_SECONDS = 86400 // 24 hours
 
@@ -57,13 +58,15 @@ export interface BESSUIState {
   capacityMWh: number
   soc01: number
   currentPowerMW: number
-  mode: BESSMode
+  mode: BESSMode | null
+  market: BESSMarket
 }
 
 class GameState {
   phase: GamePhase = 'start'
   private _world: WorldSimulation | null = null
   private _bessFleet: BESSFleet = new BESSFleet(DEFAULT_BESS_FLEET)
+  private _bessPerformance: BESSPerformanceTracker = new BESSPerformanceTracker()
   
   config: GameConfig = {
     startDayOfYear: 15, // Mid-January
@@ -126,16 +129,17 @@ class GameState {
   private animationFrameId: number | null = null
   private lastFrameTime: number | null = null
   private accumulatedTime = 0
-  private _hourlyDeliveredMWh: number[] = new Array(24).fill(0)
-  private _hourlyFcrDeliveredMWh: number[] = new Array(24).fill(0)
   private _lastTickHour = -1
 
   startDay(): void {
     this._world = markRaw(new WorldSimulation(this.config))
     this._world.initialize()
     this._bessFleet.reset()
-    this._hourlyDeliveredMWh = new Array(24).fill(0)
-    this._hourlyFcrDeliveredMWh = new Array(24).fill(0)
+    this._bessPerformance.reset()
+    
+    const daBids = this.playerBids.daBids.map(b => b.volumeMW)
+    const fcrBids = this.playerBids.fcrBids.map(b => b.volumeMW)
+    this._bessPerformance.setBids(daBids, fcrBids)
     this._lastTickHour = -1
     this.hourlyFulfillment = Array.from({ length: 24 }, (_, h) => ({
       hour: h,
@@ -198,7 +202,6 @@ class GameState {
     const currentHour = Math.floor(this._world.currentTime / 3600)
     const secondInHour = this._world.currentTime % 3600
     
-    // Reset hourly tracking when hour changes
     if (currentHour !== this._lastTickHour) {
       this._lastTickHour = currentHour
     }
@@ -206,64 +209,65 @@ class GameState {
     const daBid = this.playerBids.daBids[currentHour]?.volumeMW ?? 0
     const fcrBid = this.playerBids.fcrBids[currentHour]?.volumeMW ?? 0
 
-    // Calculate auto mode targets
-    const freqHz = this._world.currentFrequencyHz
-    const freqDev = 50 - freqHz
-    const fcrResponse = fcrBid * (freqDev / 0.2) // Full response at ±0.2 Hz
-    const clampedFcrResponse = Math.max(-fcrBid, Math.min(fcrBid, fcrResponse))
-
-    const remainingSecondsInHour = 3600 - secondInHour
-    const targetEnergyMWh = daBid
-    const deliveredSoFar = this._hourlyDeliveredMWh[currentHour] ?? 0
-    const remainingMWh = targetEnergyMWh - deliveredSoFar
+    // Separate units by market
+    const daUnits = this._bessFleet.units.filter(u => u.market === 'da' && !u.mode)
+    const fcrUnits = this._bessFleet.units.filter(u => u.market === 'fcr' && !u.mode)
     
+    const daCapacity = daUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
+    const fcrCapacity = fcrUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
+
+    // Calculate DA target
+    const remainingSecondsInHour = 3600 - secondInHour
+    const deliveredSoFar = this._bessPerformance.daPerformance[currentHour]?.deliveredMWh ?? 0
+    const remainingMWh = daBid - deliveredSoFar
     let daPower = 0
     if (remainingSecondsInHour > 0) {
       daPower = (remainingMWh / remainingSecondsInHour) * 3600
     }
+    daPower = Math.max(-daCapacity, Math.min(daCapacity, daPower))
 
-    // Count auto-mode units to distribute targets
-    const autoUnits = this._bessFleet.units.filter(u => u.mode === 'auto')
-    const autoCapacity = autoUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
+    // Calculate FCR target
+    const freqHz = this._world.currentFrequencyHz
+    const freqDev = 50 - freqHz
+    const fcrRequiredMW = fcrBid * (freqDev / 0.2)
+    const fcrTargetMW = Math.max(-fcrCapacity, Math.min(fcrCapacity, fcrRequiredMW))
 
     let totalActualPower = 0
-    let totalFcrDelivery = 0
+    let totalDADelivered = 0
+    let totalFCRDelivered = 0
 
-    // Tick each unit individually
+    // Tick each unit
     for (const unit of this._bessFleet.units) {
       let targetMW = 0
       
-      if (unit.mode === 'auto') {
-        // Distribute DA and FCR targets proportionally to auto units
-        const share = autoCapacity > 0 ? unit.config.maxPowerMW / autoCapacity : 0
-        targetMW = daPower * share + clampedFcrResponse * share
-      } else if (unit.mode === 'charge') {
+      if (unit.mode === 'charge') {
         targetMW = -unit.config.maxPowerMW
       } else if (unit.mode === 'discharge') {
         targetMW = unit.config.maxPowerMW
+      } else if (unit.market === 'da') {
+        const share = daCapacity > 0 ? unit.config.maxPowerMW / daCapacity : 0
+        targetMW = daPower * share
+      } else if (unit.market === 'fcr') {
+        const share = fcrCapacity > 0 ? unit.config.maxPowerMW / fcrCapacity : 0
+        targetMW = fcrTargetMW * share
       }
-      // idle = 0
 
       const result = unit.tick(1, { targetPowerMW: targetMW, source: 'da' })
       totalActualPower += result.actualPowerMW
       
-      if (unit.mode === 'auto') {
-        totalFcrDelivery += Math.abs(result.actualPowerMW - daPower * (autoCapacity > 0 ? unit.config.maxPowerMW / autoCapacity : 0))
+      if (unit.market === 'da' && !unit.mode) {
+        totalDADelivered += result.actualPowerMW
+      } else if (unit.market === 'fcr' && !unit.mode) {
+        totalFCRDelivered += result.actualPowerMW
       }
     }
 
     this.totalBessPowerMW = totalActualPower
 
-    // Track delivery for auto units
-    if (autoUnits.length > 0) {
-      this._hourlyDeliveredMWh[currentHour] = (this._hourlyDeliveredMWh[currentHour] ?? 0) + totalActualPower / 3600
-      this._hourlyFcrDeliveredMWh[currentHour] = (this._hourlyFcrDeliveredMWh[currentHour] ?? 0) + totalFcrDelivery / 3600
-    }
-
-    // Update fulfillment tracking
-    if (this.hourlyFulfillment[currentHour]) {
-      this.hourlyFulfillment[currentHour].deliveredMWh = this._hourlyDeliveredMWh[currentHour] ?? 0
-      this.hourlyFulfillment[currentHour].fcrDeliveredMWh = this._hourlyFcrDeliveredMWh[currentHour] ?? 0
+    // Track performance
+    this._bessPerformance.tickDA(currentHour, totalDADelivered, 1)
+    if (fcrUnits.length > 0) {
+      this._bessPerformance.tickFCR(currentHour, fcrRequiredMW, totalFCRDelivered, 1)
     }
   }
 
@@ -276,15 +280,33 @@ class GameState {
       soc01: u.soc01,
       currentPowerMW: u.currentPowerMW,
       mode: u.mode,
+      market: u.market,
     }))
     this.bessVersion++
   }
 
-  setUnitMode(unitId: string, mode: BESSMode): void {
+  setUnitMode(unitId: string, mode: BESSMode | null): void {
     const unit = this._bessFleet.units.find(u => u.config.id === unitId)
     if (unit) {
       unit.mode = mode
     }
+  }
+
+  cycleUnitMarket(unitId: string): void {
+    const unit = this._bessFleet.units.find(u => u.config.id === unitId)
+    if (unit) {
+      if (unit.market === 'da') {
+        unit.market = 'fcr'
+      } else if (unit.market === 'fcr') {
+        unit.market = 'inactive'
+      } else {
+        unit.market = 'da'
+      }
+    }
+  }
+
+  get bessPerformance(): BESSPerformanceTracker {
+    return this._bessPerformance
   }
 
   get bessFleet(): BESSFleet {

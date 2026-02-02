@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { gameState, type BESSMode } from '../game/GameState'
+import { gameState, type BESSMode, type BESSMarket } from '../game/GameState'
 
 const bessUnits = computed(() => gameState.bessStates)
 const totalPower = computed(() => gameState.totalBessPowerMW)
 
-function setUnitMode(unitId: string, mode: BESSMode) {
+function setUnitMode(unitId: string, mode: BESSMode | null) {
   gameState.setUnitMode(unitId, mode)
+}
+
+function cycleMarket(unitId: string) {
+  gameState.cycleUnitMarket(unitId)
+}
+
+function getMarketLabel(market: BESSMarket): string {
+  if (market === 'da') return 'DA'
+  if (market === 'fcr') return 'FCR'
+  return 'Inactive'
 }
 
 function getSocBarFill(barIndex: number, soc01: number): number {
@@ -58,14 +68,14 @@ function formatPower(mw: number): string {
         <div class="unit-power" :class="{ charging: unit.currentPowerMW < 0, discharging: unit.currentPowerMW > 0 }">
           {{ formatPower(unit.currentPowerMW) }} MW
         </div>
+        <button 
+          :class="['market-toggle', `market-${unit.market}`]"
+          @click="cycleMarket(unit.id)"
+          :title="`Click to cycle: DA → FCR → Inactive`"
+        >
+          {{ getMarketLabel(unit.market) }}
+        </button>
         <div class="unit-controls">
-          <button 
-            :class="['unit-ctrl-btn', { active: unit.mode === 'auto' }]"
-            @click="setUnitMode(unit.id, 'auto')"
-            title="Follow DA bids and FCR commands"
-          >
-            Auto
-          </button>
           <button 
             :class="['unit-ctrl-btn', { active: unit.mode === 'charge' }]"
             @click="setUnitMode(unit.id, 'charge')"
@@ -79,13 +89,6 @@ function formatPower(mw: number): string {
             title="Discharge at max power"
           >
             Discharge
-          </button>
-          <button 
-            :class="['unit-ctrl-btn', { active: unit.mode === 'idle' }]"
-            @click="setUnitMode(unit.id, 'idle')"
-            title="Idle - no action"
-          >
-            Idle
           </button>
         </div>
       </div>
@@ -214,6 +217,50 @@ function formatPower(mw: number): string {
 
 .unit-power.discharging {
   color: #10b981;
+}
+
+.market-toggle {
+  width: 100%;
+  padding: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: 2px solid;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.market-toggle.market-da {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+}
+
+.market-toggle.market-da:hover {
+  background: #bfdbfe;
+}
+
+.market-toggle.market-fcr {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #b45309;
+}
+
+.market-toggle.market-fcr:hover {
+  background: #fde68a;
+}
+
+.market-toggle.market-inactive {
+  background: var(--color-gray-100);
+  border-color: var(--color-gray-400);
+  color: var(--color-gray-600);
+}
+
+.market-toggle.market-inactive:hover {
+  background: var(--color-gray-200);
 }
 
 .unit-controls {

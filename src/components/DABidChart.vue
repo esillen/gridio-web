@@ -29,14 +29,14 @@ function buildData(): uPlot.AlignedData {
   const delivered: number[] = []
   
   const currentHour = Math.floor(gameState.currentTime / 3600)
+  const performance = gameState.bessPerformance.daPerformance
   
   for (let h = 0; h < 24; h++) {
     times.push(h)
-    const bidMWh = gameState.playerBids.daBids[h]?.volumeMW ?? 0
-    bids.push(bidMWh)
+    bids.push(performance[h]?.bidMWh ?? 0)
     
     if (h <= currentHour) {
-      delivered.push(gameState.hourlyFulfillment[h]?.deliveredMWh ?? 0)
+      delivered.push(performance[h]?.deliveredMWh ?? 0)
     } else {
       delivered.push(NaN)
     }

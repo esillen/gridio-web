@@ -26,24 +26,23 @@ function formatHours(hours: number): string {
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const bids: number[] = []
-  const delivered: number[] = []
+  const failedImbalance: number[] = []
   
   const currentHour = Math.floor(gameState.currentTime / 3600)
+  const performance = gameState.bessPerformance.fcrPerformance
   
   for (let h = 0; h < 24; h++) {
     times.push(h)
-    const bidMW = gameState.playerBids.fcrBids[h]?.volumeMW ?? 0
-    bids.push(bidMW)
+    bids.push(performance[h]?.allocatedMW ?? 0)
     
     if (h <= currentHour) {
-      // FCR delivery is measured in MWh of response provided
-      delivered.push(gameState.hourlyFulfillment[h]?.fcrDeliveredMWh ?? 0)
+      failedImbalance.push(performance[h]?.failedMWh ?? 0)
     } else {
-      delivered.push(NaN)
+      failedImbalance.push(NaN)
     }
   }
   
-  return [times, bids, delivered]
+  return [times, bids, failedImbalance]
 }
 
 function getOpts(): uPlot.Options {
@@ -87,11 +86,10 @@ function getOpts(): uPlot.Options {
         paths: uPlot.paths.bars!({ size: [0.6, 100] }),
       },
       {
-        label: 'Response (MWh)',
-        stroke: COLORS.delivered,
+        label: 'Failed Delivery (MWh)',
+        stroke: '#ef4444',
         width: 3,
-        points: { show: true, size: 6, fill: COLORS.delivered },
-        scale: 'response',
+        points: { show: true, size: 6, fill: '#ef4444' },
       },
     ],
   }
