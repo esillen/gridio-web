@@ -68,10 +68,6 @@ function formatTime(seconds: number): string {
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
-function endDayEarly() {
-  gameState.endDay()
-  router.push('/end')
-}
 </script>
 
 <template>

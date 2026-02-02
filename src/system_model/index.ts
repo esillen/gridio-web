@@ -70,3 +70,6 @@ export type {
   Forecast24h,
   CapabilitiesNow
 } from './grid/DispatcherModel'
+
+export { InterconnectorsModel } from './grid/InterconnectorsModel'
+export type { InterconnectorDispatchMode, InterconnectorInput, InterconnectorBreakdown } from './grid/InterconnectorsModel'

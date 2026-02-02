@@ -1,4 +1,4 @@
-import { PowerGrid, type GridSnapshot } from './PowerGrid'
+import { PowerGrid, HISTORY_SAMPLE_INTERVAL_S, type GridSnapshot } from './PowerGrid'
 import { 
   WeatherModel, 
   ForecastModel, 
@@ -367,36 +367,14 @@ export class WorldSimulation {
       totalConsumptionMW: baseConsumptionMW,
     })
 
-    // Record weather snapshot
-    const weatherSnapshot: WeatherSnapshot = {
-      time: this._currentTime,
-      current: weatherOutput,
-      forecast1h: this._forecast.getForecast(3600),
-      forecast6h: this._forecast.getForecast(6 * 3600),
-      forecast12h: this._forecast.getForecast(12 * 3600),
-      forecast24h: this._forecast.getForecast(24 * 3600),
-    }
-    this._weatherHistory.push(weatherSnapshot)
-
-    // Record consumption breakdown
+    // Gather current values for frequency calculation and history
     const heatingMW = this._heatingDemand.consumptionMW
     const nonHeatingMW = this._nonHeatingDemand.consumptionMW
     const servicesMW = this._servicesDemand.consumptionMW
     const transportMW = this._transportDemand.consumptionMW
     const industryMW = this._industryDemand.consumptionMW
     const lossesMW = this._gridLosses.consumptionMW
-    this._consumptionHistory.push({
-      time: this._currentTime,
-      heatingMW,
-      nonHeatingMW,
-      servicesMW,
-      transportMW,
-      industryMW,
-      lossesMW,
-      totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW,
-    })
 
-    // Record production breakdown
     const nuclearMW = this._nuclearFleet.productionMW
     const hydroReservoirMW = this._hydroReservoir.productionMW
     const hydroRoRMW = this._hydroRoR.productionMW
@@ -406,18 +384,44 @@ export class WorldSimulation {
     const industrialChpMW = this._industrialChp.productionMW
     const peakersMW = this._peakers.productionMW
     const totalProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW + industrialChpMW + peakersMW
-    this._productionHistory.push({
-      time: this._currentTime,
-      nuclearMW,
-      hydroReservoirMW,
-      hydroRoRMW,
-      windMW,
-      solarMW,
-      chpMW,
-      industrialChpMW,
-      peakersMW,
-      totalMW: totalProductionMW,
-    })
+
+    // Record history snapshots at sample interval (not every tick)
+    const shouldRecordHistory = this._currentTime % HISTORY_SAMPLE_INTERVAL_S === 0
+
+    if (shouldRecordHistory) {
+      this._weatherHistory.push({
+        time: this._currentTime,
+        current: weatherOutput,
+        forecast1h: this._forecast.getForecast(3600),
+        forecast6h: this._forecast.getForecast(6 * 3600),
+        forecast12h: this._forecast.getForecast(12 * 3600),
+        forecast24h: this._forecast.getForecast(24 * 3600),
+      })
+
+      this._consumptionHistory.push({
+        time: this._currentTime,
+        heatingMW,
+        nonHeatingMW,
+        servicesMW,
+        transportMW,
+        industryMW,
+        lossesMW,
+        totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW,
+      })
+
+      this._productionHistory.push({
+        time: this._currentTime,
+        nuclearMW,
+        hydroReservoirMW,
+        hydroRoRMW,
+        windMW,
+        solarMW,
+        chpMW,
+        industrialChpMW,
+        peakersMW,
+        totalMW: totalProductionMW,
+      })
+    }
 
     // Update frequency model with reserve control loop
     const totalConsumptionMW = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW
@@ -483,25 +487,26 @@ export class WorldSimulation {
       },
     })
     
-    this._frequencyHistory.push({
-      time: this._currentTime,
-      frequencyHz: finalFreqBreakdown.frequencyHz,
-      rocofHzPerS: finalFreqBreakdown.rocofHzPerS,
-      imbalanceMW: finalFreqBreakdown.imbalanceRawMW,
-      band: finalFreqBreakdown.band,
-      hEquivS: finalFreqBreakdown.hEquivS,
-      sBaseMW: finalFreqBreakdown.sBaseMW,
-    })
-    
-    // Record balancing history
-    this._balancingHistory.push({
-      time: this._currentTime,
-      fcrMW: fcrBreakdown.activatedMW,
-      afrrMW: afrrBreakdown.activatedMW,
-      mfrrMW: mfrrBreakdown.activatedMW,
-      totalReserveMW,
-      frequencyHz: finalFreqBreakdown.frequencyHz,
-    })
+    if (shouldRecordHistory) {
+      this._frequencyHistory.push({
+        time: this._currentTime,
+        frequencyHz: finalFreqBreakdown.frequencyHz,
+        rocofHzPerS: finalFreqBreakdown.rocofHzPerS,
+        imbalanceMW: finalFreqBreakdown.imbalanceRawMW,
+        band: finalFreqBreakdown.band,
+        hEquivS: finalFreqBreakdown.hEquivS,
+        sBaseMW: finalFreqBreakdown.sBaseMW,
+      })
+
+      this._balancingHistory.push({
+        time: this._currentTime,
+        fcrMW: fcrBreakdown.activatedMW,
+        afrrMW: afrrBreakdown.activatedMW,
+        mfrrMW: mfrrBreakdown.activatedMW,
+        totalReserveMW,
+        frequencyHz: finalFreqBreakdown.frequencyHz,
+      })
+    }
 
     // Update grid (collects updates from all connected actors)
     this._grid.tick()

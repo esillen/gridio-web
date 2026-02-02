@@ -1,5 +1,7 @@
 import type { Actor } from './Actor'
 
+export const HISTORY_SAMPLE_INTERVAL_S = 10
+
 export interface GridSnapshot {
   time: number
   production: number
@@ -41,7 +43,9 @@ export class PowerGrid {
       imbalance: totalProduction - totalConsumption
     }
 
-    this._history.push(snapshot)
+    if (this._currentTime % HISTORY_SAMPLE_INTERVAL_S === 0) {
+      this._history.push(snapshot)
+    }
     this._currentTime++
     return snapshot
   }

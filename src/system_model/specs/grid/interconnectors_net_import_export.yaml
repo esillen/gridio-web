@@ -1,0 +1,162 @@
+model_part: interconnectors_net_import_export
+version: 1.0
+tick_s: 1
+
+description: >
+  Single aggregated interconnector model for Sweden as one controllable source/sink:
+  - Positive production_MW = net import (power entering Sweden)
+  - Negative production_MW = net export (power leaving Sweden)
+  Designed to soak up surplus (export) and cover deficits (import), within capacity and ramp limits.
+  Includes simple "market willingness" (price/condition proxy) so imports/exports aren't always fully available.
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  time: s
+  frequency: Hz
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+
+  system:
+    total_generation_MW: float        # actual current gross generation (excluding this interconnector model)
+    total_consumption_MW: float       # actual current consumption (including losses)
+    frequency_Hz: float               # from system_frequency_and_imbalance
+    rocof_Hz_per_s: float             # optional
+
+  # Dispatcher command (optional). If absent, model will auto-balance based on imbalance/frequency.
+  dispatch:
+    mode: enum  # ["auto_balance", "follow_target"]
+    target_net_import_MW: float       # positive import, negative export
+
+  # Optional external constraints (e.g., outages on DC links, neighbor scarcity)
+  market:
+    neighbor_tightness_0_1: float     # 0=neighbors have plenty, 1=neighbors very tight (reduces import availability)
+    neighbor_surplus_0_1: float       # 0=no surplus, 1=high surplus (reduces export acceptance)
+    price_spread_SE_minus_neighbors_EUR_per_MWh: float  # optional; + means Sweden expensive -> imports easier
+
+  availability:
+    availability_0_1: float           # 1 normal, <1 derated interconnector capability
+
+state:
+  net_import_MW: float                # positive import, negative export (this is also production_MW)
+  last_target_MW: float
+
+constants:
+  # -----------------------
+  # Capacity anchors (tunable, aggregated)
+  # -----------------------
+  # Sweden total cross-border transfer capability is several GW. Use a game-friendly aggregate.
+  import_max_MW: 7000.0               # max net import
+  export_max_MW: 7000.0               # max net export (as positive magnitude)
+
+  # Ramping (DC links and schedules can move quickly, but not instant)
+  ramp_MW_per_s: 50.0                 # 50 MW/s => 3000 MW/min (fast, tune down if too responsive)
+
+  # Control behavior in auto mode
+  control:
+    freq_nom_Hz: 50.0
+    # Proportional response to frequency deviation (imports for low freq, exports for high freq)
+    Kp_MW_per_Hz: 12000.0
+
+    # Also respond to pure power imbalance (if you have good totals)
+    Kimb_MW_per_MW: 0.60              # request = -K * imbalance (deficit => positive request)
+
+    # Deadband so it doesn't chase tiny errors
+    deadband_MW: 80.0
+    deadband_Hz: 0.01
+
+    # Smoothing of target to avoid jitter in UI
+    tau_target_s: 10.0
+
+  # Market willingness (simple)
+  market_limits:
+    # When neighbors are tight, imports available reduce linearly
+    import_reduction_at_tightness_1: 0.70    # at tightness=1, only 30% of import capacity remains
+    # When neighbors have surplus, exports accepted more easily; when they are also surplus=0, exports limited
+    export_reduction_at_surplus_0: 0.50      # at surplus=0, only 50% of export capacity accepted
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  ramp_toward: >
+    func(current, target, ramp, dt):
+      delta = target - current
+      max_step = ramp * dt
+      return current + clamp(delta, -max_step, max_step)
+
+update_per_tick:
+  - avail: "= clamp01(availability.availability_0_1)"
+
+  # 1) Compute net imbalance excluding interconnector action
+  - imbalance_MW: "= system.total_generation_MW - system.total_consumption_MW"   # + surplus, - deficit
+
+  # 2) Compute market-derated caps
+  - tight: "= (market.neighbor_tightness_0_1 != null) ? clamp01(market.neighbor_tightness_0_1) : 0.2"
+  - surplus: "= (market.neighbor_surplus_0_1 != null) ? clamp01(market.neighbor_surplus_0_1) : 0.5"
+
+  - import_cap_MW: >
+      import_max_MW * avail
+      * (1 - market_limits.import_reduction_at_tightness_1 * tight)
+
+  - export_cap_MW: >
+      export_max_MW * avail
+      * (1 - market_limits.export_reduction_at_surplus_0 * (1 - surplus))
+
+  # 3) Determine target in selected mode
+  - if dispatch.mode == "follow_target":
+      - target_raw_MW: "= clamp(dispatch.target_net_import_MW, -export_cap_MW, import_cap_MW)"
+  - else:
+      # auto_balance
+      - df_Hz: "= control.freq_nom_Hz - system.frequency_Hz"   # + if low freq
+      - req_from_freq_MW: >
+          if abs(df_Hz) <= control.deadband_Hz:
+            0.0
+          else:
+            control.Kp_MW_per_Hz * df_Hz
+
+      - req_from_imb_MW: >
+          if abs(imbalance_MW) <= control.deadband_MW:
+            0.0
+          else:
+            -control.Kimb_MW_per_MW * imbalance_MW   # surplus -> negative (export), deficit -> positive (import)
+
+      - target_raw_MW: "= req_from_freq_MW + req_from_imb_MW"
+      - target_raw_MW: "= clamp(target_raw_MW, -export_cap_MW, import_cap_MW)"
+
+  # 4) Smooth target
+  - state.last_target_MW: >
+      state.last_target_MW
+      + (target_raw_MW - state.last_target_MW) * (tick_s / control.tau_target_s)
+
+  # 5) Ramp actual net import/export toward smoothed target
+  - state.net_import_MW: "= ramp_toward(state.net_import_MW, state.last_target_MW, ramp_MW_per_s, tick_s)"
+
+outputs:
+  # Convention: treat as a generator with signed output
+  production_MW: "= state.net_import_MW"
+  consumption_MW: 0.0
+
+  net_import_MW: "= state.net_import_MW"     # + import, - export
+
+  limits:
+    import_cap_MW: "= import_cap_MW"
+    export_cap_MW: "= export_cap_MW"
+
+  debug:
+    imbalance_excluding_interconnectors_MW: "= imbalance_MW"
+    target_raw_MW: "= target_raw_MW"
+    target_smooth_MW: "= state.last_target_MW"
+
+  forecast_24h:
+    # Simple: assume the same market conditions and that auto_balance will try to keep net imbalance near zero.
+    # For planning, you should instead compute imports as residual after domestic dispatch.
+    step_s: 3600
+    net_import_MW: >
+      let N = 24;
+      let out = [];
+      for h in 0..N-1:
+        out[h] = state.net_import_MW
+      return out
