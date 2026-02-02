@@ -4,55 +4,61 @@ export type { WeatherState, WeatherOutput } from './WeatherModel'
 export { ForecastModel } from './ForecastModel'
 export type { ForecastArrays, ForecastOutput } from './ForecastModel'
 
-export { ResidentialSpaceHeatingModel } from './demand/ResidentialSpaceHeatingModel'
-export type { HeatingModelInput, HeatingBreakdown } from './demand/ResidentialSpaceHeatingModel'
+export { ResidentialSpaceHeatingModel } from './consumption/ResidentialSpaceHeatingModel'
+export type { HeatingModelInput, HeatingBreakdown } from './consumption/ResidentialSpaceHeatingModel'
 
-export { ResidentialNonHeatingModel } from './demand/ResidentialNonHeatingModel'
-export type { NonHeatingInput, NonHeatingBreakdown } from './demand/ResidentialNonHeatingModel'
+export { ResidentialNonHeatingModel } from './consumption/ResidentialNonHeatingModel'
+export type { NonHeatingInput, NonHeatingBreakdown } from './consumption/ResidentialNonHeatingModel'
 
-export { ServicesCommercialModel } from './demand/ServicesCommercialModel'
-export type { ServicesInput, ServicesBreakdown } from './demand/ServicesCommercialModel'
+export { ServicesCommercialModel } from './consumption/ServicesCommercialModel'
+export type { ServicesInput, ServicesBreakdown } from './consumption/ServicesCommercialModel'
 
-export { NuclearFleetModel } from './supply/NuclearFleetModel'
-export type { NuclearDispatch, NuclearBreakdown, DispatchMode, UnitId, UnitState } from './supply/NuclearFleetModel'
+export { NuclearFleetModel } from './production/NuclearFleetModel'
+export type { NuclearDispatch, NuclearBreakdown, DispatchMode, UnitId, UnitState } from './production/NuclearFleetModel'
 
-export { HydroReservoirFleetModel } from './supply/HydroReservoirFleetModel'
-export type { HydroDispatch, HydroDispatchMode, HydroForecast, HydroBreakdown } from './supply/HydroReservoirFleetModel'
+export { HydroReservoirFleetModel } from './production/HydroReservoirFleetModel'
+export type { HydroDispatch, HydroDispatchMode, HydroForecast, HydroBreakdown } from './production/HydroReservoirFleetModel'
 
-export { WindFleetModel } from './supply/WindFleetModel'
-export type { WindInput, WindBreakdown } from './supply/WindFleetModel'
+export { WindFleetModel } from './production/WindFleetModel'
+export type { WindInput, WindBreakdown } from './production/WindFleetModel'
 
-export { SolarPVFleetModel } from './supply/SolarPVFleetModel'
-export type { SolarInput, SolarBreakdown } from './supply/SolarPVFleetModel'
+export { SolarPVFleetModel } from './production/SolarPVFleetModel'
+export type { SolarInput, SolarBreakdown } from './production/SolarPVFleetModel'
 
-export { BiofuelWasteCHPModel } from './supply/BiofuelWasteCHPModel'
-export type { CHPDispatchMode, CHPHeatPriority, CHPInput, CHPBreakdown } from './supply/BiofuelWasteCHPModel'
+export { BiofuelWasteCHPModel } from './production/BiofuelWasteCHPModel'
+export type { CHPDispatchMode, CHPHeatPriority, CHPInput, CHPBreakdown } from './production/BiofuelWasteCHPModel'
 
-export { FrequencyModel } from './other/FrequencyModel'
-export type { FrequencyBand, InertiaInputs, FrequencyInput, FrequencyBreakdown } from './other/FrequencyModel'
+export { IndustrialCHPModel } from './production/IndustrialCHPModel'
+export type { IndustrialCHPDispatchMode, IndustrialCHPInput, IndustrialCHPBreakdown } from './production/IndustrialCHPModel'
 
-export { HydroRunOfRiverModel } from './supply/HydroRunOfRiverModel'
-export type { RoRDispatchMode, RoRDispatch, RoRInput, RoRBreakdown } from './supply/HydroRunOfRiverModel'
+export { GasOilPeakersModel } from './production/GasOilPeakersModel'
+export type { PeakersDispatchMode, PeakersInput, PeakersBreakdown } from './production/GasOilPeakersModel'
 
-export { TransportModel } from './demand/TransportModel'
-export type { TransportInput, TransportBreakdown } from './demand/TransportModel'
+export { FrequencyModel } from './grid/FrequencyModel'
+export type { FrequencyBand, InertiaInputs, FrequencyInput, FrequencyBreakdown } from './grid/FrequencyModel'
 
-export { IndustryProcessModel } from './demand/IndustryProcessModel'
-export type { IndustryInput, IndustryBreakdown } from './demand/IndustryProcessModel'
+export { HydroRunOfRiverModel } from './production/HydroRunOfRiverModel'
+export type { RoRDispatchMode, RoRDispatch, RoRInput, RoRBreakdown } from './production/HydroRunOfRiverModel'
 
-export { GridLossesModel } from './demand/GridLossesModel'
-export type { GridLossesInput, GridLossesBreakdown } from './demand/GridLossesModel'
+export { TransportModel } from './consumption/TransportModel'
+export type { TransportInput, TransportBreakdown } from './consumption/TransportModel'
 
-export { FCRModel } from './other/FCRModel'
-export type { FCRInput, FCRBreakdown } from './other/FCRModel'
+export { IndustryProcessModel } from './consumption/IndustryProcessModel'
+export type { IndustryInput, IndustryBreakdown } from './consumption/IndustryProcessModel'
 
-export { AFRRModel } from './other/AFRRModel'
-export type { AFRRInput, AFRRBreakdown } from './other/AFRRModel'
+export { GridLossesModel } from './consumption/GridLossesModel'
+export type { GridLossesInput, GridLossesBreakdown } from './consumption/GridLossesModel'
 
-export { MFRRModel } from './other/MFRRModel'
-export type { MFRRInput, MFRRBreakdown } from './other/MFRRModel'
+export { FCRModel } from './grid/FCRModel'
+export type { FCRInput, FCRBreakdown } from './grid/FCRModel'
 
-export { DispatcherModel } from './other/DispatcherModel'
+export { AFRRModel } from './grid/AFRRModel'
+export type { AFRRInput, AFRRBreakdown } from './grid/AFRRModel'
+
+export { MFRRModel } from './grid/MFRRModel'
+export type { MFRRInput, MFRRBreakdown } from './grid/MFRRModel'
+
+export { DispatcherModel } from './grid/DispatcherModel'
 export type { 
   DispatcherInput, 
   DispatcherBreakdown, 
@@ -63,4 +69,4 @@ export type {
   PolicyInput,
   Forecast24h,
   CapabilitiesNow
-} from './other/DispatcherModel'
+} from './grid/DispatcherModel'

@@ -18,6 +18,8 @@ const COLORS = {
   hydroReservoir: '#4467FE',
   hydroRoR: '#7B9FFF',
   chp: '#E879F9',
+  industrialChp: '#C084FC',
+  peakers: '#F87171',
   wind: '#95957F',
   solar: '#FFC877',
   axis: '#6b7280',
@@ -31,13 +33,15 @@ function formatHours(hours: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, chp, wind, solar (top)
+// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, chp, industrialChp, peakers, wind, solar (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const nuclear: number[] = []
   const hydroReservoir: number[] = []
   const hydroRoR: number[] = []
   const chp: number[] = []
+  const industrialChp: number[] = []
+  const peakers: number[] = []
   const wind: number[] = []
   const solar: number[] = []
 
@@ -48,19 +52,23 @@ function buildData(): uPlot.AlignedData {
     const hydroResVal = nuclearVal + s.hydroReservoirMW
     const hydroRoRVal = hydroResVal + s.hydroRoRMW
     const chpVal = hydroRoRVal + s.chpMW
-    const windVal = chpVal + s.windMW
+    const indChpVal = chpVal + s.industrialChpMW
+    const peakersVal = indChpVal + s.peakersMW
+    const windVal = peakersVal + s.windMW
     const solarVal = windVal + s.solarMW
     
     nuclear.push(nuclearVal)
     hydroReservoir.push(hydroResVal)
     hydroRoR.push(hydroRoRVal)
     chp.push(chpVal)
+    industrialChp.push(indChpVal)
+    peakers.push(peakersVal)
     wind.push(windVal)
     solar.push(solarVal)
   }
 
   // Order: time, then top-to-bottom for rendering
-  return [times, solar, wind, chp, hydroRoR, hydroReservoir, nuclear]
+  return [times, solar, wind, peakers, industrialChp, chp, hydroRoR, hydroReservoir, nuclear]
 }
 
 function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
@@ -165,6 +173,30 @@ function getOpts(width: number, height: number): uPlot.Options {
         label: 'Wind',
         stroke: COLORS.wind,
         fill: COLORS.wind + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
+        label: 'Peakers',
+        stroke: COLORS.peakers,
+        fill: COLORS.peakers + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
+        label: 'Ind. CHP',
+        stroke: COLORS.industrialChp,
+        fill: COLORS.industrialChp + '80',
         width: 1,
         paths: stackedAreaPaths,
         value: (u, v, si, i) => {

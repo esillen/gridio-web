@@ -41,6 +41,7 @@ export interface Forecast24h {
   solarGenerationMW: number[]
   runOfRiverGenerationMW: number[]
   bioWasteChpGenerationMW: number[]
+  industrialChpGenerationMW: number[]
 }
 
 export interface NuclearCapabilities {
@@ -413,7 +414,7 @@ export class DispatcherModel {
                    (sandbox.enableSolar ? (forecast.solarGenerationMW[h] ?? 0) : 0)
       
       const mustTakeH = (sandbox.enableHydroRunOfRiver ? (forecast.runOfRiverGenerationMW[h] ?? 0) : 0) +
-                        (sandbox.enableBioWasteCHP ? (forecast.bioWasteChpGenerationMW[h] ?? 0) : 0) +
+                        (sandbox.enableBioWasteCHP ? (forecast.bioWasteChpGenerationMW[h] ?? 0) + (forecast.industrialChpGenerationMW[h] ?? 0) : 0) +
                         vreH
       
       // Nuclear plan: flat at ~98% of max
@@ -478,7 +479,7 @@ export class DispatcherModel {
                    (sandbox.enableSolar ? (forecast.solarGenerationMW[h] ?? 0) : 0)
       
       const mustTakeH = (sandbox.enableHydroRunOfRiver ? (forecast.runOfRiverGenerationMW[h] ?? 0) : 0) +
-                        (sandbox.enableBioWasteCHP ? (forecast.bioWasteChpGenerationMW[h] ?? 0) : 0) +
+                        (sandbox.enableBioWasteCHP ? (forecast.bioWasteChpGenerationMW[h] ?? 0) + (forecast.industrialChpGenerationMW[h] ?? 0) : 0) +
                         vreH
       
       const nuclearH = this.planHourly.nuclearMW[h]!

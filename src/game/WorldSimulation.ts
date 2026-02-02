@@ -14,6 +14,8 @@ import {
   WindFleetModel,
   SolarPVFleetModel,
   BiofuelWasteCHPModel,
+  IndustrialCHPModel,
+  GasOilPeakersModel,
   FrequencyModel,
   FCRModel,
   AFRRModel,
@@ -34,6 +36,8 @@ import {
   type WindBreakdown,
   type SolarBreakdown,
   type CHPBreakdown,
+  type IndustrialCHPBreakdown,
+  type PeakersBreakdown,
   type FrequencyBreakdown,
   type FrequencyBand,
   type FCRBreakdown,
@@ -79,6 +83,8 @@ export interface ProductionSnapshot {
   windMW: number
   solarMW: number
   chpMW: number
+  industrialChpMW: number
+  peakersMW: number
   totalMW: number
 }
 
@@ -121,6 +127,8 @@ export class WorldSimulation {
   private _windFleet: WindFleetModel
   private _solarFleet: SolarPVFleetModel
   private _chpFleet: BiofuelWasteCHPModel
+  private _industrialChp: IndustrialCHPModel
+  private _peakers: GasOilPeakersModel
   private _frequencyModel: FrequencyModel
   private _fcrModel: FCRModel
   private _afrrModel: AFRRModel
@@ -169,6 +177,8 @@ export class WorldSimulation {
     this._windFleet = new WindFleetModel()
     this._solarFleet = new SolarPVFleetModel()
     this._chpFleet = new BiofuelWasteCHPModel()
+    this._industrialChp = new IndustrialCHPModel()
+    this._peakers = new GasOilPeakersModel()
     this._frequencyModel = new FrequencyModel()
     this._fcrModel = new FCRModel()
     this._afrrModel = new AFRRModel()
@@ -192,6 +202,8 @@ export class WorldSimulation {
     this._windFleet.reset()
     this._solarFleet.reset()
     this._chpFleet.reset()
+    this._industrialChp.reset()
+    this._peakers.reset()
     this._frequencyModel.reset()
     this._fcrModel.reset()
     this._afrrModel.reset()
@@ -211,6 +223,8 @@ export class WorldSimulation {
     this._grid.connect(this._windFleet)
     this._grid.connect(this._solarFleet)
     this._grid.connect(this._chpFleet)
+    this._grid.connect(this._industrialChp)
+    this._grid.connect(this._peakers)
 
     // Connect demand models
     this._grid.connect(this._heatingDemand)
@@ -288,6 +302,18 @@ export class WorldSimulation {
     this._chpFleet.tick({
       heatDemandMWth: districtHeatDemandMWth,
       nonChpHeatSupplyMWth: districtHeatDemandMWth * 0.45, // ~45% from heat-only boilers/heat pumps
+    })
+
+    // Update industrial CHP (process-led, follows industrial activity)
+    this._industrialChp.tick({
+      industrialActivity01: 1.0,
+      dispatchMode: 'must_run',
+    })
+
+    // Update peakers (dispatched by dispatcher when needed)
+    this._peakers.tick({
+      dispatchMode: dispatcherBreakdown.setpoints.peakersMW > 0 ? 'follow_target' : 'off',
+      targetProductionMW: dispatcherBreakdown.setpoints.peakersMW,
     })
 
     // Update heating demand model with current weather
@@ -377,7 +403,9 @@ export class WorldSimulation {
     const windMW = this._windFleet.productionMW
     const solarMW = this._solarFleet.productionMW
     const chpMW = this._chpFleet.productionMW
-    const totalProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW
+    const industrialChpMW = this._industrialChp.productionMW
+    const peakersMW = this._peakers.productionMW
+    const totalProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW + industrialChpMW + peakersMW
     this._productionHistory.push({
       time: this._currentTime,
       nuclearMW,
@@ -386,6 +414,8 @@ export class WorldSimulation {
       windMW,
       solarMW,
       chpMW,
+      industrialChpMW,
+      peakersMW,
       totalMW: totalProductionMW,
     })
 
@@ -403,6 +433,7 @@ export class WorldSimulation {
         hydroReservoirMW,
         hydroRoRMW,
         bioWasteChpMW: chpMW,
+        industrialChpMW,
         motorLoadMW,
       },
     })
@@ -447,6 +478,7 @@ export class WorldSimulation {
         hydroReservoirMW,
         hydroRoRMW,
         bioWasteChpMW: chpMW,
+        industrialChpMW,
         motorLoadMW,
       },
     })
@@ -568,7 +600,7 @@ export class WorldSimulation {
         enableWind: true,
         enableSolar: true,
         enableBioWasteCHP: true,
-        enableGasOilPeakers: false,
+        enableGasOilPeakers: true,
         enableInterconnectors: false,
         enableDemandResponse: false,
       },
@@ -639,6 +671,7 @@ export class WorldSimulation {
     solarGenerationMW: number[]
     runOfRiverGenerationMW: number[]
     bioWasteChpGenerationMW: number[]
+    industrialChpGenerationMW: number[]
   } {
     // Hourly demand pattern (normalized)
     const demandHourlyPattern = [0.75, 0.72, 0.70, 0.70, 0.72, 0.80, 0.95, 1.05, 1.02, 0.98, 0.95, 0.93,
@@ -665,16 +698,20 @@ export class WorldSimulation {
     const rorSeasonalFactor = 0.5 + 0.4 * Math.cos(seasonalPhase)
     const baseRoRMW = 2400 * rorSeasonalFactor
     
-    // CHP: estimate from temperature (heat-led)
+    // Bio/Waste CHP: estimate from temperature (heat-led)
     const heatingDegrees = Math.max(0, 15 - weather.temperatureC)
     const chpHeatFactor = Math.min(1, heatingDegrees / 35)
-    const baseCHPMW = 2500 * (0.3 + 0.7 * chpHeatFactor) // Base + heating component
+    const baseBioWasteChpMW = 2500 * (0.3 + 0.7 * chpHeatFactor) // Base + heating component
+    
+    // Industrial CHP: ~742 MW average, relatively flat profile
+    const baseIndustrialChpMW = 742
     
     const demandTotalMW: number[] = []
     const windGenerationMW: number[] = []
     const solarGenerationMW: number[] = []
     const runOfRiverGenerationMW: number[] = []
     const bioWasteChpGenerationMW: number[] = []
+    const industrialChpGenerationMW: number[] = []
     
     for (let i = 0; i < 24; i++) {
       const h = (clock.localHour + i) % 24
@@ -697,9 +734,13 @@ export class WorldSimulation {
       const rorHourFactor = 0.95 + 0.1 * Math.sin((h - 6) / 24 * 2 * Math.PI)
       runOfRiverGenerationMW.push(baseRoRMW * rorHourFactor)
       
-      // CHP follows heating pattern
+      // Bio/Waste CHP follows heating pattern
       const chpHourFactor = demandHourlyPattern[h] ?? 1.0
-      bioWasteChpGenerationMW.push(baseCHPMW * chpHourFactor)
+      bioWasteChpGenerationMW.push(baseBioWasteChpMW * chpHourFactor)
+      
+      // Industrial CHP is relatively flat (process-driven)
+      const industrialHourFactor = h >= 6 && h < 22 ? 1.0 : 0.85 // Slight reduction at night
+      industrialChpGenerationMW.push(baseIndustrialChpMW * industrialHourFactor)
     }
     
     return {
@@ -709,6 +750,7 @@ export class WorldSimulation {
       solarGenerationMW,
       runOfRiverGenerationMW,
       bioWasteChpGenerationMW,
+      industrialChpGenerationMW,
     }
   }
 
@@ -800,6 +842,14 @@ export class WorldSimulation {
     return this._chpFleet.breakdown
   }
 
+  get industrialChpBreakdown(): IndustrialCHPBreakdown | null {
+    return this._industrialChp.breakdown
+  }
+
+  get peakersBreakdown(): PeakersBreakdown | null {
+    return this._peakers.breakdown
+  }
+
   get frequencyBreakdown(): FrequencyBreakdown | null {
     return this._frequencyModel.breakdown
   }
@@ -856,6 +906,8 @@ export class WorldSimulation {
     this._windFleet.reset()
     this._solarFleet.reset()
     this._chpFleet.reset()
+    this._industrialChp.reset()
+    this._peakers.reset()
     this._frequencyModel.reset()
     this._fcrModel.reset()
     this._afrrModel.reset()

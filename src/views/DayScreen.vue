@@ -154,7 +154,6 @@ function endDayEarly() {
       />
     </div>
 
-    <button class="end-btn" @click="endDayEarly">End Day Early</button>
   </div>
 </template>
 
