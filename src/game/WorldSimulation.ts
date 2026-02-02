@@ -1,7 +1,7 @@
 import { PowerGrid, type GridSnapshot } from './PowerGrid'
 import { PowerPlant } from './PowerPlant'
 import { Consumer } from './Consumer'
-import { WeatherModel, ForecastModel, type WeatherOutput, type ForecastOutput } from '../system_model'
+import { WeatherModel, ForecastModel, type WeatherOutput, type ForecastOutput, type ForecastArrays } from '../system_model'
 
 export interface ClockState {
   timeS: number
@@ -137,6 +137,10 @@ export class WorldSimulation {
 
   getForecast(deltaS: number): ForecastOutput {
     return this._forecast.getForecast(deltaS)
+  }
+
+  get forecastArrays(): ForecastArrays {
+    return this._forecast.getArrays()
   }
 
   reset(): void {

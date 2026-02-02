@@ -125,7 +125,12 @@ function endDayEarly() {
 
     <div class="section-label">Weather</div>
     <div class="chart-container">
-      <WeatherChart :history="gameState.weatherHistory" :version="gameState.weatherHistoryVersion" />
+      <WeatherChart 
+        :history="gameState.weatherHistory" 
+        :forecastArrays="gameState.forecastArrays"
+        :currentTime="gameState.currentTime"
+        :version="gameState.weatherHistoryVersion" 
+      />
     </div>
 
     <button class="end-btn" @click="endDayEarly">End Day Early</button>

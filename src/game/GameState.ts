@@ -1,7 +1,7 @@
 import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
-import type { WeatherOutput } from '../system_model'
+import type { WeatherOutput, ForecastArrays } from '../system_model'
 
 export type GamePhase = 'start' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000
@@ -102,6 +102,10 @@ class GameState {
 
   get weatherHistory(): WeatherSnapshot[] {
     return this._world?.weatherHistory ?? []
+  }
+
+  get forecastArrays(): ForecastArrays | null {
+    return this._world?.forecastArrays ?? null
   }
 
   private stopSimulation(): void {

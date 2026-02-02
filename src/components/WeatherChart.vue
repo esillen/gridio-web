@@ -3,10 +3,13 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { WeatherSnapshot } from '../game/WorldSimulation'
+import type { ForecastArrays } from '../system_model'
 import { DAY_DURATION_SECONDS } from '../game/GameState'
 
 const props = defineProps<{
   history: WeatherSnapshot[]
+  forecastArrays: ForecastArrays | null
+  currentTime: number
   version: number
 }>()
 
@@ -15,15 +18,16 @@ let chart: uPlot | null = null
 
 const COLORS = {
   temperature: '#F2555D',
-  temperatureForecast: '#F2555D',
   wind: '#4467FE',
-  windForecast: '#4467FE',
-  cloud: '#95957F',
-  cloudForecast: '#95957F',
   solar: '#FFC877',
-  solarForecast: '#FFC877',
   axis: '#6b7280',
   grid: '#e5e7eb',
+}
+
+function formatHours(hours: number): string {
+  const h = Math.floor(hours)
+  const m = Math.floor((hours - h) * 60)
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
 function buildData(): uPlot.AlignedData {
@@ -35,28 +39,40 @@ function buildData(): uPlot.AlignedData {
   const solar: number[] = []
   const solarFc: (number | null)[] = []
 
+  // Current weather history (solid lines)
   for (const s of props.history) {
     times.push(s.time / 3600)
     temp.push(s.current.temperatureC)
     wind.push(s.current.windSpeed100mMps)
-    solar.push(s.current.solarIrradianceWm2 / 10) // Scale down for visibility
+    solar.push(s.current.solarIrradianceWm2 / 10)
     tempFc.push(null)
     windFc.push(null)
     solarFc.push(null)
   }
 
-  // Add forecast points (1h ahead from current time)
-  const last = props.history[props.history.length - 1]
-  if (last) {
-    const fcTime = (last.time + 3600) / 3600 // 1h ahead
-    if (fcTime <= 24) {
-      times.push(fcTime)
-      temp.push(last.current.temperatureC) // Bridge point
-      wind.push(last.current.windSpeed100mMps)
-      solar.push(last.current.solarIrradianceWm2 / 10)
-      tempFc.push(last.forecast1h.temperatureC)
-      windFc.push(last.forecast1h.windSpeedMps)
-      solarFc.push(last.forecast1h.solarIrradianceWm2 / 10)
+  // Add forecast data (dotted lines) from current time forward
+  if (props.forecastArrays && props.currentTime > 0) {
+    const fc = props.forecastArrays
+    const currentTimeHours = props.currentTime / 3600
+    const resolutionS = 60
+    const maxForecastHours = 6 // Show 6 hours of forecast
+
+    // Sample every 5 minutes for display (every 5th point)
+    for (let i = 0; i < fc.TMeanC.length; i += 5) {
+      const deltaS = i * resolutionS
+      const forecastTimeHours = currentTimeHours + deltaS / 3600
+      
+      if (forecastTimeHours > 24 || deltaS > maxForecastHours * 3600) break
+      if (forecastTimeHours <= currentTimeHours) continue
+
+      const lastHistory = props.history[props.history.length - 1]
+      times.push(forecastTimeHours)
+      temp.push(lastHistory?.current.temperatureC ?? 0)
+      wind.push(lastHistory?.current.windSpeed100mMps ?? 0)
+      solar.push((lastHistory?.current.solarIrradianceWm2 ?? 0) / 10)
+      tempFc.push(fc.TMeanC[i] ?? null)
+      windFc.push(fc.windMps[i] ?? null)
+      solarFc.push((fc.solarWm2[i] ?? 0) / 10)
     }
   }
 
@@ -87,7 +103,7 @@ function getOpts(width: number, height: number): uPlot.Options {
         stroke: COLORS.axis,
         grid: { stroke: COLORS.grid },
         ticks: { stroke: COLORS.grid },
-        values: (_, vals) => vals.map(v => `${v}h`),
+        values: (_, vals) => vals.map(v => formatHours(v)),
         font: '12px system-ui',
       },
       {
@@ -112,45 +128,54 @@ function getOpts(width: number, height: number): uPlot.Options {
       },
     ],
     series: [
-      {},
+      {
+        label: 'Time',
+        value: (_, v) => v != null ? formatHours(v) : '--',
+      },
       {
         label: 'Temp',
         stroke: COLORS.temperature,
         width: 2,
         scale: 'temp',
+        value: (_, v) => v != null ? `${v.toFixed(1)}°C` : '--',
       },
       {
         label: 'Temp (fc)',
-        stroke: COLORS.temperatureForecast,
+        stroke: COLORS.temperature,
         width: 2,
         dash: [5, 5],
         scale: 'temp',
+        value: (_, v) => v != null ? `${v.toFixed(1)}°C` : '--',
       },
       {
         label: 'Wind',
         stroke: COLORS.wind,
         width: 2,
         scale: 'wind',
+        value: (_, v) => v != null ? `${v.toFixed(1)} m/s` : '--',
       },
       {
         label: 'Wind (fc)',
-        stroke: COLORS.windForecast,
+        stroke: COLORS.wind,
         width: 2,
         dash: [5, 5],
         scale: 'wind',
+        value: (_, v) => v != null ? `${v.toFixed(1)} m/s` : '--',
       },
       {
         label: 'Solar/10',
         stroke: COLORS.solar,
         width: 2,
         scale: 'solar',
+        value: (_, v) => v != null ? `${(v * 10).toFixed(0)} W/m²` : '--',
       },
       {
         label: 'Solar/10 (fc)',
-        stroke: COLORS.solarForecast,
+        stroke: COLORS.solar,
         width: 2,
         dash: [5, 5],
         scale: 'solar',
+        value: (_, v) => v != null ? `${(v * 10).toFixed(0)} W/m²` : '--',
       },
     ],
     legend: {

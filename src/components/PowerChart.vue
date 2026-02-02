@@ -21,6 +21,12 @@ const COLORS = {
   grid: '#e5e7eb',
 }
 
+function formatHours(hours: number): string {
+  const h = Math.floor(hours)
+  const m = Math.floor((hours - h) * 60)
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+}
+
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const production: number[] = []
@@ -52,7 +58,7 @@ function getOpts(width: number, height: number): uPlot.Options {
         stroke: COLORS.axis,
         grid: { stroke: COLORS.grid },
         ticks: { stroke: COLORS.grid },
-        values: (_, vals) => vals.map(v => `${v}h`),
+        values: (_, vals) => vals.map(v => formatHours(v)),
         font: '12px system-ui',
       },
       {
@@ -65,22 +71,28 @@ function getOpts(width: number, height: number): uPlot.Options {
       },
     ],
     series: [
-      {},
+      {
+        label: 'Time',
+        value: (_, v) => v != null ? formatHours(v) : '--',
+      },
       {
         label: 'Production',
         stroke: COLORS.production,
         width: 2,
+        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
       {
         label: 'Consumption',
         stroke: COLORS.consumption,
         width: 2,
+        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
       {
         label: 'Imbalance',
         stroke: COLORS.imbalance,
         width: 2,
         dash: [5, 5],
+        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
     ],
     legend: {
