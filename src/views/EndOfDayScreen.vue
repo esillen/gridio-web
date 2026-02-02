@@ -6,7 +6,7 @@ import { gameState } from '../game/GameState'
 const router = useRouter()
 
 const stats = computed(() => {
-  const history = gameState.history
+  const history = gameState.gridHistory
   if (history.length === 0) return null
 
   const totalProductionMWs = history.reduce((sum, s) => sum + s.production, 0)

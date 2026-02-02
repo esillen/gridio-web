@@ -1,0 +1,177 @@
+
+
+# -------------------------------------------------------------------
+# weather_forecast_24h (per-second rolling forecast of the next 24h)
+# -------------------------------------------------------------------
+- id: weather_forecast_24h
+  type: forecast
+  tick_hz: 1
+  horizon_s: 86400
+  resolution_s: 60      # forecast grid step (compute once per minute), but expose as function each second
+
+  constants:
+    # Forecast error growth rates (toy but useful)
+    # Std error at horizon h: sigma(h) = sigma0 + k * sqrt(h/3600)
+    sigma0_T_C: 0.4
+    k_T_C_per_sqrt_h: 0.35
+
+    sigma0_wind_mps: 1.0
+    k_wind_mps_per_sqrt_h: 0.9
+
+    sigma0_cloud: 0.10
+    k_cloud_per_sqrt_h: 0.08
+
+    # Forecast mean-reversion times (should match now-model time constants roughly)
+    tau_T_forecast_s: 6.0e4
+    tau_wind_forecast_s: 7.2e3
+    tau_cloud_forecast_s: 1.44e4
+    tau_snow_forecast_s: 1.2e4
+
+    # Snow forecast parameters
+    p_snow_next_hour_base: 0.12    # base chance of snow sometime within next hour
+    snow_temp_boost_C: -1.0        # snow more likely below this temp
+    snow_prob_boost: 0.10
+
+  inputs:
+    clock_utc_plus1.time_s: "current time"
+    clock_utc_plus1.local_hour: "for diurnal"
+    clock_utc_plus1.local_minute: "for diurnal"
+    clock_utc_plus1.local_second: "for diurnal"
+    clock_utc_plus1.day_of_year: "for seasonal + solar"
+    weather_now_sweden.temperature_C: "current"
+    weather_now_sweden.front_offset_C: "if you expose it; otherwise omit"
+    weather_now_sweden.wind_speed_100m_mps: "current"
+    weather_now_sweden.cloud_cover_0_1: "current"
+    weather_now_sweden.precipitation_snow_mmph: "current"
+    weather_now_sweden.icing_risk_0_1: "current"
+
+  state_init:
+    # rolling arrays over the next 24h at 60s resolution
+    forecast_grid_times_s: "t0 + i*resolution_s, i=0..(horizon_s/resolution_s)"
+    T_mean_C: "array"
+    wind_mps: "array"
+    cloud_0_1: "array"
+    solar_Wm2: "array"
+    snow_mmph: "array"
+    icing_0_1: "array"
+    # plus uncertainty arrays (optional)
+    sigma_T_C: "array"
+    sigma_wind_mps: "array"
+    sigma_cloud: "array"
+
+  update_per_second:
+    - step: >
+        "Only recompute the full forecast arrays once per 60 seconds (or when a ‘significant change’ happens).
+         Each second, you can still serve interpolated values via the function outputs."
+
+    - recompute_every_resolution_s:
+        do:
+          # (1) Define current time reference
+          - define:
+              t0: "clock.time_s"
+              doy: "clock.day_of_year"
+              t_day_s0: "clock.local_hour*3600 + clock.local_minute*60 + clock.local_second"
+
+          # (2) For each horizon point h = i*resolution_s:
+          - loop:
+              i: "0..N where N = horizon_s/resolution_s"
+              define:
+                h_s: "i * resolution_s"
+                t_day_s: "(t_day_s0 + h_s) mod 86400"
+
+                # Seasonal targets (same formulas as now-model)
+                T_season_C: "2.0 - 10.0 * cos(2*pi*(doy - 20.0)/365)"
+                V_season_target_mps: "7.0 + 2.0 * cos(2*pi*(doy - 10.0)/365)"
+                cloud_target: "0.75 + 0.10 * cos(2*pi*(doy - 5.0)/365)"
+
+                # Diurnal temperature term (same constants as now-model)
+                T_diurnal_C: "2.0 * sin(2*pi*(t_day_s - (5.0*3600 + 86400/4))/86400)"
+                T_target_C: "T_season_C + T_diurnal_C"
+
+                # Mean forecasts (simple exponential approach from current state)
+                # x_hat(h) = x_target + (x_now - x_target) * exp(-h/tau)
+                T_hat_C: "T_target_C + (weather_now.temperature_C - T_target_C) * exp(-h_s/tau_T_forecast_s)"
+                wind_hat_mps: "V_season_target_mps + (weather_now.wind_speed_100m_mps - V_season_target_mps) * exp(-h_s/tau_wind_forecast_s)"
+                cloud_hat: "clamp01(cloud_target + (weather_now.cloud_cover_0_1 - cloud_target) * exp(-h_s/tau_cloud_forecast_s))"
+
+                # Solar uses the *forecasted* cloud and computed sun geometry at that future time
+                decl_deg: "23.44 * sin(2*pi*(284 + doy)/365)"
+                decl_rad: "decl_deg * pi/180"
+                lat_rad: "60.0 * pi/180"
+                t_hours: "t_day_s / 3600"
+                H_rad: "(t_hours - 12.0) * 15.0 * pi/180"
+                sin_elev: "sin(lat_rad)*sin(decl_rad) + cos(lat_rad)*cos(decl_rad)*cos(H_rad)"
+                sin_elev_pos: "max(0.0, sin_elev)"
+                ghi_clear_Wm2: "1361.0 * 0.72 * sin_elev_pos"
+                cloud_factor: "clamp01(1.0 - 0.75 * pow(cloud_hat, 1.3))"
+                solar_hat_Wm2: "ghi_clear_Wm2 * cloud_factor"
+
+                # Snow forecast: simple probability-based expected intensity
+                # Probability snow in next hour increases when cold and cloudier.
+                p_snow_next_hour: >
+                  clamp01(
+                    p_snow_next_hour_base
+                    + (T_hat_C < snow_temp_boost_C ? snow_prob_boost : 0.0)
+                    + 0.10 * (cloud_hat - 0.7)
+                  )
+                # Convert to expected mm/h (very simple):
+                snow_hat_mmph: >
+                  (p_snow_next_hour)
+                  * (0.6 * exp(-h_s/tau_snow_forecast_s) + 0.2)   # higher confidence near-term
+                  * 1.2                                          # intensity scale
+                snow_hat_mmph_clamped: "clamp(snow_hat_mmph, 0.0, 2.0)"
+
+                icing_hat_0_1: >
+                  clamp01(
+                    (snow_hat_mmph_clamped > 0.05 ? 1.0 : 0.0)
+                    * (
+                      (T_hat_C <= 1.0 && T_hat_C >= -6.0 ? 1.0 : 0.0)
+                      + (T_hat_C < -6.0 ? 0.4 : 0.0)
+                    )
+                  )
+
+                # Uncertainty (optional, for UI and planning)
+                # sigma(h) = sigma0 + k*sqrt(h_hours)
+                h_hours: "h_s / 3600"
+                sigma_T: "sigma0_T_C + k_T_C_per_sqrt_h * sqrt(h_hours)"
+                sigma_wind: "sigma0_wind_mps + k_wind_mps_per_sqrt_h * sqrt(h_hours)"
+                sigma_cloud: "sigma0_cloud + k_cloud_per_sqrt_h * sqrt(h_hours)"
+
+              write_arrays:
+                T_mean_C[i]: "T_hat_C"
+                wind_mps[i]: "clamp(wind_hat_mps, 0.0, 35.0)"
+                cloud_0_1[i]: "cloud_hat"
+                solar_Wm2[i]: "solar_hat_Wm2"
+                snow_mmph[i]: "snow_hat_mmph_clamped"
+                icing_0_1[i]: "icing_hat_0_1"
+                sigma_T_C[i]: "sigma_T"
+                sigma_wind_mps[i]: "sigma_wind"
+                sigma_cloud[i]: "sigma_cloud"
+
+  # Expose as functions for any Δ in [0..86400] each second
+  outputs_per_second:
+    forecast_temperature_C_tplus: >
+      "function T_hat(Δs):
+         i0 = floor(Δs / resolution_s)
+         i1 = min(i0+1, N)
+         w  = (Δs - i0*resolution_s)/resolution_s
+         return (1-w)*T_mean_C[i0] + w*T_mean_C[i1]"
+    forecast_wind_speed_100m_mps_tplus: >
+      "same linear interpolation over wind_mps[]"
+    forecast_cloud_cover_0_1_tplus: >
+      "same interpolation over cloud_0_1[]"
+    forecast_solar_irradiance_Wm2_tplus: >
+      "same interpolation over solar_Wm2[]"
+    forecast_precipitation_snow_mmph_tplus: >
+      "same interpolation over snow_mmph[]"
+    forecast_icing_risk_0_1_tplus: >
+      "same interpolation over icing_0_1[]"
+
+    # Optional uncertainty bands (useful for gameplay)
+    forecast_temperature_sigma_C_tplus: >
+      "same interpolation over sigma_T_C[]"
+    forecast_wind_sigma_mps_tplus: >
+      "same interpolation over sigma_wind_mps[]"
+    forecast_cloud_sigma_tplus: >
+      "same interpolation over sigma_cloud[]"
+

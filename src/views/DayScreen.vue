@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
 import PowerChart from '../components/PowerChart.vue'
+import WeatherChart from '../components/WeatherChart.vue'
 
 const router = useRouter()
 
@@ -34,12 +35,21 @@ onUnmounted(() => {
 })
 
 const currentTime = computed(() => gameState.currentTime)
-const snapshot = computed(() => gameState.currentSnapshot)
 
 function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600)
   const mins = Math.floor((seconds % 3600) / 60)
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`
+}
+
+function formatTemp(temp: number | undefined): string {
+  if (temp === undefined) return '--'
+  return `${temp.toFixed(1)}°C`
+}
+
+function formatWind(wind: number | undefined): string {
+  if (wind === undefined) return '--'
+  return `${wind.toFixed(1)} m/s`
 }
 
 function endDayEarly() {
@@ -74,23 +84,48 @@ function endDayEarly() {
       </button>
     </div>
 
-    <div class="stats" v-if="snapshot">
+    <div class="stats" v-if="gameState.currentSnapshot">
       <div class="stat production">
         <span class="label">Production</span>
-        <span class="value">{{ snapshot.production }} MW</span>
+        <span class="value">{{ gameState.currentSnapshot.production }} MW</span>
       </div>
       <div class="stat consumption">
         <span class="label">Consumption</span>
-        <span class="value">{{ snapshot.consumption }} MW</span>
+        <span class="value">{{ gameState.currentSnapshot.consumption }} MW</span>
       </div>
-      <div class="stat imbalance" :class="{ negative: snapshot.imbalance < 0, positive: snapshot.imbalance > 0 }">
+      <div class="stat imbalance" :class="{ negative: gameState.currentSnapshot.imbalance < 0, positive: gameState.currentSnapshot.imbalance > 0 }">
         <span class="label">Imbalance</span>
-        <span class="value">{{ snapshot.imbalance > 0 ? '+' : '' }}{{ snapshot.imbalance }} MW</span>
+        <span class="value">{{ gameState.currentSnapshot.imbalance > 0 ? '+' : '' }}{{ gameState.currentSnapshot.imbalance }} MW</span>
       </div>
     </div>
 
+    <div class="weather-stats" v-if="gameState.currentWeather">
+      <div class="stat temp">
+        <span class="label">Temperature</span>
+        <span class="value">{{ formatTemp(gameState.currentWeather.temperatureC) }}</span>
+      </div>
+      <div class="stat wind">
+        <span class="label">Wind</span>
+        <span class="value">{{ formatWind(gameState.currentWeather.windSpeed100mMps) }}</span>
+      </div>
+      <div class="stat solar">
+        <span class="label">Solar</span>
+        <span class="value">{{ gameState.currentWeather.solarIrradianceWm2.toFixed(0) }} W/m²</span>
+      </div>
+      <div class="stat cloud">
+        <span class="label">Clouds</span>
+        <span class="value">{{ (gameState.currentWeather.cloudCover01 * 100).toFixed(0) }}%</span>
+      </div>
+    </div>
+
+    <div class="section-label">Power Grid</div>
     <div class="chart-container">
-      <PowerChart :history="gameState.history" :version="gameState.historyVersion" />
+      <PowerChart :history="gameState.gridHistory" :version="gameState.historyVersion" />
+    </div>
+
+    <div class="section-label">Weather</div>
+    <div class="chart-container">
+      <WeatherChart :history="gameState.weatherHistory" :version="gameState.weatherHistoryVersion" />
     </div>
 
     <button class="end-btn" @click="endDayEarly">End Day Early</button>
@@ -197,7 +232,8 @@ h1 {
   color: white;
 }
 
-.stats {
+.stats,
+.weather-stats {
   display: flex;
   gap: 1rem;
   margin-bottom: 1rem;
@@ -206,8 +242,8 @@ h1 {
 .stat {
   flex: 1;
   background: white;
-  padding: 1rem;
-  border-radius: 16px;
+  padding: 0.75rem;
+  border-radius: 12px;
   text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -215,15 +251,15 @@ h1 {
 .stat .label {
   display: block;
   color: var(--color-gray-500);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
   font-weight: 500;
 }
 
 .stat .value {
-  font-size: 1.5rem;
+  font-size: 1.1rem;
   font-weight: 600;
   color: var(--color-gray-900);
 }
@@ -244,12 +280,37 @@ h1 {
   color: var(--gridio-clay-vivid);
 }
 
+.stat.temp .value {
+  color: var(--gridio-clay-vivid);
+}
+
+.stat.wind .value {
+  color: var(--gridio-sky-vivid);
+}
+
+.stat.solar .value {
+  color: var(--gridio-amber);
+}
+
+.stat.cloud .value {
+  color: var(--gridio-info-gray);
+}
+
+.section-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-gray-500);
+  margin-bottom: 0.5rem;
+}
+
 .chart-container {
   background: white;
   border-radius: 16px;
   padding: 1rem;
   margin-bottom: 1rem;
-  height: 300px;
+  height: 250px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 

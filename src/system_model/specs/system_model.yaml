@@ -1,0 +1,446 @@
+model_parts:
+
+  # ---------- TIME + WEATHER (inputs for almost everything) ----------
+
+  - id: clock_utc_plus1
+    type: input
+    tick_hz: 1
+    inputs: {}
+    outputs_per_second:
+      time_s: "simulation time (seconds since start)"
+      local_hour: "0-23"
+      local_minute: "0-59"
+      local_second: "0-59"
+      day_of_week: "0-6"
+      day_of_year: "1-365"
+    think_ahead_horizon_s: 86400
+    think_ahead: "exposes time indices used by other actors’ daily profiles."
+
+  - id: weather_now_sweden
+    type: input
+    tick_hz: 1
+    inputs: {}
+    outputs_per_second:
+      temperature_C: "nationwide weighted average (or per-zone if you split zones)"
+      wind_speed_100m_mps: "weighted average hub-height wind speed"
+      solar_irradiance_Wm2: "global horizontal irradiance proxy"
+      cloud_cover_0_1: "0..1"
+      precipitation_snow_mmph: "snow rate proxy"
+    think_ahead_horizon_s: 86400
+    think_ahead: "drives demand (temperature) + wind/solar generation."
+
+  - id: weather_forecast_24h
+    type: forecast
+    tick_hz: 1
+    inputs:
+      weather_now_sweden.temperature_C: "current"
+      weather_now_sweden.wind_speed_100m_mps: "current"
+      weather_now_sweden.solar_irradiance_Wm2: "current"
+      clock_utc_plus1.time_s: "current time"
+    outputs_per_second:
+      forecast_temperature_C_tplus: "function: T(t + Δ), Δ∈[0..86400]"
+      forecast_wind_speed_100m_mps_tplus: "function"
+      forecast_solar_irradiance_Wm2_tplus: "function"
+      forecast_confidence_0_1: "optional"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Generate a simple forecast curve (e.g., persistence + diurnal swing + noise).
+       It exists so other actors can plan within a single day."
+
+  # ---------- GRID TOPOLOGY (simple but impactful in Sweden) ----------
+
+  - id: bidding_zones_SE1_SE2_SE3_SE4
+    type: grid_constraint
+    tick_hz: 1
+    inputs:
+      clock_utc_plus1.local_hour: "for typical transfer patterns"
+      weather_now_sweden.temperature_C: "affects transfers + constraints indirectly"
+    outputs_per_second:
+      consumption_mw: 0
+      production_mw: 0
+      ntc_mw:
+        SE1_to_SE2: "set as dynamic corridor limit"
+        SE2_to_SE3: "set as dynamic corridor limit"
+        SE3_to_SE4: "set as dynamic corridor limit"
+      trm_mw:
+        SE3_to_SE4: "100..200 MW"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Update corridor limits slowly (e.g., once per minute) but expose per-second.
+       Use NTC ranges + TRM so a south-north bottleneck can appear and force curtailment or imports."
+
+  # ---------- DEMAND (consumption MW each second) ----------
+
+  - id: demand_residential_space_heating
+    type: load
+    tick_hz: 1
+    inputs:
+      weather_now_sweden.temperature_C: "primary driver"
+      weather_forecast_24h.forecast_temperature_C_tplus: "planning"
+      clock_utc_plus1.local_hour: "morning/evening peaks"
+    outputs_per_second:
+      consumption_mw: "0..12000 (cold snap can dominate)"
+      production_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Heat-pump + resistive blend.
+       Plan pre-heat / peak shaving within the day: if forecast colder in morning, ramp earlier;
+       if price/dispatch signal asks for flexibility, reduce within comfort/thermal-mass limits."
+
+  - id: demand_residential_non_heating
+    type: load
+    tick_hz: 1
+    inputs:
+      clock_utc_plus1.local_hour: "daily profile"
+      day_type: "weekday/weekend derived from clock"
+    outputs_per_second:
+      consumption_mw: "3000..6000"
+      production_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: "Repeatable daily profile with modest noise; slight uplift when very cold."
+
+  - id: demand_services_commercial
+    type: load
+    tick_hz: 1
+    inputs:
+      clock_utc_plus1.local_hour: "business hours profile"
+      day_type: "weekday/weekend"
+      weather_now_sweden.temperature_C: "heating/ventilation uplift"
+    outputs_per_second:
+      consumption_mw: "2500..6000"
+      production_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: "Office-hours peak; forecasts next-day profile from calendar + temperature."
+
+  - id: demand_industry_process
+    type: load
+    tick_hz: 1
+    inputs:
+      clock_utc_plus1.local_hour: "weak daily shape"
+      demand_response_signal_0_1: "optional curtailment/shift"
+    outputs_per_second:
+      consumption_mw: "4000..9000"
+      production_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Mostly steady baseload with some flexible blocks (e.g., 0..1000 MW shiftable/curtailable)."
+
+  - id: demand_transport_rail_and_ev
+    type: load
+    tick_hz: 1
+    inputs:
+      clock_utc_plus1.local_hour: "commute peaks"
+      temperature_C: "EV efficiency + preheating"
+      demand_response_signal_0_1: "smart charging"
+    outputs_per_second:
+      consumption_mw: "200..2500"
+      production_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: "EV charging shifts within-day; rail follows timetable-like daily curve."
+
+  - id: distribution_and_transmission_losses
+    type: load
+    tick_hz: 1
+    inputs:
+      total_generation_mw: "sum of generators before losses"
+      total_load_mw: "sum of loads"
+      interconnector_flow_mw: "optional"
+    outputs_per_second:
+      consumption_mw: "≈ 1%..4% of throughput (simple % model)"
+      production_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: "Estimate losses as k * (|flow| + |throughput|); update each second."
+
+  # ---------- GENERATION (production MW each second) ----------
+
+  - id: generation_nuclear_fleet
+    type: generator_dispatchable
+    tick_hz: 1
+    inputs:
+      outage_factor_0_1: "forced outage / derate"
+      dispatch_target_mw: "from dispatcher"
+      clock_utc_plus1.time_s: "for slow ramp"
+    outputs_per_second:
+      production_mw: "0..7008 * outage_factor"
+      consumption_mw: 0
+      available_mw: "≈7008 * outage_factor (but limited ramp)"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Treat as baseload: target is mostly flat; allow slow ramps (e.g., only a few MW/s).
+       Within-day: anticipate morning peak and try to avoid last-minute ramps."
+
+  - id: generation_hydro_reservoir_fleet
+    type: generator_dispatchable
+    tick_hz: 1
+    inputs:
+      dispatch_target_mw: "from dispatcher"
+      reserve_holdback_mw: "for frequency reserves"
+      inflow_proxy_0_1: "optional"
+      clock_utc_plus1.time_s: "planning"
+      weather_forecast_24h.forecast_temperature_C_tplus: "load planning"
+      vre_forecast_net_mw_tplus: "wind+solar forecast"
+    outputs_per_second:
+      production_mw: "0..16670 (minus holdback, energy budget limits)"
+      consumption_mw: 0
+      reservoir_energy_mwh: "state"
+      available_mw: "min(capacity, energy-constraint, ramp-constraint)"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Primary balancing + peak-shaving resource.
+       Keep an energy budget for the day (reservoir_energy_mwh) and allocate water to:
+       (1) cover net-load peaks, (2) keep reserve margin, (3) avoid spilling (optional)."
+
+  - id: generation_hydro_run_of_river
+    type: generator_semi_dispatchable
+    tick_hz: 1
+    inputs:
+      inflow_proxy_0_1: "driven by season/weather"
+    outputs_per_second:
+      production_mw: "0..3000 (simple constant-ish profile)"
+      consumption_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: "Limited flexibility; mostly follows inflow with small dispatch wiggle."
+
+  - id: generation_wind_fleet
+    type: generator_variable
+    tick_hz: 1
+    inputs:
+      weather_now_sweden.wind_speed_100m_mps: "main"
+      weather_forecast_24h.forecast_wind_speed_100m_mps_tplus: "planning"
+      curtailment_signal_0_1: "grid congestion/negative price"
+    outputs_per_second:
+      production_mw: "0..17400 * curtailment_factor"
+      consumption_mw: 0
+      available_mw: "power_curve(wind_speed) * 17400"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Use forecast wind to predict ramps; expose ‘expected_ramp_mw_per_min’ to dispatcher."
+
+  - id: generation_solar_pv_fleet
+    type: generator_variable
+    tick_hz: 1
+    inputs:
+      weather_now_sweden.solar_irradiance_Wm2: "main"
+      weather_now_sweden.precipitation_snow_mmph: "snow cover proxy"
+      weather_forecast_24h.forecast_solar_irradiance_Wm2_tplus: "planning"
+      clock_utc_plus1.local_hour: "sun position proxy"
+      curtailment_signal_0_1: "rare in winter; still include"
+    outputs_per_second:
+      production_mw: "0..5400 * snow_and_curtailment_factor"
+      consumption_mw: 0
+      available_mw: "irradiance_model * 5400"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Forecast midday bump; winter often low but can still matter locally."
+
+  - id: generation_biofuel_and_waste_chp
+    type: generator_cogen
+    tick_hz: 1
+    inputs:
+      district_heat_demand_proxy_0_1: "higher when cold"
+      fuel_availability_0_1: "optional"
+      dispatch_target_mw: "limited by heat"
+    outputs_per_second:
+      production_mw: "0..4000 (electric output constrained by heat run)"
+      consumption_mw: 0
+      available_mw: "min(electric_capacity, heat_constraint)"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Coupled to district heating: in cold weather you can run more.
+       Within-day: run more during heat-demand peaks; limited ramp vs hydro."
+
+  - id: generation_industrial_chp_and_byproduct
+    type: generator_semi_dispatchable
+    tick_hz: 1
+    inputs:
+      industry_activity_0_1: "ties to industrial demand"
+    outputs_per_second:
+      production_mw: "0..2500"
+      consumption_mw: 0
+    think_ahead_horizon_s: 86400
+    think_ahead: "Mostly steady; can drop if industrial process slows."
+
+  - id: generation_gas_oil_peakers_and_winter_reserve
+    type: generator_dispatchable
+    tick_hz: 1
+    inputs:
+      dispatch_emergency_signal_0_1: "only when tight"
+      dispatch_target_mw: "from dispatcher"
+      fuel_cost_level: "optional"
+    outputs_per_second:
+      production_mw: "0..1500 (rarely used), plus specific reserve blocks"
+      consumption_mw: 0
+      available_mw: "limited by reserve contracts / start times"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Model startup delay (minutes to hours).
+       Only commit when the next-hours forecast shows risk of deficit or reserve shortfall."
+
+  # ---------- CROSS-BORDER (imports/exports are a major 'actor' in Sweden) ----------
+
+  - id: interconnector_NO1_SE3
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "from dispatcher/market"
+      grid_constraint_factor_0_1: "West Coast Corridor / NTC reductions"
+    outputs_per_second:
+      production_mw: "max(0, import_to_sweden_mw)"
+      consumption_mw: "max(0, export_from_sweden_mw)"
+      flow_mw: "positive = import to Sweden, negative = export"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Respect directional NTC; plan flows when wind/hydro expected to change."
+
+  - id: interconnector_NO4_SE1_SE2
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "split across SE1/SE2"
+    outputs_per_second:
+      production_mw: "import portion"
+      consumption_mw: "export portion"
+      flow_mw: "net"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Represents northern cross-border exchange; ties into north-south congestion."
+
+  - id: interconnector_DK1_SE3_KontiSkan
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "from dispatcher/market"
+    outputs_per_second:
+      production_mw: "import portion"
+      consumption_mw: "export portion"
+      flow_mw: "net"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Include modest losses + optional ramp limits."
+
+  - id: interconnector_DE_SE4_BalticCable
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "from dispatcher/market"
+    outputs_per_second:
+      production_mw: "import portion"
+      consumption_mw: "export portion"
+      flow_mw: "net"
+      loss_mw: "≈2.4% * |flow|"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Apply minimum flow + ramp-rate limit; plan within-day to avoid hitting ramp ceilings."
+
+  - id: interconnector_PL_SE4_SwePol
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "from dispatcher/market"
+    outputs_per_second:
+      production_mw: "import portion"
+      consumption_mw: "export portion"
+      flow_mw: "net"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Apply ramp restriction (MW/h) and enforce NTC 600 MW."
+
+  - id: interconnector_LT_SE4_NordBalt
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "from dispatcher/market"
+    outputs_per_second:
+      production_mw: "import portion"
+      consumption_mw: "export portion"
+      flow_mw: "net"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Enforce 700 MW max; optional ramp restriction."
+
+  - id: interconnector_FI_SE3_FennoSkan
+    type: interconnector
+    tick_hz: 1
+    inputs:
+      dispatch_flow_target_mw: "from dispatcher/market"
+      cable_condition_factor_0_1: "Fenno-Skan 1 reduced capability"
+    outputs_per_second:
+      production_mw: "import portion"
+      consumption_mw: "export portion"
+      flow_mw: "net"
+      max_mw_current: "≈400 (FS1) + 800 (FS2) under normal conditions"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Enforce combined capacity + ramp restriction; use forecast to smooth schedule."
+
+  # ---------- BALANCING (per-second stability, still simple) ----------
+
+  - id: system_frequency_and_imbalance
+    type: control_state
+    tick_hz: 1
+    inputs:
+      total_generation_mw: "sum all production (incl imports as production)"
+      total_consumption_mw: "sum all consumption (incl exports as consumption)"
+      inertia_proxy_gw_s: "optional (higher when synchronous gen online)"
+    outputs_per_second:
+      production_mw: 0
+      consumption_mw: 0
+      imbalance_mw: "generation - consumption"
+      frequency_hz: "≈ 50.0 + k * imbalance_mw / inertia_proxy"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Predict near-future imbalance from wind ramps + load ramps to pre-arm reserves."
+
+  - id: tso_reserves_fcr_afrr_mfrr
+    type: control
+    tick_hz: 1
+    inputs:
+      system_frequency_and_imbalance.frequency_hz: "real-time"
+      system_frequency_and_imbalance.imbalance_mw: "real-time"
+      available_flexible_capacity_mw: "from hydro/CHP/batteries if you add"
+    outputs_per_second:
+      production_mw: "net +MW injected by reserves"
+      consumption_mw: "net -MW (down-regulation / demand response)"
+      fcr_response_mw: "fast (seconds)"
+      afrr_response_mw: "slower automatic (tens of seconds)"
+      mfrr_response_mw: "manual/activated (minutes)"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Reserve a slice of flexible resources; react per-second to stabilize frequency.
+       This can be a single combined ‘reserve controller’ for a game."
+
+  # ---------- DISPATCH / MARKET (simple centralized planner) ----------
+
+  - id: dispatcher_day_ahead_plus_realtime
+    type: control
+    tick_hz: 1
+    inputs:
+      weather_forecast_24h.*: "24h forecasts"
+      demand_*: "current loads"
+      generation_wind_fleet.available_mw: "current + forecasted"
+      generation_solar_pv_fleet.available_mw: "current + forecasted"
+      grid_constraints.ntc_mw: "limits"
+      system_frequency_and_imbalance.imbalance_mw: "real-time correction"
+    outputs_per_second:
+      production_mw: 0
+      consumption_mw: 0
+      setpoints:
+        generation_nuclear_fleet.dispatch_target_mw: "mostly flat"
+        generation_hydro_reservoir_fleet.dispatch_target_mw: "main balancing"
+        generation_biofuel_and_waste_chp.dispatch_target_mw: "heat-limited"
+        generation_gas_oil_peakers_and_winter_reserve.dispatch_target_mw: "emergency"
+        interconnector_* .dispatch_flow_target_mw: "imports/exports"
+      demand_response_signal_0_1: "optional"
+      curtailment_signal_0_1: "when congestion/oversupply"
+    think_ahead_horizon_s: 86400
+    think_ahead: >
+      "Core rule: meet demand every second while respecting:
+       (1) corridor NTCs, (2) generator ramp/start limits, (3) hydro energy budget,
+       (4) interconnector ramp limits.
+       Use 24h forecast to shape hydro + interconnector schedules, then correct in real time."
+
+  # ---------- EVENTS / OUTAGES (moment-to-moment surprises) ----------
+
+  - id: forced_outages_and_derates
+    type: stochastic_event
+    tick_hz: 1
+    inputs:
+      clock_utc_plus1.time_s: "for hazard rates"
+    outputs_per_second:
+      production_mw: 0
+      consumption_mw: 0
+      outage_factor_nuclear_0_1: "multiplier"
+      outage_factor_hydro_0_1: "multiplier"
+      outage_factor_interconnector_0_1: "multiplier"
+    think_ahead_horizon_s: 86400
+    think_ahead: "Within-day: small chance of trips; dispatcher must hold reserves."

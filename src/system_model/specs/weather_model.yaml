@@ -1,0 +1,258 @@
+# -------------------------------------------------------------------
+# weather_now_sweden (per-second weather state + stochastic evolution)
+# -------------------------------------------------------------------
+- id: weather_now_sweden
+  type: input_state
+  tick_hz: 1
+  units:
+    temperature_C: "°C"
+    wind_speed_100m_mps: "m/s (10-min mean proxy)"
+    wind_gust_mps: "m/s (1–3 s gust proxy)"
+    cloud_cover_0_1: "0..1"
+    solar_irradiance_Wm2: "W/m^2 (global horizontal irradiance proxy)"
+    precipitation_snow_mmph: "mm/hour water equivalent, snow only"
+    icing_risk_0_1: "0..1 (for wind derates etc.)"
+
+  # ----------------------------
+  # Geography simplification
+  # ----------------------------
+  constants:
+    # Representative "Sweden average" location for solar geometry
+    lat_deg: 60.0
+    lon_deg: 15.0
+
+    dt_s: 1.0
+    day_s: 86400.0
+
+    # Random numbers: N(0,1) standard normal; U(0,1) uniform
+    # Provide your own RNG; these are conceptual.
+    # clamp(x,a,b)=min(max(x,a),b)
+    # clamp01(x)=clamp(x,0,1)
+
+    # ----------------------------
+    # Temperature model constants
+    # ----------------------------
+    # Seasonal target (simple cosine around year)
+    # DOY in [1..365]
+    T_annual_mean_C: 2.0
+    T_season_amp_C: 10.0
+    # peak-cold occurs around DOY ~ 20 (late Jan) in this toy model
+    T_season_phase_doy: 20.0
+
+    # Diurnal swing magnitude (winter is modest)
+    T_diurnal_amp_C: 2.0
+    # Hour of daily minimum temperature (pre-dawn)
+    T_diurnal_min_hour: 5.0
+
+    # Mean-reversion time constant (how fast it drifts toward seasonal baseline)
+    tau_T_mean_s: 6.0e4       # 16.7 hours
+    # Stochastic short-term variability strength
+    sigma_T_C_per_sqrt_s: 0.010  # ~0.6°C std over 1 hour (roughly)
+
+    # Optional "front" events (cold snap/warm push) as a slowly varying offset
+    tau_front_s: 2.0e5        # 55.6 hours
+    sigma_front_C_per_sqrt_s: 0.004
+
+    # ----------------------------
+    # Wind model constants (100 m)
+    # ----------------------------
+    # Typical winter mean for Sweden (tunable)
+    V_season_mean_mps: 7.0
+    V_season_amp_mps: 2.0
+    V_season_phase_doy: 10.0
+
+    tau_wind_s: 7.2e3         # 2 hours mean reversion
+    sigma_wind_mps_per_sqrt_s: 0.050  # ~2.7 m/s std over 30 min
+
+    # Gust model (adds variability above mean wind)
+    gust_base_mps: 1.0
+    gust_factor: 0.35         # gust ~ base + factor*mean + noise
+    sigma_gust_mps: 0.7
+
+    # ----------------------------
+    # Cloud cover model constants
+    # ----------------------------
+    cloud_season_mean: 0.75
+    cloud_season_amp: 0.10
+    cloud_season_phase_doy: 5.0
+
+    tau_cloud_s: 1.44e4       # 4 hours mean reversion
+    sigma_cloud_per_sqrt_s: 0.0015  # modest per-second noise
+
+    # ----------------------------
+    # Snow precipitation model constants (simple on/off Markov)
+    # ----------------------------
+    # probability per second of starting snow when currently not snowing
+    p_start_snow_per_s: 2.0e-5   # ~1.7/day
+    # probability per second of stopping snow when currently snowing
+    p_stop_snow_per_s: 2.0e-4    # mean event duration ~5000s (~1.4h)
+
+    # intensity (mm/h water equivalent) sampled when snowing:
+    snow_intensity_min_mmph: 0.1
+    snow_intensity_max_mmph: 2.0
+    # intensity changes slowly (AR(1))
+    tau_snow_intensity_s: 1800.0
+    sigma_snow_intensity_mmph_per_sqrt_s: 0.02
+
+    # ----------------------------
+    # Solar irradiance constants (clear-sky proxy + cloud attenuation)
+    # ----------------------------
+    solar_constant_Wm2: 1361.0     # top-of-atmosphere
+    clear_sky_transmittance: 0.72  # crude atmosphere factor
+    # cloud attenuation: GHI = clear * (1 - k_cloud * cloud^p)
+    k_cloud: 0.75
+    p_cloud: 1.3
+    # Night threshold
+    min_sin_elevation: 0.0
+
+  # ----------------------------
+  # State variables (initialize)
+  # ----------------------------
+  state_init:
+    temperature_C: -8.0
+    front_offset_C: 0.0
+    wind_speed_100m_mps: 8.0
+    cloud_cover_0_1: 0.8
+    is_snowing: false
+    snow_intensity_mmph: 0.0
+
+  inputs:
+    clock_utc_plus1.time_s: "simulation time"
+    clock_utc_plus1.local_hour: "0..23"
+    clock_utc_plus1.local_minute: "0..59"
+    clock_utc_plus1.local_second: "0..59"
+    clock_utc_plus1.day_of_year: "1..365"
+
+  # ----------------------------
+  # Update equations (run each second)
+  # ----------------------------
+  update_per_second:
+    # (1) Helper time scalars
+    - define:
+        t_day_s: "local_hour*3600 + local_minute*60 + local_second"
+        doy: "day_of_year"
+
+    # (2) Seasonal baselines (simple cosine)
+    - define:
+        T_season_C: "T_annual_mean_C - T_season_amp_C * cos(2*pi*(doy - T_season_phase_doy)/365)"
+        V_season_target_mps: "V_season_mean_mps + V_season_amp_mps * cos(2*pi*(doy - V_season_phase_doy)/365)"
+        cloud_target: "cloud_season_mean + cloud_season_amp * cos(2*pi*(doy - cloud_season_phase_doy)/365)"
+
+    # (3) Diurnal temperature swing (sinusoid with minimum at T_diurnal_min_hour)
+    - define:
+        # phase so that sin() = -1 at min hour
+        # sin(2π*(t - phase)/day) reaches -1 when (t - phase)= -day/4 => phase = t + day/4
+        T_diurnal_C: "T_diurnal_amp_C * sin(2*pi*(t_day_s - (T_diurnal_min_hour*3600 + day_s/4))/day_s)"
+
+    # (4) Front offset (slow, stochastic mean-reverting to 0)
+    - update_state:
+        front_offset_C: >
+          front_offset_C
+          + (0.0 - front_offset_C) * (dt_s / tau_front_s)
+          + sigma_front_C_per_sqrt_s * sqrt(dt_s) * N(0,1)
+
+    # (5) Temperature (mean-reverting to seasonal + front + diurnal)
+    - define:
+        T_target_C: "T_season_C + front_offset_C + T_diurnal_C"
+    - update_state:
+        temperature_C: >
+          temperature_C
+          + (T_target_C - temperature_C) * (dt_s / tau_T_mean_s)
+          + sigma_T_C_per_sqrt_s * sqrt(dt_s) * N(0,1)
+
+    # (6) Wind speed (mean-reverting, stochastic, clamped)
+    - update_state:
+        wind_speed_100m_mps: >
+          clamp(
+            wind_speed_100m_mps
+            + (V_season_target_mps - wind_speed_100m_mps) * (dt_s / tau_wind_s)
+            + sigma_wind_mps_per_sqrt_s * sqrt(dt_s) * N(0,1),
+            0.0,
+            35.0
+          )
+
+    # (7) Cloud cover (mean-reverting, stochastic, clamped)
+    - update_state:
+        cloud_cover_0_1: >
+          clamp01(
+            cloud_cover_0_1
+            + (cloud_target - cloud_cover_0_1) * (dt_s / tau_cloud_s)
+            + sigma_cloud_per_sqrt_s * sqrt(dt_s) * N(0,1)
+          )
+
+    # (8) Snow on/off (Markov) + intensity AR(1) when snowing
+    - update_state:
+        is_snowing: >
+          if is_snowing == false:
+            (U(0,1) < p_start_snow_per_s)
+          else:
+            not (U(0,1) < p_stop_snow_per_s)
+    - update_state:
+        snow_intensity_mmph: >
+          if is_snowing == true:
+            clamp(
+              snow_intensity_mmph
+              + ((0.7 - snow_intensity_mmph) * (dt_s / tau_snow_intensity_s))
+              + sigma_snow_intensity_mmph_per_sqrt_s * sqrt(dt_s) * N(0,1),
+              snow_intensity_min_mmph,
+              snow_intensity_max_mmph
+            )
+          else:
+            0.0
+
+    # (9) Solar geometry (very lightweight approximation)
+    # Declination (Cooper-like):
+    # δ = 23.44° * sin( 2π * (284 + DOY) / 365 )
+    - define:
+        decl_deg: "23.44 * sin(2*pi*(284 + doy)/365)"
+        decl_rad: "decl_deg * pi/180"
+        lat_rad: "lat_deg * pi/180"
+
+        # Hour angle H: 0 at solar noon; approximate solar noon at 12:00 local
+        # H_rad = (t_hours - 12) * 15° in radians
+        t_hours: "t_day_s / 3600"
+        H_rad: "(t_hours - 12.0) * 15.0 * pi/180"
+
+        # Solar elevation sine:
+        # sin(α) = sin(lat)*sin(δ) + cos(lat)*cos(δ)*cos(H)
+        sin_elev: "sin(lat_rad)*sin(decl_rad) + cos(lat_rad)*cos(decl_rad)*cos(H_rad)"
+        sin_elev_pos: "max(min_sin_elevation, sin_elev)"
+
+    # (10) Clear-sky GHI proxy and cloud attenuation
+    - define:
+        ghi_clear_Wm2: "solar_constant_Wm2 * clear_sky_transmittance * sin_elev_pos"
+        cloud_factor: "clamp01(1.0 - k_cloud * pow(cloud_cover_0_1, p_cloud))"
+        solar_irradiance_Wm2: "ghi_clear_Wm2 * cloud_factor"
+
+    # (11) Derived outputs: gusts + icing risk
+    - define:
+        wind_gust_mps: >
+          clamp(
+            wind_speed_100m_mps
+            + gust_base_mps
+            + gust_factor * wind_speed_100m_mps
+            + sigma_gust_mps * N(0,1),
+            wind_speed_100m_mps,
+            45.0
+          )
+        precipitation_snow_mmph: "snow_intensity_mmph"
+
+        # icing risk: high when -6..+1°C and snowing (wet snow / icing), moderate below -6
+        icing_risk_0_1: >
+          clamp01(
+            (is_snowing ? 1.0 : 0.0)
+            * (
+              (temperature_C <= 1.0 && temperature_C >= -6.0 ? 1.0 : 0.0)
+              + (temperature_C < -6.0 ? 0.4 : 0.0)
+            )
+          )
+
+  outputs_per_second:
+    temperature_C: "state.temperature_C"
+    wind_speed_100m_mps: "state.wind_speed_100m_mps"
+    wind_gust_mps: "derived.wind_gust_mps"
+    cloud_cover_0_1: "state.cloud_cover_0_1"
+    solar_irradiance_Wm2: "derived.solar_irradiance_Wm2"
+    precipitation_snow_mmph: "derived.precipitation_snow_mmph"
+    icing_risk_0_1: "derived.icing_risk_0_1"
+

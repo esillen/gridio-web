@@ -1,7 +1,7 @@
 import { reactive, markRaw } from 'vue'
-import { PowerGrid, type GridSnapshot } from './PowerGrid'
-import { PowerPlant } from './PowerPlant'
-import { Consumer } from './Consumer'
+import { WorldSimulation, type WeatherSnapshot } from './WorldSimulation'
+import type { GridSnapshot } from './PowerGrid'
+import type { WeatherOutput } from '../system_model'
 
 export type GamePhase = 'start' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000
@@ -13,16 +13,18 @@ export interface GameConfig {
   consumerCount: number
   powerPlantMW: number
   consumerMW: number
+  startDayOfYear: number
 }
 
 class GameState {
   phase: GamePhase = 'start'
-  private _grid = markRaw(new PowerGrid())
+  private _world: WorldSimulation | null = null
   config: GameConfig = {
     powerPlantCount: 3,
     consumerCount: 5,
     powerPlantMW: 100,
-    consumerMW: 50
+    consumerMW: 50,
+    startDayOfYear: 15, // Mid-January
   }
   speed: SimulationSpeed = 1
   paused = false
@@ -30,26 +32,17 @@ class GameState {
   // Reactive UI state - synced once per frame
   currentTime = 0
   currentSnapshot: GridSnapshot | null = null
+  currentWeather: WeatherOutput | null = null
   historyVersion = 0
+  weatherHistoryVersion = 0
 
   private animationFrameId: number | null = null
   private lastFrameTime: number | null = null
   private accumulatedTime = 0
 
   startDay(): void {
-    this._grid.reset()
-
-    for (let i = 0; i < this.config.powerPlantCount; i++) {
-      this._grid.connect(
-        new PowerPlant(`plant-${i}`, `Power Plant ${i + 1}`, this.config.powerPlantMW)
-      )
-    }
-
-    for (let i = 0; i < this.config.consumerCount; i++) {
-      this._grid.connect(
-        new Consumer(`consumer-${i}`, `Consumer ${i + 1}`, this.config.consumerMW)
-      )
-    }
+    this._world = markRaw(new WorldSimulation(this.config))
+    this._world.initialize()
 
     this.phase = 'day'
     this.paused = false
@@ -67,7 +60,7 @@ class GameState {
   }
 
   private simulationFrame(currentTime: number): void {
-    if (this.paused || this.phase !== 'day') return
+    if (this.paused || this.phase !== 'day' || !this._world) return
 
     if (this.lastFrameTime !== null) {
       const deltaMs = currentTime - this.lastFrameTime
@@ -77,8 +70,8 @@ class GameState {
       this.accumulatedTime -= ticksToRun * 1000
 
       for (let i = 0; i < ticksToRun; i++) {
-        this._grid.tick()
-        if (this._grid.currentTime >= DAY_DURATION_SECONDS) {
+        this._world.tick()
+        if (this._world.currentTime >= DAY_DURATION_SECONDS) {
           this.syncUIState()
           this.endDay()
           return
@@ -95,13 +88,20 @@ class GameState {
   }
 
   private syncUIState(): void {
-    this.currentTime = this._grid.currentTime
-    this.currentSnapshot = this._grid.latestSnapshot
+    if (!this._world) return
+    this.currentTime = this._world.currentTime
+    this.currentSnapshot = this._world.latestGridSnapshot
+    this.currentWeather = this._world.currentWeather
     this.historyVersion++
+    this.weatherHistoryVersion++
   }
 
-  get history(): GridSnapshot[] {
-    return this._grid.history
+  get gridHistory(): GridSnapshot[] {
+    return this._world?.gridHistory ?? []
+  }
+
+  get weatherHistory(): WeatherSnapshot[] {
+    return this._world?.weatherHistory ?? []
   }
 
   private stopSimulation(): void {
@@ -134,10 +134,13 @@ class GameState {
 
   restart(): void {
     this.stopSimulation()
-    this._grid.reset()
+    this._world?.reset()
+    this._world = null
     this.currentTime = 0
     this.currentSnapshot = null
+    this.currentWeather = null
     this.historyVersion = 0
+    this.weatherHistoryVersion = 0
     this.phase = 'start'
   }
 }
