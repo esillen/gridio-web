@@ -25,6 +25,28 @@ export interface GameConfig {
   toggles: SimulationToggles
 }
 
+export interface BESSConfig {
+  capacityMWh: number
+  maxPowerMW: number
+  roundTripEfficiency: number
+  initialSoC01: number
+}
+
+export interface HourlyBid {
+  hour: number
+  volumeMW: number
+}
+
+export interface PlayerBids {
+  daBids: HourlyBid[]
+  fcrBids: HourlyBid[]
+}
+
+export interface MarketPrices {
+  daEurPerMWh: number[]
+  fcrEurPerMWPerH: number[]
+}
+
 class GameState {
   phase: GamePhase = 'start'
   private _world: WorldSimulation | null = null
@@ -44,6 +66,23 @@ class GameState {
   }
   speed: SimulationSpeed = 1
   paused = false
+
+  bess: BESSConfig = {
+    capacityMWh: 100,
+    maxPowerMW: 50,
+    roundTripEfficiency: 0.90,
+    initialSoC01: 0.5,
+  }
+
+  playerBids: PlayerBids = {
+    daBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
+    fcrBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
+  }
+
+  marketPrices: MarketPrices = {
+    daEurPerMWh: new Array(24).fill(40),
+    fcrEurPerMWPerH: new Array(24).fill(25),
+  }
 
   // Reactive UI state - synced once per frame
   currentTime = 0
@@ -213,7 +252,59 @@ class GameState {
     this.currentFrequencyBand = 'normal'
     this.historyVersion = 0
     this.weatherHistoryVersion = 0
+    this.resetBids()
     this.phase = 'start'
+  }
+
+  resetBids(): void {
+    this.playerBids = {
+      daBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
+      fcrBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
+    }
+  }
+
+  generateMarketPrices(seed: number): void {
+    const month = this.config.startDayOfYear < 32 ? 1 :
+                  this.config.startDayOfYear < 60 ? 2 :
+                  this.config.startDayOfYear < 91 ? 3 :
+                  this.config.startDayOfYear < 121 ? 4 :
+                  this.config.startDayOfYear < 152 ? 5 :
+                  this.config.startDayOfYear < 182 ? 6 :
+                  this.config.startDayOfYear < 213 ? 7 :
+                  this.config.startDayOfYear < 244 ? 8 :
+                  this.config.startDayOfYear < 274 ? 9 :
+                  this.config.startDayOfYear < 305 ? 10 :
+                  this.config.startDayOfYear < 335 ? 11 : 12
+
+    const seasonMult = [1.35, 1.30, 1.10, 0.95, 0.85, 0.75, 0.70, 0.75, 0.90, 1.05, 1.20, 1.35][month - 1] ?? 1
+    const fcrSeasonMult = [1.20, 1.15, 1.05, 0.95, 0.90, 0.85, 0.85, 0.90, 0.95, 1.00, 1.10, 1.20][month - 1] ?? 1
+    const diurnal = [0.85, 0.82, 0.80, 0.80, 0.83, 0.90, 1.05, 1.18, 1.12, 1.05, 1.00, 0.98, 0.97, 0.98, 1.02, 1.08, 1.18, 1.25, 1.15, 1.05, 0.98, 0.92, 0.88, 0.86]
+    const basePrice = 36.06
+    const baseFcrPrice = 24
+
+    for (let h = 0; h < 24; h++) {
+      const x = ((seed ^ (h * 2654435761)) >>> 0)
+      const noise = ((1664525 * x + 1013904223) >>> 0) / 4294967296 * 20 - 10
+      this.marketPrices.daEurPerMWh[h] = Math.round(basePrice * seasonMult * (diurnal[h] ?? 1) + noise)
+
+      const x2 = ((seed ^ ((h + 100) * 2654435761)) >>> 0)
+      const fcrNoise = ((1664525 * x2 + 1013904223) >>> 0) / 4294967296 * 10 - 5
+      this.marketPrices.fcrEurPerMWPerH[h] = Math.round(baseFcrPrice * fcrSeasonMult + fcrNoise)
+    }
+  }
+
+  setDABid(hour: number, volumeMW: number): void {
+    const maxVolume = this.bess.maxPowerMW
+    const clamped = Math.max(-maxVolume, Math.min(maxVolume, volumeMW))
+    const bid = this.playerBids.daBids.find(b => b.hour === hour)
+    if (bid) bid.volumeMW = clamped
+  }
+
+  setFCRBid(hour: number, volumeMW: number): void {
+    const maxVolume = this.bess.maxPowerMW
+    const clamped = Math.max(0, Math.min(maxVolume, volumeMW))
+    const bid = this.playerBids.fcrBids.find(b => b.hour === hour)
+    if (bid) bid.volumeMW = clamped
   }
 }
 

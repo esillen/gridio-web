@@ -1,0 +1,422 @@
+model_part: market_prices_known_ahead
+version: 1.0
+tick_s: 1
+
+description: >
+  Generates "known-ahead" price curves for a simplified Sweden market game:
+  - Day-ahead (DA) hourly energy price for the next 24 delivery hours.
+  - FCR capacity price (single symmetric product) hourly for the next 24 delivery hours.
+  - Imbalance settlement prices (up/down) for the next 96 x 15-min MTUs.
+  Prices are deterministic given inputs + seed; meant to feel realistic (Nordic winter: wind-driven, scarcity spikes,
+  occasional negative prices during surplus). Horizon: <= 24h.
+
+units:
+  price_energy: EUR/MWh
+  price_capacity: EUR/MW/h
+  power: MW
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_year: int
+    local_month_1_12: int
+    local_day_1_31: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+
+  # Which Swedish bidding zone your game world is emulating (affects congestion premium baseline).
+  bidding_zone:
+    zone: enum  # ["SE1","SE2","SE3","SE4","SYS"]
+
+  # 24h forecasts (index 0 = next delivery hour, i.e., ceil(now to full hour))
+  forecast_24h:
+    step_s: 3600
+    demand_total_MW: [float]                 # incl. all demand actors + losses if you prefer (be consistent)
+    wind_generation_MW: [float]
+    solar_generation_MW: [float]
+    hydro_run_of_river_generation_MW: [float]
+    bio_waste_chp_generation_MW: [float]
+    industrial_chp_generation_MW: [float]
+    nuclear_generation_MW: [float]           # expected (often flat); if unknown, pass 0 and the model will ignore
+
+    # Optional: if you have it, provides a congestion proxy (0=uncongested, 1=highly congested) per hour.
+    # If not provided, the model derives a proxy from residual load vs import/export capacity.
+    congestion_index_0_1: [float]            # optional, length 24
+
+  # System capability summary (used to determine scarcity likelihood)
+  capabilities:
+    hydro_reservoir:
+      max_MW: float
+      min_MW: float
+      # usable energy remaining influences scarcity premium (low reservoir => higher prices)
+      reservoir_energy_MWh: float
+      reservoir_energy_max_MWh: float
+    peakers:
+      max_MW: float                           # gas/oil/winter reserve max
+    interconnectors:
+      net_import_max_MW: float                # + import limit
+      net_export_max_MW: float                # + export magnitude limit (positive number)
+
+  # Tunable "regime" and deterministic randomness
+  scenario:
+    # 0 = calm, 1 = normal, 2 = stressed (more scarcity + volatility)
+    stress_level_0_2: int
+    deterministic_seed_u32: int
+
+state:
+  # next-hour anchored horizons
+  horizon_anchor:
+    next_delivery_hour_unix_s: int
+    next_delivery_hour_local_hour_0_23: int
+
+  da_price_EUR_per_MWh_24: [float]            # length 24
+  fcr_price_EUR_per_MW_per_h_24: [float]      # length 24
+  imb_price_up_EUR_per_MWh_96: [float]        # length 96 (15-min)
+  imb_price_down_EUR_per_MWh_96: [float]      # length 96 (15-min)
+
+  last_recalc_anchor_unix_s: int
+
+constants:
+  # -------------------------
+  # Hard market bounds (SDAC day-ahead clearing price bounds)
+  # -------------------------
+  da_price_min_EUR_per_MWh: -500.0
+  da_price_max_EUR_per_MWh: 4000.0
+
+  # Imbalance prices can be more extreme in reality; for game stability, cap at a wider but finite range.
+  imbalance_price_min_EUR_per_MWh: -1000.0
+  imbalance_price_max_EUR_per_MWh: 6000.0
+
+  # -------------------------
+  # Nord Pool 2024 anchor (system price level)
+  # -------------------------
+  nordic_system_price_2024_avg_EUR_per_MWh: 36.06
+
+  # Seasonality multiplier (Nordics: winter higher)
+  # Month: 1..12
+  season_mult_by_month_1_12:
+    # Jan  Feb  Mar  Apr  May  Jun  Jul  Aug  Sep  Oct  Nov  Dec
+    [1.35,1.30,1.10,0.95,0.85,0.75,0.70,0.75,0.90,1.05,1.20,1.35]
+
+  # Typical intra-day shape (relative, mean ~1.0):
+  # winter pattern with morning & evening peaks.
+  diurnal_mult_by_hour_0_23:
+    [0.85,0.82,0.80,0.80,0.83,0.90,1.05,1.18,1.12,1.05,1.00,0.98,0.97,0.98,1.02,1.08,1.18,1.25,1.15,1.05,0.98,0.92,0.88,0.86]
+
+  # Zone baseline premium (EUR/MWh) capturing typical structural spreads (congestion + location).
+  # (Still allow congestion_index_0_1 to move it around dynamically)
+  zone_base_premium_EUR_per_MWh:
+    SE1: -2.0
+    SE2: -1.0
+    SE3:  2.0
+    SE4:  6.0
+    SYS:  0.0
+
+  # -------------------------
+  # Scarcity / marginal price anchors
+  # -------------------------
+  # Low-price floor (hydro/wind abundant)
+  low_price_EUR_per_MWh: 10.0
+
+  # Approx marginal cost proxy for peakers (fuel+CO2+O&M all-in, game-stable)
+  peaker_marginal_cost_EUR_per_MWh: 180.0
+
+  # "Value of Lost Load" proxy used only for shaping very rare extreme spikes in stressed mode
+  voll_EUR_per_MWh: 3000.0
+
+  # How sharply price reacts to scarcity
+  scarcity_alpha: 3.0                    # higher => more non-linear spikes
+
+  # -------------------------
+  # FCR capacity price anchors (single symmetric product, FCR-N-like)
+  # -------------------------
+  # Base (normal conditions) around ~20–30 EUR/MW/h
+  fcr_base_price_EUR_per_MW_per_h: 24.0
+
+  # Seasonality for FCR (winter more volatility and tighter system)
+  fcr_season_mult_by_month_1_12:
+    [1.20,1.15,1.05,0.95,0.90,0.85,0.85,0.90,0.95,1.00,1.10,1.20]
+
+  # Sensitivities
+  fcr_volatility_sensitivity: 0.35       # vs wind forecast variability
+  fcr_scarcity_sensitivity: 0.60         # vs energy scarcity index
+
+  # Caps for stability (FCR can spike, but keep game readable)
+  fcr_price_min_EUR_per_MW_per_h: 1.0
+  fcr_price_max_EUR_per_MW_per_h: 250.0
+
+  # -------------------------
+  # Imbalance pricing (simplified Nordic-style: DA reference + scarcity/volatility spread)
+  # -------------------------
+  # Base spread in EUR/MWh (up above DA, down below DA)
+  imbalance_base_spread_EUR_per_MWh: 12.0
+  imbalance_spread_scarcity_coeff: 90.0        # adds up to ~+90 EUR/MWh at scarcity=1
+  imbalance_spread_vol_coeff: 0.020            # adds per MW of wind variability proxy
+  imbalance_stress_mult_by_level_0_2: [0.8, 1.0, 1.35]
+
+  # -------------------------
+  # Recalc cadence
+  # -------------------------
+  # Prices are "known ahead"; recompute only when the delivery-hour anchor changes (next full hour).
+  recalc_if_anchor_changes: true
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  lerp: "lerp(a,b,u)=a+(b-a)*clamp01(u)"
+
+  # Deterministic pseudo-random in [-1, +1] from (seed, k)
+  # Good enough for games; no external RNG needed.
+  prn_unit: >
+    func(seed_u32, k_u32):
+      # 32-bit LCG hash -> [0,1) -> [-1,1]
+      x = (seed_u32 ^ (k_u32*2654435761)) & 0xFFFFFFFF
+      x = (1664525*x + 1013904223) & 0xFFFFFFFF
+      u = x / 4294967296.0
+      return 2.0*u - 1.0
+
+  # Wind variability proxy from hourly forecast (MW)
+  # Uses absolute hour-to-hour ramps; higher ramps => more balancing risk.
+  wind_variability_MW: >
+    func(wind_24):
+      s = 0.0
+      for h in 1..23:
+        s += abs(wind_24[h] - wind_24[h-1])
+      return s / 23.0
+
+  # Compute scarcity index 0..1 for an hour given residual load and flexibility.
+  scarcity_index: >
+    func(residual_MW, flex_MW, peaker_cap_MW):
+      # residual <= flex => scarcity near 0
+      # residual > flex => peakers needed; approach 1 as peakers saturate
+      need_peaker = max(0, residual_MW - flex_MW)
+      return clamp01(need_peaker / max(1.0, peaker_cap_MW))
+
+  # Convert scarcity to a smooth premium factor in [0,1] with non-linear spikes.
+  scarcity_premium_u: >
+    func(scarcity_0_1, alpha):
+      return 1.0 - exp(-alpha * clamp01(scarcity_0_1))
+
+update_per_tick:
+  # 0) Compute next delivery-hour anchor (ceil to full hour)
+  - t_in_hour_s: "= time_now.local_minute_0_59*60 + time_now.local_second_0_59"
+  - secs_to_next_hour: "= (t_in_hour_s == 0) ? 0 : (3600 - t_in_hour_s)"
+  - anchor_unix_s: "= time_now.unix_s + secs_to_next_hour"
+  - anchor_local_hour: "= (time_now.local_hour_0_23 + (t_in_hour_s == 0 ? 0 : 1)) % 24"
+
+  - should_recalc: >
+      (state.last_recalc_anchor_unix_s != anchor_unix_s)
+      and recalc_if_anchor_changes
+
+  - if should_recalc:
+      - state.last_recalc_anchor_unix_s: "= anchor_unix_s"
+      - state.horizon_anchor.next_delivery_hour_unix_s: "= anchor_unix_s"
+      - state.horizon_anchor.next_delivery_hour_local_hour_0_23: "= anchor_local_hour"
+
+      # 1) Precompute common scalars
+      - month: "= time_now.local_month_1_12"
+      - season_mult: "= season_mult_by_month_1_12[month-1]"
+      - fcr_season_mult: "= fcr_season_mult_by_month_1_12[month-1]"
+      - stress_mult: "= imbalance_stress_mult_by_level_0_2[scenario.stress_level_0_2]"
+
+      - zone_premium: >
+          (bidding_zone.zone == "SE1") ? zone_base_premium_EUR_per_MWh.SE1 :
+          (bidding_zone.zone == "SE2") ? zone_base_premium_EUR_per_MWh.SE2 :
+          (bidding_zone.zone == "SE3") ? zone_base_premium_EUR_per_MWh.SE3 :
+          (bidding_zone.zone == "SE4") ? zone_base_premium_EUR_per_MWh.SE4 :
+                                         zone_base_premium_EUR_per_MWh.SYS
+
+      - wind_var_MW: "= wind_variability_MW(forecast_24h.wind_generation_MW)"
+
+      # Reservoir tightness proxy: 0 when full, 1 when very low
+      - res_E_frac: "= clamp01(capabilities.hydro_reservoir.reservoir_energy_MWh / max(1.0, capabilities.hydro_reservoir.reservoir_energy_max_MWh))"
+      - reservoir_tight_0_1: "= clamp01(1.0 - res_E_frac)"
+
+      # Flexibility available per hour (simplified):
+      # hydro reservoir headroom + import headroom (ignore export for deficit hours)
+      - hydro_flex_MW: "= max(0.0, capabilities.hydro_reservoir.max_MW - capabilities.hydro_reservoir.min_MW)"
+      - import_flex_MW: "= max(0.0, capabilities.interconnectors.net_import_max_MW)"
+
+      # Hold back some flexibility as "reserve margin" (bigger in stressed regime)
+      - flex_holdback_frac: "= clamp(0.10 + 0.05*scenario.stress_level_0_2, 0.10, 0.25)"
+      - flex_MW: "= (hydro_flex_MW + import_flex_MW) * (1.0 - flex_holdback_frac)"
+
+      # 2) Compute DA hourly prices for the next 24 delivery hours
+      - for h in 0..23:
+          - demand_h: "= forecast_24h.demand_total_MW[h]"
+          - wind_h: "= forecast_24h.wind_generation_MW[h]"
+          - solar_h: "= forecast_24h.solar_generation_MW[h]"
+          - ror_h: "= forecast_24h.hydro_run_of_river_generation_MW[h]"
+          - chp_bio_h: "= forecast_24h.bio_waste_chp_generation_MW[h]"
+          - chp_ind_h: "= forecast_24h.industrial_chp_generation_MW[h]"
+
+          # nuclear may be omitted; if provided, include it
+          - nuclear_h: "= forecast_24h.nuclear_generation_MW[h]"
+
+          - must_take_h: "= wind_h + solar_h + ror_h + chp_bio_h + chp_ind_h + nuclear_h"
+          - residual_h: "= demand_h - must_take_h"   # can be negative (surplus)
+
+          # Derive congestion proxy if not provided:
+          # If surplus is large relative to export capability -> congestion likely (prices more negative / lower in north; higher in south)
+          - export_cap: "= max(1.0, capabilities.interconnectors.net_export_max_MW)"
+          - surplus_h: "= max(0.0, -residual_h)"
+          - derived_congestion_0_1_h: "= clamp01(surplus_h / export_cap)"
+          - congestion_0_1_h: >
+              (forecast_24h.congestion_index_0_1 != null)
+              ? clamp01(forecast_24h.congestion_index_0_1[h])
+              : derived_congestion_0_1_h
+
+          # Energy scarcity index (0..1) for deficit hours
+          - scarcity_0_1_h: "= (residual_h <= 0) ? 0.0 : scarcity_index(residual_h, flex_MW, max(1.0, capabilities.peakers.max_MW))"
+          - scarcity_u_h: "= scarcity_premium_u(scarcity_0_1_h, scarcity_alpha)"
+
+          # Base level anchored on 2024 Nordics average, seasonality and diurnal shape
+          - delivery_hour_local: "= (state.horizon_anchor.next_delivery_hour_local_hour_0_23 + h) % 24"
+          - diurnal_mult: "= diurnal_mult_by_hour_0_23[delivery_hour_local]"
+          - base_level_h: "= nordic_system_price_2024_avg_EUR_per_MWh * season_mult * diurnal_mult"
+
+          # Scarcity premium pushes price toward peaker marginal cost (and rare spikes toward VoLL in stressed mode)
+          - scarcity_price_h: "= lerp(low_price_EUR_per_MWh, peaker_marginal_cost_EUR_per_MWh, scarcity_u_h)"
+          - extreme_spike_h: >
+              (scenario.stress_level_0_2 == 2)
+              ? (scarcity_u_h*scarcity_u_h) * 0.15 * (voll_EUR_per_MWh - peaker_marginal_cost_EUR_per_MWh)
+              : 0.0
+
+          # Surplus discount can drive negative prices; scale with surplus ratio
+          - surplus_ratio_h: "= (demand_h > 1.0) ? clamp01(surplus_h / demand_h) : 0.0"
+          - surplus_discount_h: "= 220.0 * surplus_ratio_h"     # up to ~220 EUR/MWh discount at strong surplus
+          - surplus_floor_h: "= -60.0 * clamp01(2.0*surplus_ratio_h)"  # typical negative in Nordics; bounded further by SDAC min
+
+          # Congestion premium (zone-dependent): in south zones, congestion tends to raise prices under deficit,
+          # while in surplus it can deepen negatives in export-constrained situations.
+          - congestion_premium_h: >
+              (residual_h > 0)
+              ? (congestion_0_1_h * 18.0)     # deficit + congestion => higher
+              : (-congestion_0_1_h * 25.0)    # surplus + congestion => lower/more negative
+
+          # Reservoir tightness adds premium (dry system => higher prices)
+          - reservoir_premium_h: "= reservoir_tight_0_1 * (15.0 + 10.0*scenario.stress_level_0_2)"
+
+          # Deterministic noise (small, bigger when wind ramps)
+          - noise_amp_h: "= 2.5 + 0.002*wind_var_MW + 3.0*scenario.stress_level_0_2"
+          - noise_h: "= noise_amp_h * prn_unit(scenario.deterministic_seed_u32, 1000 + h)"
+
+          # Compose DA price
+          - da_h_raw: >
+              if residual_h <= 0:
+                # surplus regime
+                (base_level_h + zone_premium + congestion_premium_h + reservoir_premium_h)
+                - surplus_discount_h
+                + noise_h
+              else:
+                # deficit regime
+                (base_level_h + zone_premium + congestion_premium_h + reservoir_premium_h)
+                + (scarcity_price_h - low_price_EUR_per_MWh)     # shift toward peakers
+                + extreme_spike_h
+                + noise_h
+
+          # Encourage modest negatives during mild surplus; allow deep negatives only when heavily constrained
+          - da_h_raw: "= max(da_h_raw, surplus_floor_h)"
+          - state.da_price_EUR_per_MWh_24[h]: "= clamp(da_h_raw, da_price_min_EUR_per_MWh, da_price_max_EUR_per_MWh)"
+
+      # 3) Compute FCR hourly capacity prices (single symmetric product)
+      - for h in 0..23:
+          - # Use scarcity and wind variability as drivers; reservoir tightness increases need for fast services
+          - demand_h: "= forecast_24h.demand_total_MW[h]"
+          - must_take_h: >
+              forecast_24h.wind_generation_MW[h]
+              + forecast_24h.solar_generation_MW[h]
+              + forecast_24h.hydro_run_of_river_generation_MW[h]
+              + forecast_24h.bio_waste_chp_generation_MW[h]
+              + forecast_24h.industrial_chp_generation_MW[h]
+              + forecast_24h.nuclear_generation_MW[h]
+          - residual_h: "= demand_h - must_take_h"
+          - scarcity_0_1_h: "= (residual_h <= 0) ? 0.0 : scarcity_index(residual_h, flex_MW, max(1.0, capabilities.peakers.max_MW))"
+
+          # Volatility driver: wind ramps + diurnal ramping periods
+          - delivery_hour_local: "= (state.horizon_anchor.next_delivery_hour_local_hour_0_23 + h) % 24"
+          - ramp_period_0_1: "= (delivery_hour_local in [6,7,8,15,16,17,18]) ? 1.0 : 0.4"
+          - volatility_u: "= clamp01((wind_var_MW / 2000.0) * ramp_period_0_1)"
+
+          # Price composition
+          - fcr_noise: "= (4.0 + 6.0*scenario.stress_level_0_2) * prn_unit(scenario.deterministic_seed_u32, 2000 + h)"
+          - fcr_raw: >
+              fcr_base_price_EUR_per_MW_per_h
+              * fcr_season_mult
+              * (1.0 + fcr_volatility_sensitivity*volatility_u)
+              * (1.0 + fcr_scarcity_sensitivity*scarcity_0_1_h)
+              * (1.0 + 0.25*reservoir_tight_0_1)
+              + fcr_noise
+
+          # Occasional deterministic "spike" hours (rare), more likely in stressed regime
+          - spike_u: "= max(0.0, prn_unit(scenario.deterministic_seed_u32, 9000 + h))"
+          - spike_mult: "= 1.0 + (scenario.stress_level_0_2==2 ? 2.0*pow(spike_u, 4.0) : 0.8*pow(spike_u, 5.0))"
+          - fcr_raw: "= fcr_raw * spike_mult"
+
+          - state.fcr_price_EUR_per_MW_per_h_24[h]: "= clamp(fcr_raw, fcr_price_min_EUR_per_MW_per_h, fcr_price_max_EUR_per_MW_per_h)"
+
+      # 4) Compute imbalance settlement prices for 96 x 15-min MTUs
+      # Simplified: DA is reference; spreads widen with scarcity and wind variability.
+      - for k in 0..95:
+          - h: "= floor(k / 4)"   # hour index 0..23
+          - q: "= k % 4"          # quarter 0..3
+
+          - da_ref: "= state.da_price_EUR_per_MWh_24[h]"
+
+          # Quarter-hour "micro volatility" noise
+          - q_noise: "= (3.0 + 5.0*scenario.stress_level_0_2) * prn_unit(scenario.deterministic_seed_u32, 30000 + k)"
+
+          # Scarcity proxy for hour (reuse residual logic)
+          - demand_h: "= forecast_24h.demand_total_MW[h]"
+          - must_take_h: >
+              forecast_24h.wind_generation_MW[h]
+              + forecast_24h.solar_generation_MW[h]
+              + forecast_24h.hydro_run_of_river_generation_MW[h]
+              + forecast_24h.bio_waste_chp_generation_MW[h]
+              + forecast_24h.industrial_chp_generation_MW[h]
+              + forecast_24h.nuclear_generation_MW[h]
+          - residual_h: "= demand_h - must_take_h"
+          - scarcity_0_1_h: "= (residual_h <= 0) ? 0.0 : scarcity_index(residual_h, flex_MW, max(1.0, capabilities.peakers.max_MW))"
+
+          # Spread increases with scarcity + wind variability; stressed scenarios widen it
+          - spread: >
+              stress_mult * (
+                imbalance_base_spread_EUR_per_MWh
+                + imbalance_spread_scarcity_coeff * scarcity_0_1_h
+                + imbalance_spread_vol_coeff * wind_var_MW
+              )
+
+          # Optional: if surplus regime, down price can go more negative (more discount)
+          - surplus_bias: "= (residual_h < 0) ? 0.6 : 0.0"
+          - spread_down: "= spread * (1.0 + surplus_bias)"
+          - spread_up: "= spread"
+
+          # Compose up/down imbalance settlement prices
+          - up_raw: "= da_ref + spread_up + q_noise"
+          - down_raw: "= da_ref - spread_down + q_noise"
+
+          - state.imb_price_up_EUR_per_MWh_96[k]: "= clamp(up_raw, imbalance_price_min_EUR_per_MWh, imbalance_price_max_EUR_per_MWh)"
+          - state.imb_price_down_EUR_per_MWh_96[k]: "= clamp(down_raw, imbalance_price_min_EUR_per_MWh, imbalance_price_max_EUR_per_MWh)"
+
+outputs:
+  horizon:
+    next_delivery_hour_unix_s: "= state.horizon_anchor.next_delivery_hour_unix_s"
+    next_delivery_hour_local_hour_0_23: "= state.horizon_anchor.next_delivery_hour_local_hour_0_23"
+    delivery_hours_count: 24
+    settlement_mtu_minutes: 15
+    settlement_mtus_count: 96
+
+  day_ahead:
+    step_s: 3600
+    price_EUR_per_MWh: "= state.da_price_EUR_per_MWh_24"
+
+  fcr:
+    step_s: 3600
+    capacity_price_EUR_per_MW_per_h: "= state.fcr_price_EUR_per_MW_per_h_24"
+
+  imbalance_settlement:
+    step_s: 900
+    price_up_EUR_per_MWh: "= state.imb_price_up_EUR_per_MWh_96"
+    price_down_EUR_per_MWh: "= state.imb_price_down_EUR_per_MWh_96"

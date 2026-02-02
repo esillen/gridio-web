@@ -73,3 +73,6 @@ export type {
 
 export { InterconnectorsModel } from './grid/InterconnectorsModel'
 export type { InterconnectorDispatchMode, InterconnectorInput, InterconnectorBreakdown } from './grid/InterconnectorsModel'
+
+export { MarketPricesModel } from './grid/MarketPricesModel'
+export type { BiddingZone, MarketPricesInput, MarketPricesOutput } from './grid/MarketPricesModel'
