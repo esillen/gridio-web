@@ -39,11 +39,11 @@ function restart() {
       </div>
       <div class="stat">
         <span class="label">Total Production</span>
-        <span class="value">{{ stats.totalProductionMWh }} MWh</span>
+        <span class="value production">{{ stats.totalProductionMWh }} MWh</span>
       </div>
       <div class="stat">
         <span class="label">Total Consumption</span>
-        <span class="value">{{ stats.totalConsumptionMWh }} MWh</span>
+        <span class="value consumption">{{ stats.totalConsumptionMWh }} MWh</span>
       </div>
       <div class="stat">
         <span class="label">Avg Absolute Imbalance</span>
@@ -64,22 +64,25 @@ function restart() {
 }
 
 h1 {
-  color: #00ff88;
+  color: var(--gridio-sky-vivid);
   margin-bottom: 2rem;
+  font-size: 1.75rem;
+  font-weight: 600;
 }
 
 .summary {
-  background: #1a1a2e;
-  border-radius: 12px;
+  background: white;
+  border-radius: 16px;
   padding: 1.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .stat {
   display: flex;
   justify-content: space-between;
   padding: 0.75rem 0;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--color-gray-100);
 }
 
 .stat:last-child {
@@ -87,26 +90,36 @@ h1 {
 }
 
 .stat .label {
-  color: #888;
+  color: var(--color-gray-500);
+  font-size: 0.875rem;
 }
 
 .stat .value {
-  color: #fff;
-  font-weight: bold;
+  color: var(--color-gray-900);
+  font-weight: 600;
+}
+
+.stat .value.production {
+  color: var(--gridio-grass-vivid);
+}
+
+.stat .value.consumption {
+  color: var(--gridio-clay-vivid);
 }
 
 .restart-btn {
-  background: #00ff88;
-  color: #0f0f1a;
+  background: var(--gridio-sky-vivid);
+  color: white;
   border: none;
-  padding: 1rem 2rem;
-  font-size: 1.1rem;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: bold;
+  padding: 0.875rem 1.5rem;
+  font-size: 1rem;
+  border-radius: 24px;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: background 0.2s;
 }
 
 .restart-btn:hover {
-  background: #00cc6a;
+  background: #3355e0;
 }
 </style>

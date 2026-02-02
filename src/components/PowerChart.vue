@@ -13,6 +13,14 @@ const props = defineProps<{
 const chartEl = ref<HTMLDivElement>()
 let chart: uPlot | null = null
 
+const COLORS = {
+  production: '#55D379',
+  consumption: '#F2555D',
+  imbalance: '#95957F',
+  axis: '#6b7280',
+  grid: '#e5e7eb',
+}
+
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const production: number[] = []
@@ -20,7 +28,7 @@ function buildData(): uPlot.AlignedData {
   const imbalance: number[] = []
 
   for (const s of props.history) {
-    times.push(s.time / 3600) // hours
+    times.push(s.time / 3600)
     production.push(s.production)
     consumption.push(s.consumption)
     imbalance.push(s.imbalance)
@@ -41,33 +49,36 @@ function getOpts(width: number, height: number): uPlot.Options {
     },
     axes: [
       {
-        stroke: '#888',
-        grid: { stroke: '#333' },
-        ticks: { stroke: '#333' },
+        stroke: COLORS.axis,
+        grid: { stroke: COLORS.grid },
+        ticks: { stroke: COLORS.grid },
         values: (_, vals) => vals.map(v => `${v}h`),
+        font: '12px system-ui',
       },
       {
-        stroke: '#888',
-        grid: { stroke: '#333' },
-        ticks: { stroke: '#333' },
+        stroke: COLORS.axis,
+        grid: { stroke: COLORS.grid },
+        ticks: { stroke: COLORS.grid },
         label: 'Power (MW)',
+        font: '12px system-ui',
+        labelFont: '12px system-ui',
       },
     ],
     series: [
       {},
       {
         label: 'Production',
-        stroke: '#00ff88',
+        stroke: COLORS.production,
         width: 2,
       },
       {
         label: 'Consumption',
-        stroke: '#ff6b6b',
+        stroke: COLORS.consumption,
         width: 2,
       },
       {
         label: 'Imbalance',
-        stroke: '#888888',
+        stroke: COLORS.imbalance,
         width: 2,
         dash: [5, 5],
       },
@@ -129,6 +140,7 @@ watch(() => props.version, updateChart)
 .chart :deep(.u-legend) {
   text-align: left;
   padding: 8px;
+  font-size: 12px;
 }
 
 .chart :deep(.u-legend .u-series) {
@@ -136,6 +148,10 @@ watch(() => props.version, updateChart)
 }
 
 .chart :deep(.u-legend .u-label) {
-  color: #ccc;
+  color: #374151;
+}
+
+.chart :deep(.u-legend .u-value) {
+  color: #6b7280;
 }
 </style>

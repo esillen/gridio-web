@@ -112,27 +112,31 @@ function endDayEarly() {
 }
 
 h1 {
-  color: #00ff88;
+  color: var(--gridio-sky-vivid);
   margin: 0;
   font-size: 1.5rem;
+  font-weight: 600;
 }
 
 .time-display {
-  background: #1a1a2e;
+  background: white;
   padding: 0.5rem 1rem;
-  border-radius: 6px;
-  color: #fff;
+  border-radius: 12px;
+  color: var(--color-gray-700);
   font-family: monospace;
+  font-weight: 500;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .controls {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: #1a1a2e;
+  background: white;
   padding: 0.75rem;
-  border-radius: 8px;
+  border-radius: 16px;
   margin-bottom: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .speed-controls {
@@ -142,46 +146,55 @@ h1 {
 }
 
 .speed-controls .label {
-  color: #888;
+  color: var(--color-gray-500);
   margin-right: 0.5rem;
+  font-size: 0.875rem;
 }
 
 .speed-controls button {
-  background: #0f0f1a;
-  border: 1px solid #333;
-  color: #ccc;
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-300);
+  color: var(--color-gray-700);
   padding: 0.5rem 0.75rem;
-  border-radius: 4px;
-  cursor: pointer;
+  border-radius: 12px;
+  font-size: 0.875rem;
   transition: all 0.2s;
 }
 
 .speed-controls button.active {
-  background: #00ff88;
-  color: #0f0f1a;
-  border-color: #00ff88;
+  background: var(--gridio-sky-vivid);
+  color: white;
+  border-color: var(--gridio-sky-vivid);
 }
 
 .speed-controls button:hover:not(.active) {
-  border-color: #00ff88;
+  border-color: var(--gridio-sky-vivid);
+  color: var(--gridio-sky-vivid);
 }
 
 .hotkey {
   opacity: 0.6;
-  font-size: 0.8em;
+  font-size: 0.75em;
 }
 
 .pause-btn {
-  background: #333;
-  border: none;
-  color: #fff;
+  background: var(--color-gray-100);
+  border: 1px solid var(--color-gray-300);
+  color: var(--color-gray-700);
   padding: 0.5rem 1rem;
-  border-radius: 4px;
-  cursor: pointer;
+  border-radius: 12px;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.pause-btn:hover {
+  background: var(--color-gray-200);
 }
 
 .pause-btn.paused {
-  background: #ff8800;
+  background: var(--gridio-peach-vivid);
+  border-color: var(--gridio-peach-vivid);
+  color: white;
 }
 
 .stats {
@@ -192,63 +205,65 @@ h1 {
 
 .stat {
   flex: 1;
-  background: #1a1a2e;
+  background: white;
   padding: 1rem;
-  border-radius: 8px;
+  border-radius: 16px;
   text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .stat .label {
   display: block;
-  color: #888;
-  font-size: 0.8rem;
+  color: var(--color-gray-500);
+  font-size: 0.75rem;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
   margin-bottom: 0.5rem;
+  font-weight: 500;
 }
 
 .stat .value {
   font-size: 1.5rem;
-  font-weight: bold;
+  font-weight: 600;
+  color: var(--color-gray-900);
 }
 
 .stat.production .value {
-  color: #00ff88;
+  color: var(--gridio-grass-vivid);
 }
 
 .stat.consumption .value {
-  color: #ff6b6b;
-}
-
-.stat.imbalance .value {
-  color: #888;
+  color: var(--gridio-clay-vivid);
 }
 
 .stat.imbalance.positive .value {
-  color: #00ff88;
+  color: var(--gridio-grass-vivid);
 }
 
 .stat.imbalance.negative .value {
-  color: #ff6b6b;
+  color: var(--gridio-clay-vivid);
 }
 
 .chart-container {
-  background: #1a1a2e;
-  border-radius: 8px;
+  background: white;
+  border-radius: 16px;
   padding: 1rem;
   margin-bottom: 1rem;
   height: 300px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .end-btn {
-  background: #333;
-  border: none;
-  color: #888;
+  background: white;
+  border: 1px solid var(--color-gray-300);
+  color: var(--color-gray-500);
   padding: 0.5rem 1rem;
-  border-radius: 4px;
-  cursor: pointer;
+  border-radius: 12px;
+  font-size: 0.875rem;
 }
 
 .end-btn:hover {
-  color: #fff;
+  color: var(--color-gray-700);
+  border-color: var(--color-gray-400);
 }
 </style>

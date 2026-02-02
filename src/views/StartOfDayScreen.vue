@@ -40,8 +40,8 @@ function startDay() {
       </div>
 
       <div class="summary">
-        <p>Total Production: <strong>{{ gameState.config.powerPlantCount * gameState.config.powerPlantMW }} MW</strong></p>
-        <p>Total Consumption: <strong>{{ gameState.config.consumerCount * gameState.config.consumerMW }} MW</strong></p>
+        <p>Total Production: <strong class="production">{{ gameState.config.powerPlantCount * gameState.config.powerPlantMW }} MW</strong></p>
+        <p>Total Consumption: <strong class="consumption">{{ gameState.config.consumerCount * gameState.config.consumerMW }} MW</strong></p>
         <p>Expected Imbalance: <strong>{{ gameState.config.powerPlantCount * gameState.config.powerPlantMW - gameState.config.consumerCount * gameState.config.consumerMW }} MW</strong></p>
       </div>
     </div>
@@ -59,23 +59,27 @@ function startDay() {
 
 h1 {
   text-align: center;
-  color: #00ff88;
+  color: var(--gridio-sky-vivid);
   margin-bottom: 2rem;
+  font-size: 1.75rem;
+  font-weight: 600;
 }
 
 h2 {
-  color: #888;
-  font-size: 1rem;
+  color: var(--color-gray-500);
+  font-size: 0.875rem;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.05em;
   margin-bottom: 1rem;
+  font-weight: 500;
 }
 
 .config-section {
-  background: #1a1a2e;
-  border-radius: 12px;
+  background: white;
+  border-radius: 16px;
   padding: 1.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .config-group {
@@ -89,53 +93,64 @@ label {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  color: #ccc;
-  font-size: 0.9rem;
+  color: var(--color-gray-700);
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
 input {
-  background: #0f0f1a;
-  border: 1px solid #333;
-  border-radius: 6px;
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-300);
+  border-radius: 12px;
   padding: 0.75rem;
-  color: #fff;
+  color: var(--color-gray-900);
   font-size: 1rem;
 }
 
 input:focus {
   outline: none;
-  border-color: #00ff88;
+  border-color: var(--gridio-sky-vivid);
+  box-shadow: 0 0 0 3px var(--gridio-sky-weak);
 }
 
 .summary {
   margin-top: 1.5rem;
   padding-top: 1rem;
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--color-gray-200);
 }
 
 .summary p {
   margin: 0.5rem 0;
-  color: #888;
+  color: var(--color-gray-600);
+  font-size: 0.875rem;
 }
 
 .summary strong {
-  color: #00ff88;
+  color: var(--color-gray-900);
+}
+
+.summary .production {
+  color: var(--gridio-grass-vivid);
+}
+
+.summary .consumption {
+  color: var(--gridio-clay-vivid);
 }
 
 .start-btn {
   width: 100%;
-  padding: 1rem 2rem;
-  font-size: 1.2rem;
-  background: #00ff88;
-  color: #0f0f1a;
+  padding: 0.875rem 1.5rem;
+  font-size: 1rem;
+  background: var(--gridio-sky-vivid);
+  color: white;
   border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-weight: bold;
+  border-radius: 24px;
+  font-weight: 500;
   transition: background 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .start-btn:hover {
-  background: #00cc6a;
+  background: #3355e0;
 }
 </style>

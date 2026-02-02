@@ -3,11 +3,37 @@
 }
 
 :root {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  /* Gridio color palette */
+  --gridio-sky-vivid: #4467FE;
+  --gridio-sky-weak: #DBE4F7;
+  --gridio-clay-vivid: #F2555D;
+  --gridio-clay-weak: #F5D5D7;
+  --gridio-peach-vivid: #F0A679;
+  --gridio-peach-weak: #FFEBDB;
+  --gridio-grass-vivid: #55D379;
+  --gridio-grass-weak: #C9EED3;
+  --gridio-dayahead: #9844FE;
+  --gridio-amber: #FFC877;
+  --gridio-info-gray: #95957F;
+
+  /* Gray scale */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-gray-950: #030712;
+
+  font-family: system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #e0e0e0;
-  background-color: #0f0f1a;
+  color: var(--color-gray-900);
+  background-color: var(--color-gray-50);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -26,6 +52,11 @@ body {
 
 button {
   font-family: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
 }
 
 input[type="number"] {
