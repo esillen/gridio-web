@@ -15,7 +15,8 @@ let chart: uPlot | null = null
 
 const COLORS = {
   nuclear: '#F0A679',
-  hydro: '#4467FE',
+  hydroReservoir: '#4467FE',
+  hydroRoR: '#7B9FFF',
   wind: '#95957F',
   solar: '#FFC877',
   axis: '#6b7280',
@@ -28,11 +29,12 @@ function formatHours(hours: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
-// Build stacked data: nuclear (bottom), hydro, wind, solar (top)
+// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, wind, solar (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const nuclear: number[] = []
-  const hydro: number[] = []
+  const hydroReservoir: number[] = []
+  const hydroRoR: number[] = []
   const wind: number[] = []
   const solar: number[] = []
 
@@ -40,18 +42,20 @@ function buildData(): uPlot.AlignedData {
     times.push(s.time / 3600)
     // Cumulative stacking from bottom to top
     const nuclearVal = s.nuclearMW
-    const hydroVal = nuclearVal + s.hydroMW
-    const windVal = hydroVal + s.windMW
+    const hydroResVal = nuclearVal + s.hydroReservoirMW
+    const hydroRoRVal = hydroResVal + s.hydroRoRMW
+    const windVal = hydroRoRVal + s.windMW
     const solarVal = windVal + s.solarMW
     
     nuclear.push(nuclearVal)
-    hydro.push(hydroVal)
+    hydroReservoir.push(hydroResVal)
+    hydroRoR.push(hydroRoRVal)
     wind.push(windVal)
     solar.push(solarVal)
   }
 
-  // Order: time, then top-to-bottom for rendering (solar, wind, hydro, nuclear)
-  return [times, solar, wind, hydro, nuclear]
+  // Order: time, then top-to-bottom for rendering
+  return [times, solar, wind, hydroRoR, hydroReservoir, nuclear]
 }
 
 function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
@@ -165,9 +169,21 @@ function getOpts(width: number, height: number): uPlot.Options {
         },
       },
       {
-        label: 'Hydro',
-        stroke: COLORS.hydro,
-        fill: COLORS.hydro + '80',
+        label: 'Hydro RoR',
+        stroke: COLORS.hydroRoR,
+        fill: COLORS.hydroRoR + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
+        label: 'Hydro Res',
+        stroke: COLORS.hydroReservoir,
+        fill: COLORS.hydroReservoir + '80',
         width: 1,
         paths: stackedAreaPaths,
         value: (u, v, si, i) => {

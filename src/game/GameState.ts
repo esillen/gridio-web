@@ -1,7 +1,7 @@
 import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
-import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, WindBreakdown, SolarBreakdown } from '../system_model'
+import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown } from '../system_model'
 
 export type GamePhase = 'start' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000
@@ -30,7 +30,8 @@ class GameState {
   servicesBreakdown: ServicesBreakdown | null = null
   transportBreakdown: TransportBreakdown | null = null
   nuclearBreakdown: NuclearBreakdown | null = null
-  hydroBreakdown: HydroBreakdown | null = null
+  hydroReservoirBreakdown: HydroBreakdown | null = null
+  hydroRoRBreakdown: RoRBreakdown | null = null
   windBreakdown: WindBreakdown | null = null
   solarBreakdown: SolarBreakdown | null = null
   historyVersion = 0
@@ -97,7 +98,8 @@ class GameState {
     this.servicesBreakdown = this._world.servicesBreakdown
     this.transportBreakdown = this._world.transportBreakdown
     this.nuclearBreakdown = this._world.nuclearBreakdown
-    this.hydroBreakdown = this._world.hydroBreakdown
+    this.hydroReservoirBreakdown = this._world.hydroReservoirBreakdown
+    this.hydroRoRBreakdown = this._world.hydroRoRBreakdown
     this.windBreakdown = this._world.windBreakdown
     this.solarBreakdown = this._world.solarBreakdown
     this.historyVersion++
@@ -164,7 +166,8 @@ class GameState {
     this.servicesBreakdown = null
     this.transportBreakdown = null
     this.nuclearBreakdown = null
-    this.hydroBreakdown = null
+    this.hydroReservoirBreakdown = null
+    this.hydroRoRBreakdown = null
     this.windBreakdown = null
     this.solarBreakdown = null
     this.historyVersion = 0

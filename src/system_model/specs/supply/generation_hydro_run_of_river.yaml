@@ -1,0 +1,179 @@
+model_part: generation_hydro_run_of_river
+version: 1.0
+tick_s: 1
+
+description: >
+  Swedish run-of-river hydropower fleet (MW). Limited/no long-term storage: generation is primarily constrained
+  by instantaneous river inflow, with only small "pondage" buffering that enables short-term smoothing/peaking.
+  Includes ecological minimum flow (minimum generation fraction) and spill when inflow exceeds turbine+pondage capacity.
+  Horizon: think-ahead <= 24h (single-day).
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+
+  # Dispatcher setpoint (per second)
+  dispatch:
+    mode: enum  # ["must_take", "follow_target", "cap_at_target"]
+    target_production_MW: float
+    # must_take: produce as much as possible given inflow (minus any reserve holdback)
+    # follow_target: track target within limits (may spill or save into pondage if possible)
+    # cap_at_target: never exceed target (useful for congestion/curtailment), otherwise like must_take
+
+  reserves:
+    holdback_MW: float   # keep some headroom, if desired (optional)
+
+  # Inflow proxy: "available electric MW-equivalent at turbines" (already includes head and conversion approx).
+  # If you have a hydrology actor, feed it here; otherwise treat as scenario time-series.
+  inflow_forecast_24h:
+    step_s: int
+    inflow_MW_equiv: [float]   # length = 86400/step_s, index 0 = now
+
+state:
+  # Short-term buffer energy (pondage) in MWh. Represents small upstream pondage in RoR cascades.
+  pondage_energy_MWh: float
+
+  # Current output for ramping visuals
+  current_production_MW: float
+
+constants:
+  # --- Real-world anchors (Sweden) ---
+  # Sweden hydropower total installed is about 16.3 GW; small-scale hydro (<10 MW) contributes ~1000 MW.
+  # RoR capacity is not cleanly reported as one number; for gameplay we set a plausible "RoR fleet" capacity.
+  # Tune this if you separately model all regulated reservoir hydro.
+  total_hydro_installed_MW_anchor: 16300.0
+  small_scale_hydro_power_MW_anchor: 1000.0
+
+  # GAME PARAMETER (plausible order of magnitude for RoR + small hydro combined)
+  installed_ror_capacity_MW: 2500.0
+
+  # --- Conversion / losses ---
+  availability_0_1: 0.98
+  net_loss_factor_0_1: 0.97     # electrical + hydraulic losses (simplified)
+  effective_capacity_MW: "= installed_ror_capacity_MW * availability_0_1 * net_loss_factor_0_1"
+
+  # --- Pondage (short storage) ---
+  # RoR has little storage; choose 0.25h–2h for game feel depending on how "spiky" you want it.
+  pondage_hours_at_full_power: 0.50
+  pondage_capacity_MWh: "= effective_capacity_MW * pondage_hours_at_full_power"
+
+  # --- Ecological minimum flow ---
+  # Many Swedish permits historically had minimum flows around 5% of average flow (very rough anchor).
+  # Here we model it as a minimum generation fraction of inflow (or of capacity if inflow high).
+  min_flow_fraction_of_inflow: 0.05
+
+  # --- Ramping (fast) ---
+  ramp_up_MW_per_s: 50.0
+  ramp_down_MW_per_s: 80.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+init:
+  pondage_energy_MWh: "= pondage_capacity_MWh * 0.50"
+  current_production_MW: 0.0
+
+update_per_tick:
+  # 1) Pull inflow now from forecast array (index 0 = now)
+  - inflow_now_MW: "= inflow_forecast_24h.inflow_MW_equiv[0]"
+
+  # 2) Apply holdback (optional) and hard turbine capacity
+  - holdback_MW: "= max(0, reserves.holdback_MW)"
+  - cap_MW: "= max(0, effective_capacity_MW - holdback_MW)"
+
+  # 3) Update pondage with inflow energy arriving this second (bounded by pondage capacity)
+  - inflow_MWh_this_tick: "= inflow_now_MW * (tick_s / 3600.0)"
+  - state.pondage_energy_MWh: "= min(pondage_capacity_MWh, state.pondage_energy_MWh + inflow_MWh_this_tick)"
+
+  # 4) Compute "must-release" minimum generation due to ecological minimum flow
+  - min_gen_MW: "= min(cap_MW, inflow_now_MW * min_flow_fraction_of_inflow)"
+
+  # 5) Determine desired setpoint before constraints
+  - if dispatch.mode == "must_take":
+      - desired_MW: "= cap_MW"   # we'll cap by available energy below; this means "use as much as possible"
+
+  - if dispatch.mode == "cap_at_target":
+      - desired_MW: "= clamp(dispatch.target_production_MW, 0, cap_MW)"
+
+  - if dispatch.mode == "follow_target":
+      - desired_MW: "= clamp(dispatch.target_production_MW, 0, cap_MW)"
+
+  # 6) Energy-availability constraint for this second
+  # Available energy to generate comes from pondage. If pondage is low, you can't sustain high MW.
+  - max_MW_from_pondage: "= state.pondage_energy_MWh * (3600.0 / tick_s)"  # MWh -> MW for this tick
+  - max_MW_now: "= min(cap_MW, max_MW_from_pondage)"
+
+  # 7) If must_take: try to generate as much as possible (within energy & ramp), but at least min_gen_MW.
+  - if dispatch.mode == "must_take":
+      - target_MW_pre_ramp: "= max(min_gen_MW, max_MW_now)"
+
+  # 8) If follow_target/cap_at_target: track desired but keep min flow and energy feasibility.
+  - if dispatch.mode in ["follow_target", "cap_at_target"]:
+      - target_MW_pre_ramp: "= clamp(desired_MW, min_gen_MW, max_MW_now)"
+
+  # 9) Ramp toward target for visual smoothness
+  - delta_MW: "= target_MW_pre_ramp - state.current_production_MW"
+  - delta_limited_MW: >
+      if delta_MW >= 0:
+        min(delta_MW, ramp_up_MW_per_s * tick_s)
+      else:
+        max(delta_MW, -ramp_down_MW_per_s * tick_s)
+  - new_MW: "= state.current_production_MW + delta_limited_MW"
+
+  # 10) Spend pondage energy for actual generation, clamp if pondage too low
+  - gen_MWh_this_tick: "= new_MW * (tick_s / 3600.0)"
+  - if gen_MWh_this_tick <= state.pondage_energy_MWh:
+      - state.pondage_energy_MWh: "= state.pondage_energy_MWh - gen_MWh_this_tick"
+      - state.current_production_MW: "= new_MW"
+  - else:
+      - # Not enough energy left; generate what remains this second
+      - state.current_production_MW: "= state.pondage_energy_MWh * (3600.0 / tick_s)"
+      - state.pondage_energy_MWh: 0.0
+
+  # 11) Spill accounting (informational): if inflow is high and pondage full, water is spilled.
+  - pondage_full_0_1: "= (state.pondage_energy_MWh >= pondage_capacity_MWh) ? 1 : 0"
+  - spill_MW_equiv: >
+      max(
+        0,
+        inflow_now_MW
+        - (state.current_production_MW)  # what we used this second (approx)
+        - (pondage_full_0_1 * 0)         # if full, the remainder is effectively spilled
+      )
+
+outputs:
+  production_MW: "= state.current_production_MW"
+  consumption_MW: 0.0
+  available_capacity_MW: "= effective_capacity_MW"
+  pondage_energy_MWh: "= state.pondage_energy_MWh"
+  min_generation_MW: "= min_gen_MW"
+  spill_MW_equiv: "= spill_MW_equiv"
+
+  forecast_24h:
+    step_s: "= inflow_forecast_24h.step_s"
+    # Deterministic max-available production forecast assuming must_take, with pondage simulated forward.
+    max_production_MW: >
+      let step = inflow_forecast_24h.step_s;
+      let N = len(inflow_forecast_24h.inflow_MW_equiv);
+      let E = state.pondage_energy_MWh;
+      let out = [];
+      let cap = max(0, effective_capacity_MW - max(0, reserves.holdback_MW));
+      for i in 0..N-1:
+        inflow = inflow_forecast_24h.inflow_MW_equiv[i];
+        E = min(pondage_capacity_MWh, E + inflow*(step/3600.0));
+        # max MW you can emit over this step given stored energy:
+        max_MW_step = min(cap, E * (3600.0/step));
+        out[i] = max_MW_step;
+        # assume must_take uses max each step:
+        E = max(0, E - out[i]*(step/3600.0));
+      return out
+
+  max_production_MW: "= effective_capacity_MW"

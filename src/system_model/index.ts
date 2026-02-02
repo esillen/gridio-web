@@ -25,5 +25,8 @@ export type { WindInput, WindBreakdown } from './supply/WindFleetModel'
 export { SolarPVFleetModel } from './supply/SolarPVFleetModel'
 export type { SolarInput, SolarBreakdown } from './supply/SolarPVFleetModel'
 
+export { HydroRunOfRiverModel } from './supply/HydroRunOfRiverModel'
+export type { RoRDispatchMode, RoRDispatch, RoRInput, RoRBreakdown } from './supply/HydroRunOfRiverModel'
+
 export { TransportModel } from './demand/TransportModel'
 export type { TransportInput, TransportBreakdown } from './demand/TransportModel'

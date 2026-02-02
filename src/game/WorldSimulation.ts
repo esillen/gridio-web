@@ -8,6 +8,7 @@ import {
   TransportModel,
   NuclearFleetModel,
   HydroReservoirFleetModel,
+  HydroRunOfRiverModel,
   WindFleetModel,
   SolarPVFleetModel,
   type WeatherOutput, 
@@ -19,6 +20,7 @@ import {
   type TransportBreakdown,
   type NuclearBreakdown,
   type HydroBreakdown,
+  type RoRBreakdown,
   type WindBreakdown,
   type SolarBreakdown
 } from '../system_model'
@@ -52,7 +54,8 @@ export interface ConsumptionSnapshot {
 export interface ProductionSnapshot {
   time: number
   nuclearMW: number
-  hydroMW: number
+  hydroReservoirMW: number
+  hydroRoRMW: number
   windMW: number
   solarMW: number
   totalMW: number
@@ -71,7 +74,8 @@ export class WorldSimulation {
   private _servicesDemand: ServicesCommercialModel
   private _transportDemand: TransportModel
   private _nuclearFleet: NuclearFleetModel
-  private _hydroFleet: HydroReservoirFleetModel
+  private _hydroReservoir: HydroReservoirFleetModel
+  private _hydroRoR: HydroRunOfRiverModel
   private _windFleet: WindFleetModel
   private _solarFleet: SolarPVFleetModel
   private _currentTime = 0
@@ -102,7 +106,8 @@ export class WorldSimulation {
       'Transport (Rail + EV)'
     )
     this._nuclearFleet = new NuclearFleetModel()
-    this._hydroFleet = new HydroReservoirFleetModel()
+    this._hydroReservoir = new HydroReservoirFleetModel()
+    this._hydroRoR = new HydroRunOfRiverModel()
     this._windFleet = new WindFleetModel()
     this._solarFleet = new SolarPVFleetModel()
   }
@@ -116,7 +121,8 @@ export class WorldSimulation {
     this._servicesDemand.reset()
     this._transportDemand.reset()
     this._nuclearFleet.reset()
-    this._hydroFleet.reset()
+    this._hydroReservoir.reset()
+    this._hydroRoR.reset()
     this._windFleet.reset()
     this._solarFleet.reset()
     this._currentTime = 0
@@ -126,7 +132,8 @@ export class WorldSimulation {
 
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
-    this._grid.connect(this._hydroFleet)
+    this._grid.connect(this._hydroReservoir)
+    this._grid.connect(this._hydroRoR)
     this._grid.connect(this._windFleet)
     this._grid.connect(this._solarFleet)
 
@@ -156,8 +163,12 @@ export class WorldSimulation {
     // Update nuclear fleet
     this._nuclearFleet.tick(this._currentTime)
 
-    // Update hydro fleet
-    this._hydroFleet.tick(this._currentTime)
+    // Update hydro reservoir
+    this._hydroReservoir.tick(this._currentTime)
+
+    // Update hydro run-of-river with inflow proxy
+    const inflowMW = this.computeRoRInflow(clock, weatherOutput)
+    this._hydroRoR.tick({ inflowMWEquiv: inflowMW })
 
     // Update wind fleet
     this._windFleet.tick({
@@ -236,22 +247,50 @@ export class WorldSimulation {
 
     // Record production breakdown
     const nuclearMW = this._nuclearFleet.productionMW
-    const hydroMW = this._hydroFleet.productionMW
+    const hydroReservoirMW = this._hydroReservoir.productionMW
+    const hydroRoRMW = this._hydroRoR.productionMW
     const windMW = this._windFleet.productionMW
     const solarMW = this._solarFleet.productionMW
     this._productionHistory.push({
       time: this._currentTime,
       nuclearMW,
-      hydroMW,
+      hydroReservoirMW,
+      hydroRoRMW,
       windMW,
       solarMW,
-      totalMW: nuclearMW + hydroMW + windMW + solarMW,
+      totalMW: nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW,
     })
 
     // Update grid (collects updates from all connected actors)
     this._grid.tick()
 
     this._currentTime++
+  }
+
+  private computeRoRInflow(clock: ClockState, weather: WeatherOutput): number {
+    // Simple inflow model for run-of-river:
+    // Base inflow varies by season (higher in spring/summer due to snowmelt and rain)
+    // Plus some contribution from recent precipitation
+    const dayOfYear = clock.dayOfYear
+    const baseCapacity = 2500 * 0.98 * 0.97 // effective capacity
+
+    // Seasonal pattern: peak in late spring (day ~140), low in winter
+    const seasonalPhase = (dayOfYear - 140) / 365 * 2 * Math.PI
+    const seasonalFactor = 0.5 + 0.4 * Math.cos(seasonalPhase)
+
+    // Daily variation: slightly higher during day due to glacier/snow melt
+    const hourFactor = 0.95 + 0.1 * Math.sin((clock.localHour - 6) / 24 * 2 * Math.PI)
+
+    // Precipitation boost (rain adds to river flow with delay, simplified here)
+    const precipBoost = 1.0 + Math.min(0.3, weather.precipitationSnowMmph * 0.1)
+
+    // Temperature effect: warmer = more melt = more flow (in spring/summer)
+    const tempEffect = weather.temperatureC > 0 
+      ? 1.0 + Math.min(0.2, weather.temperatureC * 0.01) 
+      : 0.8
+
+    const inflowFraction = seasonalFactor * hourFactor * precipBoost * tempEffect
+    return baseCapacity * Math.min(1.2, inflowFraction)
   }
 
   private getClock(): ClockState {
@@ -321,8 +360,12 @@ export class WorldSimulation {
     return this._nuclearFleet.breakdown
   }
 
-  get hydroBreakdown(): HydroBreakdown | null {
-    return this._hydroFleet.breakdown
+  get hydroReservoirBreakdown(): HydroBreakdown | null {
+    return this._hydroReservoir.breakdown
+  }
+
+  get hydroRoRBreakdown(): RoRBreakdown | null {
+    return this._hydroRoR.breakdown
   }
 
   get windBreakdown(): WindBreakdown | null {
@@ -350,7 +393,8 @@ export class WorldSimulation {
     this._servicesDemand.reset()
     this._transportDemand.reset()
     this._nuclearFleet.reset()
-    this._hydroFleet.reset()
+    this._hydroReservoir.reset()
+    this._hydroRoR.reset()
     this._windFleet.reset()
     this._solarFleet.reset()
     this._currentTime = 0
