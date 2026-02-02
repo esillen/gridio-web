@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import IntroductionScreen from '../views/IntroductionScreen.vue'
+import IntroductionScreen from '../views/introduction/IntroductionScreen.vue'
 import StartOfDayScreen from '../views/StartOfDayScreen.vue'
 import DayScreen from '../views/DayScreen.vue'
 import EndOfDayScreen from '../views/EndOfDayScreen.vue'
