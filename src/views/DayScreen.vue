@@ -1,18 +1,39 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
 import PowerChart from '../components/PowerChart.vue'
 import WeatherChart from '../components/WeatherChart.vue'
+import ConsumptionChart from '../components/ConsumptionChart.vue'
+import ProductionChart from '../components/ProductionChart.vue'
 
 const router = useRouter()
 
 const speeds: SimulationSpeed[] = [1, 10, 50, 1000]
 
+type SecondaryChart = 'weather' | 'consumption' | 'production'
+const chartOptions: SecondaryChart[] = ['weather', 'consumption', 'production']
+const chartLabels: Record<SecondaryChart, string> = {
+  weather: 'Weather',
+  consumption: 'Consumption Breakdown',
+  production: 'Production Breakdown',
+}
+
+const activeChart = ref<SecondaryChart>('weather')
+
+function cycleChart() {
+  const currentIndex = chartOptions.indexOf(activeChart.value)
+  const nextIndex = (currentIndex + 1) % chartOptions.length
+  activeChart.value = chartOptions[nextIndex] as SecondaryChart
+}
+
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === ' ') {
     e.preventDefault()
     gameState.togglePause()
+  } else if (e.key === 'Tab') {
+    e.preventDefault()
+    cycleChart()
   } else if (e.key >= '1' && e.key <= '4') {
     const speedIndex = parseInt(e.key) - 1
     const speed = speeds[speedIndex]
@@ -79,13 +100,37 @@ function endDayEarly() {
       <PowerChart :history="gameState.gridHistory" :version="gameState.historyVersion" />
     </div>
 
-    <div class="section-label">Weather</div>
+    <div class="section-header">
+      <div class="section-label">{{ chartLabels[activeChart] }}</div>
+      <div class="chart-tabs">
+        <button
+          v-for="chart in chartOptions"
+          :key="chart"
+          :class="{ active: activeChart === chart }"
+          @click="activeChart = chart"
+        >
+          {{ chartLabels[chart] }}
+        </button>
+        <span class="hotkey-hint">(Tab)</span>
+      </div>
+    </div>
     <div class="chart-container">
       <WeatherChart 
+        v-if="activeChart === 'weather'"
         :history="gameState.weatherHistory" 
         :forecastArrays="gameState.forecastArrays"
         :currentTime="gameState.currentTime"
         :version="gameState.weatherHistoryVersion" 
+      />
+      <ConsumptionChart
+        v-else-if="activeChart === 'consumption'"
+        :history="gameState.consumptionHistory"
+        :version="gameState.historyVersion"
+      />
+      <ProductionChart
+        v-else-if="activeChart === 'production'"
+        :history="gameState.productionHistory"
+        :version="gameState.historyVersion"
       />
     </div>
 
@@ -193,68 +238,11 @@ h1 {
   color: white;
 }
 
-.stats,
-.weather-stats {
+.section-header {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.stat {
-  flex: 1;
-  background: white;
-  padding: 0.75rem;
-  border-radius: 12px;
-  text-align: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.stat .label {
-  display: block;
-  color: var(--color-gray-500);
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 0.25rem;
-  font-weight: 500;
-}
-
-.stat .value {
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--color-gray-900);
-}
-
-.stat.production .value {
-  color: var(--gridio-grass-vivid);
-}
-
-.stat.consumption .value {
-  color: var(--gridio-clay-vivid);
-}
-
-.stat.imbalance.positive .value {
-  color: var(--gridio-grass-vivid);
-}
-
-.stat.imbalance.negative .value {
-  color: var(--gridio-clay-vivid);
-}
-
-.stat.temp .value {
-  color: var(--gridio-clay-vivid);
-}
-
-.stat.wind .value {
-  color: var(--gridio-sky-vivid);
-}
-
-.stat.solar .value {
-  color: var(--gridio-amber);
-}
-
-.stat.cloud .value {
-  color: var(--gridio-info-gray);
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
 }
 
 .section-label {
@@ -264,6 +252,43 @@ h1 {
   letter-spacing: 0.05em;
   color: var(--color-gray-500);
   margin-bottom: 0.5rem;
+}
+
+.section-header .section-label {
+  margin-bottom: 0;
+}
+
+.chart-tabs {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.chart-tabs button {
+  background: var(--color-gray-100);
+  border: 1px solid var(--color-gray-200);
+  color: var(--color-gray-600);
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  transition: all 0.2s;
+}
+
+.chart-tabs button.active {
+  background: var(--gridio-sky-vivid);
+  color: white;
+  border-color: var(--gridio-sky-vivid);
+}
+
+.chart-tabs button:hover:not(.active) {
+  border-color: var(--gridio-sky-vivid);
+  color: var(--gridio-sky-vivid);
+}
+
+.hotkey-hint {
+  color: var(--color-gray-400);
+  font-size: 0.65rem;
+  margin-left: 0.25rem;
 }
 
 .chart-container {

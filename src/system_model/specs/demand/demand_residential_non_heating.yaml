@@ -1,0 +1,215 @@
+model_part: demand_residential_non_heating
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregate Swedish residential electricity demand excluding *space heating*.
+  Includes: appliances + lighting + cooking + electronics + laundry/dishwasher + (optional) domestic hot water (DHW) electricity + (optional) EV home charging.
+  Excludes: residential space heating electricity (handled by demand_residential_space_heating).
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  energy: MWh
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    day_of_week_0_6: int  # 0=Mon ... 6=Sun
+
+  # Weather is used only for small lighting effects (dark winter days) and optional behavior tweaks.
+  # Keep it lightweight.
+  weather_now_sweden:
+    temperature_outdoor_C: float
+    cloud_cover_0_1: float   # from your weather actor
+  weather_forecast_24h:
+    step_s: int
+    temperature_outdoor_C: [float]
+    cloud_cover_0_1: [float]
+
+  # Optional player/AI controls (per second)
+  demand_response:
+    curtailment_frac_0_1: float  # 0=no change, 0.1 => -10% non-heating demand (behavior/DR)
+
+  # Optional feature toggles (per second)
+  feature_flags:
+    include_DHW: bool
+    include_EV_home_charging: bool
+
+  # Optional EV charging input (per second). If you model EV elsewhere, feed its target here.
+  ev_home_charging:
+    target_MW: float
+
+state:
+  # For smoother graphs
+  last_consumption_MW: float
+
+constants:
+  # ---- Real-world magnitude anchors ----
+  # Sweden has "nearly five million households" (knappt fem miljoner hushåll). (SCB)
+  households_count: 5000000
+
+  # Typical household electricity ("hushållsel") consumption examples (Energimyndigheten via Energimarknadsbyrån):
+  # - Small house: ~6,700 kWh/year hushållsel (non-heating)
+  # - Apartment: ~2,000–4,000 kWh/year hushållsel
+  # Use a blended national average for non-heating baseline.
+  avg_household_non_heating_kWh_per_year: 4500.0
+
+  annual_non_heating_MWh: "= households_count * avg_household_non_heating_kWh_per_year / 1000.0"
+  avg_non_heating_MW: "= annual_non_heating_MWh / 8760.0"
+
+  # ---- Split into sub-loads (must sum to 1.0) ----
+  # These are gameplay-oriented but plausible shares.
+  share_appliances_electronics: 0.50
+  share_lighting: 0.15
+  share_cooking: 0.10
+  share_laundry_dishwasher: 0.10
+  share_DHW_electric: 0.15
+
+  # ---- Daily time-of-day multipliers (dimensionless) ----
+  # Applies to total non-heating demand excluding EV (EV handled separately).
+  schedule_weekday:
+    - [0, 5, 0.82]
+    - [5, 9, 1.10]
+    - [9, 16, 0.95]
+    - [16, 22, 1.22]
+    - [22, 24, 0.90]
+  schedule_weekend:
+    - [0, 7, 0.86]
+    - [7, 11, 1.10]
+    - [11, 17, 1.02]
+    - [17, 23, 1.18]
+    - [23, 24, 0.92]
+
+  # ---- Lighting modulation (winter darkness + cloud) ----
+  # A simple "darkness factor" (0..1) by hour for a Swedish winter day.
+  # (No astronomy; keep stable and game-friendly.)
+  winter_darkness_by_hour_0_23:
+    # 0..23 values, higher means darker -> more lighting demand
+    # Rough shape: darkest at night, lowest around midday (still somewhat dark in winter).
+    [1.00,1.00,1.00,1.00,1.00,0.95,0.85,0.70,0.55,0.45,0.40,0.38,0.38,0.42,0.50,0.62,0.78,0.90,0.98,1.00,1.00,1.00,1.00,1.00]
+  lighting_cloud_coeff: 0.25          # additional lighting due to clouds
+  lighting_temp_coeff_per_C: 0.002    # tiny behavior effect: colder -> slightly more indoor activity/lighting
+
+  # ---- Cooking pulse shape ----
+  # Extra cooking peaks around breakfast and dinner.
+  cooking_breakfast_peak_MW: 500.0
+  cooking_dinner_peak_MW: 900.0
+  cooking_peak_width_s: 3600.0          # 1h width per peak
+  cooking_breakfast_time_h: 7.5
+  cooking_dinner_time_h: 18.0
+
+  # ---- Laundry/dishwasher shifting (soft, not a hard schedule) ----
+  laundry_daytime_bias_weekend: 1.20
+  laundry_daytime_bias_weekday: 1.00
+
+  # ---- DHW simple pulses (if include_DHW) ----
+  dhw_morning_peak_MW: 700.0
+  dhw_evening_peak_MW: 600.0
+  dhw_peak_width_s: 5400.0              # 1.5h
+  dhw_morning_time_h: 7.0
+  dhw_evening_time_h: 20.0
+
+  # ---- Curtailment clamp ----
+  curtailment_min_factor: 0.70          # don't allow more than -30% via generic DR
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  gauss_peak: >
+    gauss_peak(t_s, center_h, width_s) =
+      exp( -0.5 * ((t_s - center_h*3600) / (width_s/2.355))^2 )
+    # width_s interpreted as FWHM via 2.355*sigma
+
+update_per_tick:
+  - t_day_s: "= time_now.local_hour_0_23*3600 + time_now.local_minute_0_59*60"
+
+  # 1) Pick schedule (weekday vs weekend)
+  - is_weekend: "= (time_now.day_of_week_0_6 >= 5)"
+  - schedule_factor: >
+      let h = time_now.local_hour_0_23;
+      let S = is_weekend ? schedule_weekend : schedule_weekday;
+      find the first [start,end,m] in S with start <= h < end; return m; default 1.0
+
+  # 2) Curtailment factor
+  - curtailment_factor: >
+      clamp(
+        1 - demand_response.curtailment_frac_0_1,
+        curtailment_min_factor,
+        1.0
+      )
+
+  # 3) Base total non-heating demand (MW), before sub-load shaping
+  - base_total_MW: "= avg_non_heating_MW * schedule_factor * curtailment_factor"
+
+  # 4) Appliances/electronics (smooth baseline portion)
+  - appliances_MW: "= base_total_MW * share_appliances_electronics"
+
+  # 5) Lighting: modulated by winter darkness + cloud + tiny temp effect
+  - darkness_0_1: "= winter_darkness_by_hour_0_23[time_now.local_hour_0_23]"
+  - lighting_multiplier: >
+      clamp(
+        0.35 + 0.65*darkness_0_1
+        + lighting_cloud_coeff*weather_now_sweden.cloud_cover_0_1
+        + lighting_temp_coeff_per_C*max(0, 0 - weather_now_sweden.temperature_outdoor_C),
+        0.2, 1.6
+      )
+  - lighting_MW: "= base_total_MW * share_lighting * lighting_multiplier"
+
+  # 6) Cooking: add explicit breakfast/dinner pulses on top of the cooking share
+  - cooking_base_MW: "= base_total_MW * share_cooking"
+  - cooking_pulse_MW: >
+      (cooking_breakfast_peak_MW * gauss_peak(t_day_s, cooking_breakfast_time_h, cooking_peak_width_s))
+      + (cooking_dinner_peak_MW * gauss_peak(t_day_s, cooking_dinner_time_h, cooking_peak_width_s))
+  - cooking_MW: "= cooking_base_MW + cooking_pulse_MW * curtailment_factor"
+
+  # 7) Laundry/dishwasher: mild daytime tilt on weekends
+  - laundry_base_MW: "= base_total_MW * share_laundry_dishwasher"
+  - daytime_0_1: "= clamp((time_now.local_hour_0_23 - 8) / 8.0, 0, 1) * clamp((20 - time_now.local_hour_0_23) / 6.0, 0, 1)"
+  - laundry_bias: "= (is_weekend ? laundry_daytime_bias_weekend : laundry_daytime_bias_weekday)"
+  - laundry_MW: "= laundry_base_MW * (1 + (laundry_bias - 1)*daytime_0_1)"
+
+  # 8) DHW (optional)
+  - dhw_MW: >
+      if feature_flags.include_DHW:
+        (base_total_MW * share_DHW_electric)
+        + (dhw_morning_peak_MW * gauss_peak(t_day_s, dhw_morning_time_h, dhw_peak_width_s))
+        + (dhw_evening_peak_MW * gauss_peak(t_day_s, dhw_evening_time_h, dhw_peak_width_s))
+      else:
+        0.0
+
+  # 9) EV charging (optional, comes from a separate EV actor or player control)
+  - ev_MW: >
+      if feature_flags.include_EV_home_charging:
+        max(0, ev_home_charging.target_MW)
+      else:
+        0.0
+
+  # 10) Total consumption
+  - consumption_MW: "= appliances_MW + lighting_MW + cooking_MW + laundry_MW + dhw_MW + ev_MW"
+
+outputs:
+  consumption_MW: float
+  production_MW: 0.0
+
+  breakdown_MW:
+    appliances_MW: float
+    lighting_MW: float
+    cooking_MW: float
+    laundry_MW: float
+    dhw_MW: float
+    ev_MW: float
+
+  forecast_24h:
+    step_s: "= weather_forecast_24h.step_s"
+    consumption_MW: >
+      for i in 0..len-1:
+        let unix_i = time_now.unix_s + i*step_s
+        derive local hour/min/day_of_week for unix_i (from your clock actor)
+        use T = weather_forecast_24h.temperature_outdoor_C[i]
+        use C = weather_forecast_24h.cloud_cover_0_1[i]
+        apply the same formulas as update_per_tick (deterministic; no randomness)
+        (if EV is enabled and you have an EV forecast actor, use that forecast; otherwise assume ev_MW stays constant)
+        return array

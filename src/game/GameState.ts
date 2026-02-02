@@ -1,7 +1,7 @@
 import { reactive, markRaw } from 'vue'
-import { WorldSimulation, type WeatherSnapshot } from './WorldSimulation'
+import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
-import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NuclearBreakdown, HydroBreakdown } from '../system_model'
+import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, NuclearBreakdown, HydroBreakdown } from '../system_model'
 
 export type GamePhase = 'start' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000
@@ -26,6 +26,8 @@ class GameState {
   currentSnapshot: GridSnapshot | null = null
   currentWeather: WeatherOutput | null = null
   heatingBreakdown: HeatingBreakdown | null = null
+  nonHeatingBreakdown: NonHeatingBreakdown | null = null
+  servicesBreakdown: ServicesBreakdown | null = null
   nuclearBreakdown: NuclearBreakdown | null = null
   hydroBreakdown: HydroBreakdown | null = null
   historyVersion = 0
@@ -88,6 +90,8 @@ class GameState {
     this.currentSnapshot = this._world.latestGridSnapshot
     this.currentWeather = this._world.currentWeather
     this.heatingBreakdown = this._world.heatingBreakdown
+    this.nonHeatingBreakdown = this._world.nonHeatingBreakdown
+    this.servicesBreakdown = this._world.servicesBreakdown
     this.nuclearBreakdown = this._world.nuclearBreakdown
     this.hydroBreakdown = this._world.hydroBreakdown
     this.historyVersion++
@@ -100,6 +104,14 @@ class GameState {
 
   get weatherHistory(): WeatherSnapshot[] {
     return this._world?.weatherHistory ?? []
+  }
+
+  get consumptionHistory(): ConsumptionSnapshot[] {
+    return this._world?.consumptionHistory ?? []
+  }
+
+  get productionHistory(): ProductionSnapshot[] {
+    return this._world?.productionHistory ?? []
   }
 
   get forecastArrays(): ForecastArrays | null {
@@ -142,6 +154,8 @@ class GameState {
     this.currentSnapshot = null
     this.currentWeather = null
     this.heatingBreakdown = null
+    this.nonHeatingBreakdown = null
+    this.servicesBreakdown = null
     this.nuclearBreakdown = null
     this.hydroBreakdown = null
     this.historyVersion = 0

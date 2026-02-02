@@ -1,0 +1,224 @@
+model_part: demand_services_commercial
+version: 1.0
+tick_s: 1
+
+description: >
+  Aggregate Swedish electricity demand for services + commercial buildings (offices, retail, public buildings,
+  hospitals, hotels/restaurants, ICT offices, etc.). Includes building services (lighting, ventilation, pumps),
+  plug/IT loads, refrigeration, and a limited amount of electric space heating in the service sector.
+  Excludes: residential demand and heavy industry process demand.
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    day_of_week_0_6: int     # 0=Mon ... 6=Sun
+
+  weather_now_sweden:
+    temperature_outdoor_C: float
+    cloud_cover_0_1: float
+
+  weather_forecast_24h:
+    step_s: int
+    temperature_outdoor_C: [float]   # length = 86400/step_s, index 0 = now
+    cloud_cover_0_1: [float]
+
+  # Optional macro controls (per second)
+  activity:
+    business_activity_0_1: float     # 1.0 normal, <1.0 reduced (holidays/lockdown)
+    holiday_0_1: float               # 1 on major holiday, else 0
+
+  demand_response:
+    curtailment_frac_0_1: float      # 0=no change; scales non-critical parts
+
+state:
+  last_consumption_MW: float
+
+constants:
+  # -----------------------
+  # Size / real-world anchor
+  # -----------------------
+  # Sweden total electricity use 2024 (excluding losses) 125.3 TWh.
+  # Industry 45.3 TWh, household sector 33.0 TWh, so "others" (incl services/commerce, transport, agriculture etc.)
+  # are the remainder. We allocate a tunable share of this remainder to services/commercial.
+  total_electricity_use_2024_TWh: 125.3
+  industry_electricity_use_2024_TWh: 45.3
+  household_electricity_use_2024_TWh: 33.0
+  other_electricity_use_2024_TWh: "= total_electricity_use_2024_TWh - industry_electricity_use_2024_TWh - household_electricity_use_2024_TWh"
+
+  # Assumption for game model: services/commercial is a large fraction of "other".
+  # Tune 0.55..0.85 depending on whether you model transport/agriculture separately.
+  services_share_of_other_0_1: 0.70
+  annual_services_TWh: "= other_electricity_use_2024_TWh * services_share_of_other_0_1"
+
+  avg_services_MW: "= (annual_services_TWh * 1_000_000) / 8760.0"  # TWh->MWh then /h
+  # Cap for plausible winter weekday peak (tune)
+  peak_cap_MW: 8000.0
+
+  # -----------------------
+  # Sub-load shares (sum to 1.0 excluding optional EV, if you add later)
+  # -----------------------
+  share_plug_and_it: 0.40        # computers, servers in offices, kitchen equipment etc.
+  share_lighting: 0.18
+  share_ventilation_and_pumps: 0.20
+  share_refrigeration: 0.12      # retail food, cold storage in services
+  share_space_heating_electric: 0.10  # service-sector electric heating (limited due to district heating)
+
+  # -----------------------
+  # Time-of-day occupancy schedules (dimensionless)
+  # -----------------------
+  # Baseline occupancy factor by hour.
+  # Weekday: strong daytime peak, low night.
+  occupancy_weekday_by_hour_0_23:
+    [0.10,0.08,0.07,0.07,0.08,0.12,0.25,0.55,0.85,0.95,1.00,1.00,0.98,0.95,0.92,0.95,1.00,0.90,0.65,0.40,0.25,0.18,0.14,0.12]
+  # Weekend: retail still active midday, offices less.
+  occupancy_weekend_by_hour_0_23:
+    [0.10,0.09,0.08,0.08,0.09,0.12,0.18,0.30,0.45,0.60,0.70,0.75,0.75,0.72,0.68,0.65,0.60,0.50,0.40,0.30,0.22,0.16,0.13,0.11]
+
+  # -----------------------
+  # Lighting model (winter darkness proxy + cloud)
+  # -----------------------
+  winter_darkness_by_hour_0_23:
+    [1.00,1.00,1.00,1.00,1.00,0.95,0.85,0.70,0.55,0.45,0.40,0.38,0.38,0.42,0.50,0.62,0.78,0.90,0.98,1.00,1.00,1.00,1.00,1.00]
+  lighting_cloud_coeff: 0.25
+  lighting_min_multiplier: 0.35
+  lighting_max_multiplier: 1.60
+
+  # -----------------------
+  # Ventilation/HVAC auxiliaries
+  # -----------------------
+  # Keep some minimum ventilation even when unoccupied.
+  ventilation_min_fraction: 0.35
+  ventilation_occ_sensitivity: 0.80  # how much ventilation follows occupancy
+
+  # -----------------------
+  # Service-sector electric space heating (limited, but temperature-sensitive)
+  # -----------------------
+  heating_balance_temp_C: 15.0         # above this, electric service heating ~0
+  design_temp_C: -20.0
+  service_heating_peak_MW: 2500.0      # cap for service-sector electric heating
+  heating_wind_ignored: true           # keep simple; residential model already uses wind
+  heating_response_tau_s: 1800.0       # 30 min smoothing so it doesn't jitter
+
+  # -----------------------
+  # Refrigeration (mostly constant, slightly higher when occupied)
+  # -----------------------
+  refrigeration_occ_coeff: 0.10        # small uplift with occupancy
+  refrigeration_min_fraction: 0.90
+
+  # -----------------------
+  # Curtailment scope
+  # -----------------------
+  # Only some loads are realistically curtailable quickly (lighting dimming, HVAC setpoint tweaks, some plug loads).
+  # Refrigeration is mostly not curtailable.
+  curtailment_min_factor: 0.80
+  curtailable_share: 0.55
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+update_per_tick:
+  - t_day_s: "= time_now.local_hour_0_23*3600 + time_now.local_minute_0_59*60"
+  - is_weekend: "= (time_now.day_of_week_0_6 >= 5)"
+  - occ_0_1: >
+      if is_weekend:
+        occupancy_weekend_by_hour_0_23[time_now.local_hour_0_23]
+      else:
+        occupancy_weekday_by_hour_0_23[time_now.local_hour_0_23]
+
+  - activity_factor: "= clamp01(activity.business_activity_0_1) * (1 - 0.35*clamp01(activity.holiday_0_1))"
+
+  # Base MW from annual energy anchor, then shaped by occupancy.
+  # Keep a baseline even at night (security, data rooms, hospitals etc.)
+  - base_floor_MW: "= avg_services_MW * 0.55"
+  - base_variable_MW: "= avg_services_MW * 0.75"  # variable component shaped by occupancy
+  - base_MW_pre_activity: "= base_floor_MW + base_variable_MW * occ_0_1"
+  - base_MW: "= base_MW_pre_activity * activity_factor"
+
+  # Curtailment: only applies to curtailable_share of the base (not refrigeration).
+  - curtailment_factor: >
+      clamp(
+        1 - demand_response.curtailment_frac_0_1,
+        curtailment_min_factor,
+        1.0
+      )
+  - base_MW_after_DR: >
+      base_MW * (1 - curtailable_share + curtailable_share * curtailment_factor)
+
+  # Split into sub-loads
+  - plug_it_MW: "= base_MW_after_DR * share_plug_and_it"
+
+  # Lighting: depends on darkness, clouds, and occupancy (lights follow people)
+  - darkness_0_1: "= winter_darkness_by_hour_0_23[time_now.local_hour_0_23]"
+  - lighting_multiplier: >
+      clamp(
+        lighting_min_multiplier
+        + 0.75*darkness_0_1
+        + lighting_cloud_coeff*weather_now_sweden.cloud_cover_0_1,
+        lighting_min_multiplier,
+        lighting_max_multiplier
+      )
+  - lighting_MW: "= base_MW_after_DR * share_lighting * lighting_multiplier * (0.35 + 0.65*occ_0_1)"
+
+  # Ventilation/pumps: minimum + occupancy-following
+  - ventilation_factor: >
+      ventilation_min_fraction
+      + ventilation_occ_sensitivity * occ_0_1
+  - ventilation_MW: "= base_MW_after_DR * share_ventilation_and_pumps * ventilation_factor"
+
+  # Refrigeration: mostly constant, slight occupancy uplift, minimal DR
+  - refrigeration_factor: >
+      max(refrigeration_min_fraction, 1.0 + refrigeration_occ_coeff * (occ_0_1 - 0.5))
+  - refrigeration_MW: "= base_MW * share_refrigeration * refrigeration_factor"
+
+  # Service-sector electric heating: temperature-driven, smoothed
+  - heating_degree_C: "max(0, heating_balance_temp_C - weather_now_sweden.temperature_outdoor_C)"
+  - heating_degree_design_C: "= heating_balance_temp_C - design_temp_C"
+  - heating_temp_factor_0_1: "clamp(heating_degree_C / heating_degree_design_C, 0, 1)"
+  - heating_target_MW_raw: "= service_heating_peak_MW * heating_temp_factor_0_1 * (0.40 + 0.60*occ_0_1) * activity_factor"
+  - heating_target_MW: "= heating_target_MW_raw * curtailment_factor"  # setpoint tweaks
+  - heating_MW: >
+      last_heating_MW
+      + (heating_target_MW - last_heating_MW) * (tick_s / heating_response_tau_s)
+
+  # Total, cap for plausibility
+  - consumption_MW: "= plug_it_MW + lighting_MW + ventilation_MW + refrigeration_MW + heating_MW"
+  - consumption_MW: "= min(consumption_MW, peak_cap_MW)"
+  - state.last_consumption_MW: "= consumption_MW"
+  - last_heating_MW: "= heating_MW"
+
+outputs:
+  consumption_MW: float
+  production_MW: 0.0
+
+  breakdown_MW:
+    plug_it_MW: float
+    lighting_MW: float
+    ventilation_MW: float
+    refrigeration_MW: float
+    service_heating_electric_MW: "= heating_MW"
+    occ_0_1: float
+    activity_factor: float
+
+  forecast_24h:
+    step_s: "= weather_forecast_24h.step_s"
+    consumption_MW: >
+      for i in 0..len-1:
+        let unix_i = time_now.unix_s + i*step_s
+        derive local hour/day_of_week for unix_i
+        let occ = weekday/weekend occupancy at that hour
+        let base = (avg_services_MW*0.55 + avg_services_MW*0.75*occ) * activity_factor
+        apply DR to curtailable share (assume curtailment constant over forecast)
+        compute lighting with darkness[hour] and cloud_cover_0_1[i]
+        compute ventilation with occ
+        compute refrigeration with occ
+        compute heating with temperature_outdoor_C[i] (no smoothing in forecast; or apply same tau in discrete steps)
+        sum and cap at peak_cap_MW
+        return array

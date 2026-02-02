@@ -3,12 +3,16 @@ import {
   WeatherModel, 
   ForecastModel, 
   ResidentialSpaceHeatingModel,
+  ResidentialNonHeatingModel,
+  ServicesCommercialModel,
   NuclearFleetModel,
   HydroReservoirFleetModel,
   type WeatherOutput, 
   type ForecastOutput, 
   type ForecastArrays,
   type HeatingBreakdown,
+  type NonHeatingBreakdown,
+  type ServicesBreakdown,
   type NuclearBreakdown,
   type HydroBreakdown
 } from '../system_model'
@@ -30,6 +34,21 @@ export interface WeatherSnapshot {
   forecast24h: ForecastOutput
 }
 
+export interface ConsumptionSnapshot {
+  time: number
+  heatingMW: number
+  nonHeatingMW: number
+  servicesMW: number
+  totalMW: number
+}
+
+export interface ProductionSnapshot {
+  time: number
+  nuclearMW: number
+  hydroMW: number
+  totalMW: number
+}
+
 export interface WorldConfig {
   startDayOfYear: number
 }
@@ -39,10 +58,14 @@ export class WorldSimulation {
   private _weather: WeatherModel
   private _forecast: ForecastModel
   private _heatingDemand: ResidentialSpaceHeatingModel
+  private _nonHeatingDemand: ResidentialNonHeatingModel
+  private _servicesDemand: ServicesCommercialModel
   private _nuclearFleet: NuclearFleetModel
   private _hydroFleet: HydroReservoirFleetModel
   private _currentTime = 0
   private _weatherHistory: WeatherSnapshot[] = []
+  private _consumptionHistory: ConsumptionSnapshot[] = []
+  private _productionHistory: ProductionSnapshot[] = []
   private _config: WorldConfig
 
   constructor(config: WorldConfig) {
@@ -54,6 +77,14 @@ export class WorldSimulation {
       'heating-residential',
       'Residential Space Heating'
     )
+    this._nonHeatingDemand = new ResidentialNonHeatingModel(
+      'non-heating-residential',
+      'Residential Non-Heating'
+    )
+    this._servicesDemand = new ServicesCommercialModel(
+      'services-commercial',
+      'Services & Commercial'
+    )
     this._nuclearFleet = new NuclearFleetModel()
     this._hydroFleet = new HydroReservoirFleetModel()
   }
@@ -63,10 +94,14 @@ export class WorldSimulation {
     this._weather.reset()
     this._forecast.reset()
     this._heatingDemand.reset(this._weather.state.temperatureC)
+    this._nonHeatingDemand.reset()
+    this._servicesDemand.reset()
     this._nuclearFleet.reset()
     this._hydroFleet.reset()
     this._currentTime = 0
     this._weatherHistory = []
+    this._consumptionHistory = []
+    this._productionHistory = []
 
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
@@ -74,6 +109,8 @@ export class WorldSimulation {
 
     // Connect demand models
     this._grid.connect(this._heatingDemand)
+    this._grid.connect(this._nonHeatingDemand)
+    this._grid.connect(this._servicesDemand)
   }
 
   tick(): void {
@@ -105,6 +142,26 @@ export class WorldSimulation {
       localHour: clock.localHour,
     })
 
+    // Update non-heating demand model
+    this._nonHeatingDemand.tick({
+      localHour: clock.localHour,
+      localMinute: clock.localMinute,
+      dayOfWeek: 0,
+      temperatureOutdoorC: weatherOutput.temperatureC,
+      cloudCover01: weatherOutput.cloudCover01,
+      includeDHW: true,
+      includeEV: false,
+    })
+
+    // Update services/commercial demand model
+    this._servicesDemand.tick({
+      localHour: clock.localHour,
+      localMinute: clock.localMinute,
+      dayOfWeek: 0,
+      temperatureOutdoorC: weatherOutput.temperatureC,
+      cloudCover01: weatherOutput.cloudCover01,
+    })
+
     // Record weather snapshot
     const weatherSnapshot: WeatherSnapshot = {
       time: this._currentTime,
@@ -115,6 +172,28 @@ export class WorldSimulation {
       forecast24h: this._forecast.getForecast(24 * 3600),
     }
     this._weatherHistory.push(weatherSnapshot)
+
+    // Record consumption breakdown
+    const heatingMW = this._heatingDemand.consumptionMW
+    const nonHeatingMW = this._nonHeatingDemand.consumptionMW
+    const servicesMW = this._servicesDemand.consumptionMW
+    this._consumptionHistory.push({
+      time: this._currentTime,
+      heatingMW,
+      nonHeatingMW,
+      servicesMW,
+      totalMW: heatingMW + nonHeatingMW + servicesMW,
+    })
+
+    // Record production breakdown
+    const nuclearMW = this._nuclearFleet.productionMW
+    const hydroMW = this._hydroFleet.productionMW
+    this._productionHistory.push({
+      time: this._currentTime,
+      nuclearMW,
+      hydroMW,
+      totalMW: nuclearMW + hydroMW,
+    })
 
     // Update grid (collects updates from all connected actors)
     this._grid.tick()
@@ -149,6 +228,14 @@ export class WorldSimulation {
     return this._weatherHistory
   }
 
+  get consumptionHistory(): ConsumptionSnapshot[] {
+    return this._consumptionHistory
+  }
+
+  get productionHistory(): ProductionSnapshot[] {
+    return this._productionHistory
+  }
+
   get latestGridSnapshot(): GridSnapshot | null {
     return this._grid.latestSnapshot
   }
@@ -163,6 +250,14 @@ export class WorldSimulation {
 
   get heatingBreakdown(): HeatingBreakdown | null {
     return this._heatingDemand.breakdown
+  }
+
+  get nonHeatingBreakdown(): NonHeatingBreakdown | null {
+    return this._nonHeatingDemand.breakdown
+  }
+
+  get servicesBreakdown(): ServicesBreakdown | null {
+    return this._servicesDemand.breakdown
   }
 
   get nuclearBreakdown(): NuclearBreakdown | null {
@@ -186,9 +281,13 @@ export class WorldSimulation {
     this._weather.reset()
     this._forecast.reset()
     this._heatingDemand.reset()
+    this._nonHeatingDemand.reset()
+    this._servicesDemand.reset()
     this._nuclearFleet.reset()
     this._hydroFleet.reset()
     this._currentTime = 0
     this._weatherHistory = []
+    this._consumptionHistory = []
+    this._productionHistory = []
   }
 }

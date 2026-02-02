@@ -7,6 +7,12 @@ export type { ForecastArrays, ForecastOutput } from './ForecastModel'
 export { ResidentialSpaceHeatingModel } from './demand/ResidentialSpaceHeatingModel'
 export type { HeatingModelInput, HeatingBreakdown } from './demand/ResidentialSpaceHeatingModel'
 
+export { ResidentialNonHeatingModel } from './demand/ResidentialNonHeatingModel'
+export type { NonHeatingInput, NonHeatingBreakdown } from './demand/ResidentialNonHeatingModel'
+
+export { ServicesCommercialModel } from './demand/ServicesCommercialModel'
+export type { ServicesInput, ServicesBreakdown } from './demand/ServicesCommercialModel'
+
 export { NuclearFleetModel } from './supply/NuclearFleetModel'
 export type { NuclearDispatch, NuclearBreakdown, DispatchMode, UnitId, UnitState } from './supply/NuclearFleetModel'
 
