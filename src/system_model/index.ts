@@ -76,3 +76,6 @@ export type { InterconnectorDispatchMode, InterconnectorInput, InterconnectorBre
 
 export { MarketPricesModel } from './grid/MarketPricesModel'
 export type { BiddingZone, MarketPricesInput, MarketPricesOutput } from './grid/MarketPricesModel'
+
+export { BESSUnit, BESSFleet, DEFAULT_BESS_FLEET } from './storage/BESSModel'
+export type { BESSConfig, BESSMode, BESSState, BESSDispatchCommand, BESSTickResult } from './storage/BESSModel'

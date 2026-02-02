@@ -1,0 +1,249 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { gameState, type BESSMode } from '../game/GameState'
+
+const bessUnits = computed(() => gameState.bessStates)
+const totalPower = computed(() => gameState.totalBessPowerMW)
+
+function setUnitMode(unitId: string, mode: BESSMode) {
+  gameState.setUnitMode(unitId, mode)
+}
+
+function getSocBarFill(barIndex: number, soc01: number): number {
+  // 20 bars, each represents 5% (0.05)
+  const barValue = barIndex * 0.05
+  const nextBarValue = (barIndex + 1) * 0.05
+  
+  if (soc01 >= nextBarValue) {
+    return 1 // Fully filled
+  } else if (soc01 <= barValue) {
+    return 0 // Empty
+  } else {
+    return (soc01 - barValue) / 0.05 // Partially filled
+  }
+}
+
+function formatPower(mw: number): string {
+  if (Math.abs(mw) < 0.1) return '0'
+  return mw > 0 ? `+${mw.toFixed(1)}` : mw.toFixed(1)
+}
+</script>
+
+<template>
+  <div class="bess-panel">
+    <div class="panel-header">
+      <span class="title">Battery Fleet</span>
+      <span class="total-power" :class="{ charging: totalPower < 0, discharging: totalPower > 0 }">
+        {{ formatPower(totalPower) }} MW
+      </span>
+    </div>
+
+    <div class="units-list">
+      <div v-for="unit in bessUnits" :key="unit.id" class="bess-unit">
+        <div class="unit-header">
+          <span class="unit-name">{{ unit.name }}</span>
+          <span class="unit-spec">{{ unit.maxPowerMW }}MW / {{ unit.capacityMWh }}MWh</span>
+        </div>
+        <div class="soc-container">
+          <div class="soc-meter">
+            <div 
+              v-for="i in 20" 
+              :key="i"
+              class="soc-bar"
+              :style="{ opacity: getSocBarFill(i - 1, unit.soc01) }"
+            ></div>
+          </div>
+          <span class="soc-pct">{{ Math.round(unit.soc01 * 100) }}%</span>
+        </div>
+        <div class="unit-power" :class="{ charging: unit.currentPowerMW < 0, discharging: unit.currentPowerMW > 0 }">
+          {{ formatPower(unit.currentPowerMW) }} MW
+        </div>
+        <div class="unit-controls">
+          <button 
+            :class="['unit-ctrl-btn', { active: unit.mode === 'auto' }]"
+            @click="setUnitMode(unit.id, 'auto')"
+            title="Follow DA bids and FCR commands"
+          >
+            Auto
+          </button>
+          <button 
+            :class="['unit-ctrl-btn', { active: unit.mode === 'charge' }]"
+            @click="setUnitMode(unit.id, 'charge')"
+            title="Charge at max power"
+          >
+            Charge
+          </button>
+          <button 
+            :class="['unit-ctrl-btn', { active: unit.mode === 'discharge' }]"
+            @click="setUnitMode(unit.id, 'discharge')"
+            title="Discharge at max power"
+          >
+            Discharge
+          </button>
+          <button 
+            :class="['unit-ctrl-btn', { active: unit.mode === 'idle' }]"
+            @click="setUnitMode(unit.id, 'idle')"
+            title="Idle - no action"
+          >
+            Idle
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.bess-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 0.75rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 240px;
+  flex-shrink: 0;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--color-gray-200);
+}
+
+.title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--color-gray-700);
+}
+
+.total-power {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-gray-500);
+}
+
+.total-power.charging {
+  color: #3b82f6;
+}
+
+.total-power.discharging {
+  color: #10b981;
+}
+
+
+.units-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.bess-unit {
+  background: var(--color-gray-50);
+  border-radius: 8px;
+  padding: 0.625rem;
+}
+
+.unit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.25rem;
+}
+
+.unit-name {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-gray-700);
+}
+
+.unit-spec {
+  font-size: 0.6rem;
+  color: var(--color-gray-500);
+}
+
+.soc-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.soc-meter {
+  display: flex;
+  gap: 1px;
+  flex: 1;
+}
+
+.soc-bar {
+  flex: 1;
+  height: 14px;
+  background: linear-gradient(to right, #22c55e, #4ade80);
+  border-radius: 1px;
+  transition: opacity 0.2s;
+}
+
+.soc-bar:nth-child(-n+6) {
+  background: linear-gradient(to right, #ef4444, #f87171);
+}
+
+.soc-bar:nth-child(n+7):nth-child(-n+12) {
+  background: linear-gradient(to right, #f59e0b, #fbbf24);
+}
+
+.soc-pct {
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--color-gray-600);
+  min-width: 32px;
+  text-align: right;
+}
+
+.unit-power {
+  font-size: 0.6rem;
+  color: var(--color-gray-500);
+  text-align: right;
+  margin-top: 0.25rem;
+}
+
+.unit-power.charging {
+  color: #3b82f6;
+}
+
+.unit-power.discharging {
+  color: #10b981;
+}
+
+.unit-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin-top: 0.5rem;
+}
+
+.unit-ctrl-btn {
+  padding: 0.375rem 0.25rem;
+  font-size: 0.65rem;
+  border: 1px solid var(--color-gray-300);
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--color-gray-600);
+  font-weight: 500;
+}
+
+.unit-ctrl-btn:hover {
+  border-color: var(--color-gray-400);
+  background: var(--color-gray-50);
+}
+
+.unit-ctrl-btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+  font-weight: 600;
+}
+</style>

@@ -8,6 +8,9 @@ import ConsumptionChart from '../components/ConsumptionChart.vue'
 import ProductionChart from '../components/ProductionChart.vue'
 import FrequencyChart from '../components/FrequencyChart.vue'
 import BalancingChart from '../components/BalancingChart.vue'
+import DABidChart from '../components/DABidChart.vue'
+import FCRBidChart from '../components/FCRBidChart.vue'
+import BESSPanel from '../components/BESSPanel.vue'
 
 const router = useRouter()
 
@@ -23,12 +26,27 @@ const chartLabels: Record<SecondaryChart, string> = {
   balancing: 'Balancing Services',
 }
 
+type MainChartView = 'grid' | 'da' | 'fcr'
+const mainChartOptions: MainChartView[] = ['grid', 'da', 'fcr']
+const mainChartLabels: Record<MainChartView, string> = {
+  grid: 'Power Grid',
+  da: 'DA Bids',
+  fcr: 'FCR Bids',
+}
+
 const activeChart = ref<SecondaryChart>('weather')
+const mainChartView = ref<MainChartView>('grid')
 
 function cycleChart() {
   const currentIndex = chartOptions.indexOf(activeChart.value)
   const nextIndex = (currentIndex + 1) % chartOptions.length
   activeChart.value = chartOptions[nextIndex] as SecondaryChart
+}
+
+function cycleMainChart() {
+  const currentIndex = mainChartOptions.indexOf(mainChartView.value)
+  const nextIndex = (currentIndex + 1) % mainChartOptions.length
+  mainChartView.value = mainChartOptions[nextIndex] as MainChartView
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -38,6 +56,9 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (e.key === 'Tab') {
     e.preventDefault()
     cycleChart()
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    cycleMainChart()
   } else if (e.key >= '1' && e.key <= '6') {
     const speedIndex = parseInt(e.key) - 1
     const speed = speeds[speedIndex]
@@ -67,7 +88,6 @@ function formatTime(seconds: number): string {
   const secs = seconds % 60
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
-
 </script>
 
 <template>
@@ -101,61 +121,91 @@ function formatTime(seconds: number): string {
       </button>
     </div>
 
-    <div class="section-label">Power Grid</div>
-    <div class="chart-container">
-      <PowerChart :history="gameState.gridHistory" :version="gameState.historyVersion" />
-    </div>
+    <div class="main-content">
+      <BESSPanel />
+      
+      <div class="charts-column">
+        <div class="section-header">
+          <div class="section-label">{{ mainChartLabels[mainChartView] }}</div>
+          <div class="chart-tabs">
+            <button
+              v-for="chart in mainChartOptions"
+              :key="chart"
+              :class="{ active: mainChartView === chart }"
+              @click="mainChartView = chart"
+            >
+              {{ mainChartLabels[chart] }}
+            </button>
+            <span class="hotkey-hint">(Enter)</span>
+          </div>
+        </div>
+        <div class="chart-container">
+          <PowerChart 
+            v-if="mainChartView === 'grid'"
+            :history="gameState.gridHistory" 
+            :version="gameState.historyVersion" 
+          />
+          <DABidChart 
+            v-else-if="mainChartView === 'da'"
+            :version="gameState.bessVersion"
+          />
+          <FCRBidChart 
+            v-else-if="mainChartView === 'fcr'"
+            :version="gameState.bessVersion"
+          />
+        </div>
 
-    <div class="section-header">
-      <div class="section-label">{{ chartLabels[activeChart] }}</div>
-      <div class="chart-tabs">
-        <button
-          v-for="chart in chartOptions"
-          :key="chart"
-          :class="{ active: activeChart === chart }"
-          @click="activeChart = chart"
-        >
-          {{ chartLabels[chart] }}
-        </button>
-        <span class="hotkey-hint">(Tab)</span>
+        <div class="section-header">
+          <div class="section-label">{{ chartLabels[activeChart] }}</div>
+          <div class="chart-tabs">
+            <button
+              v-for="chart in chartOptions"
+              :key="chart"
+              :class="{ active: activeChart === chart }"
+              @click="activeChart = chart"
+            >
+              {{ chartLabels[chart] }}
+            </button>
+            <span class="hotkey-hint">(Tab)</span>
+          </div>
+        </div>
+        <div class="chart-container">
+          <WeatherChart 
+            v-if="activeChart === 'weather'"
+            :history="gameState.weatherHistory" 
+            :forecastArrays="gameState.forecastArrays"
+            :currentTime="gameState.currentTime"
+            :version="gameState.weatherHistoryVersion" 
+          />
+          <ConsumptionChart
+            v-else-if="activeChart === 'consumption'"
+            :history="gameState.consumptionHistory"
+            :version="gameState.historyVersion"
+          />
+          <ProductionChart
+            v-else-if="activeChart === 'production'"
+            :history="gameState.productionHistory"
+            :version="gameState.historyVersion"
+          />
+          <FrequencyChart
+            v-else-if="activeChart === 'frequency'"
+            :history="gameState.frequencyHistory"
+            :version="gameState.historyVersion"
+          />
+          <BalancingChart
+            v-else-if="activeChart === 'balancing'"
+            :history="gameState.balancingHistory"
+            :version="gameState.historyVersion"
+          />
+        </div>
       </div>
     </div>
-    <div class="chart-container">
-      <WeatherChart 
-        v-if="activeChart === 'weather'"
-        :history="gameState.weatherHistory" 
-        :forecastArrays="gameState.forecastArrays"
-        :currentTime="gameState.currentTime"
-        :version="gameState.weatherHistoryVersion" 
-      />
-      <ConsumptionChart
-        v-else-if="activeChart === 'consumption'"
-        :history="gameState.consumptionHistory"
-        :version="gameState.historyVersion"
-      />
-      <ProductionChart
-        v-else-if="activeChart === 'production'"
-        :history="gameState.productionHistory"
-        :version="gameState.historyVersion"
-      />
-      <FrequencyChart
-        v-else-if="activeChart === 'frequency'"
-        :history="gameState.frequencyHistory"
-        :version="gameState.historyVersion"
-      />
-      <BalancingChart
-        v-else-if="activeChart === 'balancing'"
-        :history="gameState.balancingHistory"
-        :version="gameState.historyVersion"
-      />
-    </div>
-
   </div>
 </template>
 
 <style scoped>
 .day-screen {
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 1rem;
 }
@@ -302,6 +352,16 @@ h1 {
   color: white;
 }
 
+.main-content {
+  display: flex;
+  gap: 1rem;
+}
+
+.charts-column {
+  flex: 1;
+  min-width: 0;
+}
+
 .section-header {
   display: flex;
   justify-content: space-between;
@@ -362,19 +422,5 @@ h1 {
   margin-bottom: 1rem;
   height: 250px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.end-btn {
-  background: white;
-  border: 1px solid var(--color-gray-300);
-  color: var(--color-gray-500);
-  padding: 0.5rem 1rem;
-  border-radius: 12px;
-  font-size: 0.875rem;
-}
-
-.end-btn:hover {
-  color: var(--color-gray-700);
-  border-color: var(--color-gray-400);
 }
 </style>

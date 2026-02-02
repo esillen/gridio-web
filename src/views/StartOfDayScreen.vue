@@ -37,7 +37,7 @@ function stopDrag() {
   isDragging.value = false
 }
 
-const maxPower = computed(() => gameState.bess.maxPowerMW)
+const maxPower = computed(() => gameState.totalBessMaxPowerMW)
 
 function handleBarInteraction(hour: number, event: MouseEvent, chart: 'da' | 'fcr') {
   const target = event.currentTarget as HTMLElement
@@ -161,8 +161,8 @@ const totalFCRRevenue = computed(() => {
     <header class="header">
       <h1>Day-Ahead Bidding</h1>
       <div class="bess-info">
-        <span class="bess-stat">BESS: {{ gameState.bess.capacityMWh }} MWh</span>
-        <span class="bess-stat">{{ gameState.bess.maxPowerMW }} MW</span>
+        <span class="bess-stat">Fleet: {{ gameState.totalBessCapacityMWh }} MWh</span>
+        <span class="bess-stat">{{ gameState.totalBessMaxPowerMW }} MW</span>
       </div>
     </header>
 
