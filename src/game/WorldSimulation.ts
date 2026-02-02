@@ -16,6 +16,7 @@ import {
   BiofuelWasteCHPModel,
   IndustrialCHPModel,
   GasOilPeakersModel,
+  InterconnectorsModel,
   FrequencyModel,
   FCRModel,
   AFRRModel,
@@ -38,6 +39,7 @@ import {
   type CHPBreakdown,
   type IndustrialCHPBreakdown,
   type PeakersBreakdown,
+  type InterconnectorBreakdown,
   type FrequencyBreakdown,
   type FrequencyBand,
   type FCRBreakdown,
@@ -85,6 +87,7 @@ export interface ProductionSnapshot {
   chpMW: number
   industrialChpMW: number
   peakersMW: number
+  interconnectorsMW: number
   totalMW: number
 }
 
@@ -107,8 +110,21 @@ export interface BalancingSnapshot {
   frequencyHz: number
 }
 
+export interface SimulationToggles {
+  nuclear: boolean
+  hydroReservoir: boolean
+  hydroRoR: boolean
+  wind: boolean
+  solar: boolean
+  chp: boolean
+  peakers: boolean
+  interconnectors: boolean
+  demandResponse: boolean
+}
+
 export interface WorldConfig {
   startDayOfYear: number
+  toggles: SimulationToggles
 }
 
 export class WorldSimulation {
@@ -129,6 +145,7 @@ export class WorldSimulation {
   private _chpFleet: BiofuelWasteCHPModel
   private _industrialChp: IndustrialCHPModel
   private _peakers: GasOilPeakersModel
+  private _interconnectors: InterconnectorsModel
   private _frequencyModel: FrequencyModel
   private _fcrModel: FCRModel
   private _afrrModel: AFRRModel
@@ -179,6 +196,7 @@ export class WorldSimulation {
     this._chpFleet = new BiofuelWasteCHPModel()
     this._industrialChp = new IndustrialCHPModel()
     this._peakers = new GasOilPeakersModel()
+    this._interconnectors = new InterconnectorsModel()
     this._frequencyModel = new FrequencyModel()
     this._fcrModel = new FCRModel()
     this._afrrModel = new AFRRModel()
@@ -204,6 +222,7 @@ export class WorldSimulation {
     this._chpFleet.reset()
     this._industrialChp.reset()
     this._peakers.reset()
+    this._interconnectors.reset()
     this._frequencyModel.reset()
     this._fcrModel.reset()
     this._afrrModel.reset()
@@ -225,6 +244,7 @@ export class WorldSimulation {
     this._grid.connect(this._chpFleet)
     this._grid.connect(this._industrialChp)
     this._grid.connect(this._peakers)
+    this._grid.connect(this._interconnectors)
 
     // Connect demand models
     this._grid.connect(this._heatingDemand)
@@ -268,59 +288,79 @@ export class WorldSimulation {
     )
     const dispatcherBreakdown = this._dispatcher.tick(dispatcherInput)
     
+    const toggles = this._config.toggles
+
     // Update nuclear fleet
-    this._nuclearFleet.tick(this._currentTime)
+    if (toggles.nuclear) {
+      this._nuclearFleet.tick(this._currentTime)
+    }
 
     // Update hydro reservoir with dispatcher setpoint
-    this._hydroReservoir.setDispatch({
-      targetProductionMW: dispatcherBreakdown.setpoints.hydroReservoirMW,
-      mode: 'follow_target',
-    })
-    this._hydroReservoir.tick(this._currentTime)
+    if (toggles.hydroReservoir) {
+      this._hydroReservoir.setDispatch({
+        targetProductionMW: dispatcherBreakdown.setpoints.hydroReservoirMW,
+        mode: 'follow_target',
+      })
+      this._hydroReservoir.tick(this._currentTime)
+    }
 
     // Update hydro run-of-river with inflow proxy
-    const inflowMW = this.computeRoRInflow(clock, weatherOutput)
-    this._hydroRoR.tick({ inflowMWEquiv: inflowMW })
+    if (toggles.hydroRoR) {
+      const inflowMW = this.computeRoRInflow(clock, weatherOutput)
+      this._hydroRoR.tick({ inflowMWEquiv: inflowMW })
+    }
 
     // Update wind fleet
-    this._windFleet.tick({
-      windSpeed100mMps: weatherOutput.windSpeed100mMps,
-      windGustMps: weatherOutput.windSpeed100mMps * 1.3,
-      temperatureC: weatherOutput.temperatureC,
-      icingRisk01: weatherOutput.icingRisk01,
-    })
+    if (toggles.wind) {
+      this._windFleet.tick({
+        windSpeed100mMps: weatherOutput.windSpeed100mMps,
+        windGustMps: weatherOutput.windSpeed100mMps * 1.3,
+        temperatureC: weatherOutput.temperatureC,
+        icingRisk01: weatherOutput.icingRisk01,
+      })
+    }
 
     // Update solar fleet
-    this._solarFleet.tick({
-      solarIrradianceWm2: weatherOutput.solarIrradianceWm2,
-      temperatureC: weatherOutput.temperatureC,
-      precipitationSnowMmph: weatherOutput.precipitationSnowMmph,
-    })
+    if (toggles.solar) {
+      this._solarFleet.tick({
+        solarIrradianceWm2: weatherOutput.solarIrradianceWm2,
+        temperatureC: weatherOutput.temperatureC,
+        precipitationSnowMmph: weatherOutput.precipitationSnowMmph,
+      })
+    }
 
     // Update CHP fleet (heat-led, using temperature-based district heat demand proxy)
-    const districtHeatDemandMWth = this.computeDistrictHeatDemand(weatherOutput.temperatureC, clock.localHour)
-    this._chpFleet.tick({
-      heatDemandMWth: districtHeatDemandMWth,
-      nonChpHeatSupplyMWth: districtHeatDemandMWth * 0.45, // ~45% from heat-only boilers/heat pumps
-    })
-
-    // Update industrial CHP (process-led, follows industrial activity)
-    this._industrialChp.tick({
-      industrialActivity01: 1.0,
-      dispatchMode: 'must_run',
-    })
+    if (toggles.chp) {
+      const districtHeatDemandMWth = this.computeDistrictHeatDemand(weatherOutput.temperatureC, clock.localHour)
+      this._chpFleet.tick({
+        heatDemandMWth: districtHeatDemandMWth,
+        nonChpHeatSupplyMWth: districtHeatDemandMWth * 0.45,
+      })
+      this._industrialChp.tick({
+        industrialActivity01: 1.0,
+        dispatchMode: 'must_run',
+      })
+    }
 
     // Update peakers (dispatched by dispatcher when needed)
-    this._peakers.tick({
-      dispatchMode: dispatcherBreakdown.setpoints.peakersMW > 0 ? 'follow_target' : 'off',
-      targetProductionMW: dispatcherBreakdown.setpoints.peakersMW,
-    })
+    if (toggles.peakers) {
+      this._peakers.tick({
+        dispatchMode: dispatcherBreakdown.setpoints.peakersMW > 0 ? 'follow_target' : 'off',
+        targetProductionMW: dispatcherBreakdown.setpoints.peakersMW,
+      })
+    }
+
+    // Calculate demand response curtailment fraction from dispatcher
+    const drShedMW = dispatcherBreakdown.setpoints.drShedMW
+    const estimatedDemandMW = 15000 // rough estimate for fraction calculation
+    const drCurtailmentFrac = toggles.demandResponse ? Math.min(0.3, drShedMW / estimatedDemandMW) : 0
 
     // Update heating demand model with current weather
     this._heatingDemand.tick({
       temperatureOutdoorC: weatherOutput.temperatureC,
       windSpeedMps: weatherOutput.windSpeed100mMps,
       localHour: clock.localHour,
+      curtailmentFrac01: drCurtailmentFrac,
     })
 
     // Update non-heating demand model
@@ -332,6 +372,7 @@ export class WorldSimulation {
       cloudCover01: weatherOutput.cloudCover01,
       includeDHW: true,
       includeEV: false,
+      curtailmentFrac01: drCurtailmentFrac,
     })
 
     // Update services/commercial demand model
@@ -341,6 +382,7 @@ export class WorldSimulation {
       dayOfWeek: 0,
       temperatureOutdoorC: weatherOutput.temperatureC,
       cloudCover01: weatherOutput.cloudCover01,
+      curtailmentFrac01: drCurtailmentFrac,
     })
 
     // Update transport demand model
@@ -355,6 +397,7 @@ export class WorldSimulation {
     this._industryDemand.tick({
       localHour: clock.localHour,
       dayOfWeek: 0,
+      manualCurtailmentFrac01: drCurtailmentFrac,
     })
 
     // Update grid losses (based on total consumption from all other demand models)
@@ -375,15 +418,31 @@ export class WorldSimulation {
     const industryMW = this._industryDemand.consumptionMW
     const lossesMW = this._gridLosses.consumptionMW
 
-    const nuclearMW = this._nuclearFleet.productionMW
-    const hydroReservoirMW = this._hydroReservoir.productionMW
-    const hydroRoRMW = this._hydroRoR.productionMW
-    const windMW = this._windFleet.productionMW
-    const solarMW = this._solarFleet.productionMW
-    const chpMW = this._chpFleet.productionMW
-    const industrialChpMW = this._industrialChp.productionMW
-    const peakersMW = this._peakers.productionMW
-    const totalProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW + industrialChpMW + peakersMW
+    const nuclearMW = toggles.nuclear ? this._nuclearFleet.productionMW : 0
+    const hydroReservoirMW = toggles.hydroReservoir ? this._hydroReservoir.productionMW : 0
+    const hydroRoRMW = toggles.hydroRoR ? this._hydroRoR.productionMW : 0
+    const windMW = toggles.wind ? this._windFleet.productionMW : 0
+    const solarMW = toggles.solar ? this._solarFleet.productionMW : 0
+    const chpMW = toggles.chp ? this._chpFleet.productionMW : 0
+    const industrialChpMW = toggles.chp ? this._industrialChp.productionMW : 0
+    const peakersMW = toggles.peakers ? this._peakers.productionMW : 0
+    const domesticProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW + industrialChpMW + peakersMW
+    const totalConsumptionMWForInterconnectors = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW
+
+    // Update interconnectors (auto-balances based on domestic imbalance)
+    if (toggles.interconnectors) {
+      this._interconnectors.tick({
+        localHour: clock.localHour,
+        totalGenerationMW: domesticProductionMW,
+        totalConsumptionMW: totalConsumptionMWForInterconnectors,
+        frequencyHz: this._frequencyModel.currentFrequencyHz,
+        rocofHzPerS: this._frequencyModel.breakdown?.rocofHzPerS ?? 0,
+        dispatchMode: 'auto_balance',
+      })
+    }
+
+    const interconnectorsMW = toggles.interconnectors ? this._interconnectors.netImportMW : 0
+    const totalProductionMW = domesticProductionMW + interconnectorsMW
 
     // Record history snapshots at sample interval (not every tick)
     const shouldRecordHistory = this._currentTime % HISTORY_SAMPLE_INTERVAL_S === 0
@@ -419,6 +478,7 @@ export class WorldSimulation {
         chpMW,
         industrialChpMW,
         peakersMW,
+        interconnectorsMW,
         totalMW: totalProductionMW,
       })
     }
@@ -599,15 +659,15 @@ export class WorldSimulation {
         dayOfWeek: 0,
       },
       sandbox: {
-        enableNuclear: true,
-        enableHydroReservoir: true,
-        enableHydroRunOfRiver: true,
-        enableWind: true,
-        enableSolar: true,
-        enableBioWasteCHP: true,
-        enableGasOilPeakers: true,
-        enableInterconnectors: false,
-        enableDemandResponse: false,
+        enableNuclear: this._config.toggles.nuclear,
+        enableHydroReservoir: this._config.toggles.hydroReservoir,
+        enableHydroRunOfRiver: this._config.toggles.hydroRoR,
+        enableWind: this._config.toggles.wind,
+        enableSolar: this._config.toggles.solar,
+        enableBioWasteCHP: this._config.toggles.chp,
+        enableGasOilPeakers: this._config.toggles.peakers,
+        enableInterconnectors: this._config.toggles.interconnectors,
+        enableDemandResponse: this._config.toggles.demandResponse,
       },
       frequencyState: {
         frequencyHz: freqHz,
@@ -855,6 +915,10 @@ export class WorldSimulation {
     return this._peakers.breakdown
   }
 
+  get interconnectorsBreakdown(): InterconnectorBreakdown | null {
+    return this._interconnectors.breakdown
+  }
+
   get frequencyBreakdown(): FrequencyBreakdown | null {
     return this._frequencyModel.breakdown
   }
@@ -913,6 +977,7 @@ export class WorldSimulation {
     this._chpFleet.reset()
     this._industrialChp.reset()
     this._peakers.reset()
+    this._interconnectors.reset()
     this._frequencyModel.reset()
     this._fcrModel.reset()
     this._afrrModel.reset()

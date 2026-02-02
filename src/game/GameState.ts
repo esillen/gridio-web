@@ -8,8 +8,21 @@ export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000
 
 export const DAY_DURATION_SECONDS = 86400 // 24 hours
 
+export interface SimulationToggles {
+  nuclear: boolean
+  hydroReservoir: boolean
+  hydroRoR: boolean
+  wind: boolean
+  solar: boolean
+  chp: boolean
+  peakers: boolean
+  interconnectors: boolean
+  demandResponse: boolean
+}
+
 export interface GameConfig {
   startDayOfYear: number
+  toggles: SimulationToggles
 }
 
 class GameState {
@@ -17,6 +30,17 @@ class GameState {
   private _world: WorldSimulation | null = null
   config: GameConfig = {
     startDayOfYear: 15, // Mid-January
+    toggles: {
+      nuclear: true,
+      hydroReservoir: true,
+      hydroRoR: true,
+      wind: true,
+      solar: true,
+      chp: true,
+      peakers: true,
+      interconnectors: true,
+      demandResponse: true,
+    },
   }
   speed: SimulationSpeed = 1
   paused = false

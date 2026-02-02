@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted } from 'vue'
 import { gameState } from '../game/GameState'
 import { useRouter } from 'vue-router'
 
@@ -8,150 +9,158 @@ function startDay() {
   gameState.startDay()
   router.push('/day')
 }
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.code === 'Space') {
+    e.preventDefault()
+    startDay()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
+})
 </script>
 
 <template>
   <div class="start-screen">
     <h1>Power Grid Simulator</h1>
     
-    <div class="config-section">
-      <h2>Nuclear Fleet</h2>
-      <p class="info">
-        6 reactors totaling 7,012 MW capacity operate as baseload generation.
-        Slow ramp rate (0.05 MW/s per unit).
-      </p>
-      <div class="reactor-list">
-        <div class="reactor">Forsmark 1-3: 3,397 MW</div>
-        <div class="reactor">Ringhals 3-4: 2,215 MW</div>
-        <div class="reactor">Oskarshamn 3: 1,400 MW</div>
-      </div>
-    </div>
-
-    <div class="config-section">
-      <h2>Hydro Reservoir Fleet</h2>
-      <p class="info">
-        ~14,580 MW dispatchable capacity with daily energy budget.
-        Fast ramping (20 MW/s up, 40 MW/s down). Storage: 34 TWh.
-      </p>
-    </div>
-
-    <div class="config-section">
-      <h2>Demand (Weather-Driven)</h2>
-      <p class="info">
-        Residential heating demand is simulated based on weather conditions.
-        Peak demand can reach ~14,000 MW on very cold days.
-      </p>
-      
-      <div class="config-group">
-        <label>
-          Start Day of Year
-          <input type="number" v-model.number="gameState.config.startDayOfYear" min="1" max="365" />
+    <div class="toggles-section">
+      <div class="toggles-grid">
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.nuclear" />
+          <span class="toggle-label">Nuclear</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.hydroReservoir" />
+          <span class="toggle-label">Hydro Reservoir</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.hydroRoR" />
+          <span class="toggle-label">Hydro RoR</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.wind" />
+          <span class="toggle-label">Wind</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.solar" />
+          <span class="toggle-label">Solar</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.chp" />
+          <span class="toggle-label">CHP</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.peakers" />
+          <span class="toggle-label">Peakers</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.interconnectors" />
+          <span class="toggle-label">Interconnectors</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" v-model="gameState.config.toggles.demandResponse" />
+          <span class="toggle-label">Demand Response</span>
         </label>
       </div>
     </div>
 
-    <button class="start-btn" @click="startDay">Start Day</button>
+    <button class="start-btn" @click="startDay">
+      Start Day
+      <span class="hint">(Space)</span>
+    </button>
   </div>
 </template>
 
 <style scoped>
 .start-screen {
-  max-width: 600px;
+  max-width: 400px;
   margin: 0 auto;
   padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  justify-content: center;
 }
 
 h1 {
   text-align: center;
   color: var(--gridio-sky-vivid);
-  margin-bottom: 2rem;
-  font-size: 1.75rem;
+  margin-bottom: 1.5rem;
+  font-size: 1.5rem;
   font-weight: 600;
 }
 
-h2 {
-  color: var(--color-gray-500);
-  font-size: 0.875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 1rem;
-  font-weight: 500;
-}
-
-.config-section {
+.toggles-section {
   background: white;
-  border-radius: 16px;
-  padding: 1.5rem;
+  border-radius: 12px;
+  padding: 1rem;
   margin-bottom: 1.5rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-.config-group {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.info {
-  color: var(--color-gray-600);
-  font-size: 0.875rem;
-  margin-bottom: 1rem;
-  line-height: 1.5;
-}
-
-.reactor-list {
-  display: flex;
-  flex-direction: column;
+.toggles-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 0.5rem;
 }
 
-.reactor {
-  color: var(--color-gray-700);
-  font-size: 0.875rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--color-gray-50);
-  border-radius: 8px;
-}
-
-label {
-  flex: 1;
+.toggle {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 0.5rem;
-  color: var(--color-gray-700);
-  font-size: 0.875rem;
-  font-weight: 500;
+  padding: 0.375rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
 }
 
-input {
+.toggle:hover {
   background: var(--color-gray-50);
-  border: 1px solid var(--color-gray-300);
-  border-radius: 12px;
-  padding: 0.75rem;
-  color: var(--color-gray-900);
-  font-size: 1rem;
 }
 
-input:focus {
-  outline: none;
-  border-color: var(--gridio-sky-vivid);
-  box-shadow: 0 0 0 3px var(--gridio-sky-weak);
+.toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--gridio-sky-vivid);
+  cursor: pointer;
+}
+
+.toggle-label {
+  font-size: 0.8rem;
+  color: var(--color-gray-700);
+  user-select: none;
 }
 
 .start-btn {
   width: 100%;
-  padding: 0.875rem 1.5rem;
+  padding: 0.75rem 1.5rem;
   font-size: 1rem;
   background: var(--gridio-sky-vivid);
   color: white;
   border: none;
-  border-radius: 24px;
+  border-radius: 20px;
   font-weight: 500;
   transition: background 0.2s;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
 }
 
 .start-btn:hover {
   background: #3355e0;
+}
+
+.hint {
+  font-size: 0.75rem;
+  opacity: 0.7;
 }
 </style>

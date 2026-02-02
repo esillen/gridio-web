@@ -20,6 +20,7 @@ const COLORS = {
   chp: '#E879F9',
   industrialChp: '#C084FC',
   peakers: '#F87171',
+  interconnectors: '#10B981',
   wind: '#95957F',
   solar: '#FFC877',
   axis: '#6b7280',
@@ -33,7 +34,7 @@ function formatHours(hours: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, chp, industrialChp, peakers, wind, solar (top)
+// Build stacked data: nuclear (bottom), hydro reservoir, hydro RoR, chp, industrialChp, peakers, interconnectors (imports only), wind, solar (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const nuclear: number[] = []
@@ -42,19 +43,24 @@ function buildData(): uPlot.AlignedData {
   const chp: number[] = []
   const industrialChp: number[] = []
   const peakers: number[] = []
+  const interconnectors: number[] = []
   const wind: number[] = []
   const solar: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
     // Cumulative stacking from bottom to top
+    // For interconnectors, only stack positive values (imports)
+    const interconnectorImport = Math.max(0, s.interconnectorsMW)
+    
     const nuclearVal = s.nuclearMW
     const hydroResVal = nuclearVal + s.hydroReservoirMW
     const hydroRoRVal = hydroResVal + s.hydroRoRMW
     const chpVal = hydroRoRVal + s.chpMW
     const indChpVal = chpVal + s.industrialChpMW
     const peakersVal = indChpVal + s.peakersMW
-    const windVal = peakersVal + s.windMW
+    const interconnectorsVal = peakersVal + interconnectorImport
+    const windVal = interconnectorsVal + s.windMW
     const solarVal = windVal + s.solarMW
     
     nuclear.push(nuclearVal)
@@ -63,12 +69,13 @@ function buildData(): uPlot.AlignedData {
     chp.push(chpVal)
     industrialChp.push(indChpVal)
     peakers.push(peakersVal)
+    interconnectors.push(interconnectorsVal)
     wind.push(windVal)
     solar.push(solarVal)
   }
 
   // Order: time, then top-to-bottom for rendering
-  return [times, solar, wind, peakers, industrialChp, chp, hydroRoR, hydroReservoir, nuclear]
+  return [times, solar, wind, interconnectors, peakers, industrialChp, chp, hydroRoR, hydroReservoir, nuclear]
 }
 
 function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
@@ -173,6 +180,18 @@ function getOpts(width: number, height: number): uPlot.Options {
         label: 'Wind',
         stroke: COLORS.wind,
         fill: COLORS.wind + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
+        label: 'Import',
+        stroke: COLORS.interconnectors,
+        fill: COLORS.interconnectors + '80',
         width: 1,
         paths: stackedAreaPaths,
         value: (u, v, si, i) => {
