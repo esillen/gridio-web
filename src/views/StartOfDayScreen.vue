@@ -1,11 +1,52 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
 import { useRouter } from 'vue-router'
+import InfoModal from '../components/info/InfoModal.vue'
+import NuclearInfo from '../components/info/NuclearInfo.vue'
+import HydroReservoirInfo from '../components/info/HydroReservoirInfo.vue'
+import HydroRoRInfo from '../components/info/HydroRoRInfo.vue'
+import WindInfo from '../components/info/WindInfo.vue'
+import SolarInfo from '../components/info/SolarInfo.vue'
+import CHPInfo from '../components/info/CHPInfo.vue'
+import PeakersInfo from '../components/info/PeakersInfo.vue'
+import InterconnectorsInfo from '../components/info/InterconnectorsInfo.vue'
+import DemandResponseInfo from '../components/info/DemandResponseInfo.vue'
 
 const router = useRouter()
 const activeChart = ref<'da' | 'fcr'>('da')
 const isDragging = ref(false)
+const showSandbox = ref(true)
+const showInfoModal = ref(false)
+const currentInfoType = ref<EnergyType | null>(null)
+
+type EnergyType = 'nuclear' | 'hydroReservoir' | 'hydroRoR' | 'wind' | 'solar' | 'chp' | 'peakers' | 'interconnectors' | 'demandResponse'
+
+const energyTypes: EnergyType[] = ['nuclear', 'hydroReservoir', 'hydroRoR', 'wind', 'solar', 'chp', 'peakers', 'interconnectors', 'demandResponse']
+
+const infoComponents: Record<EnergyType, Component> = {
+  nuclear: NuclearInfo,
+  hydroReservoir: HydroReservoirInfo,
+  hydroRoR: HydroRoRInfo,
+  wind: WindInfo,
+  solar: SolarInfo,
+  chp: CHPInfo,
+  peakers: PeakersInfo,
+  interconnectors: InterconnectorsInfo,
+  demandResponse: DemandResponseInfo,
+}
+
+const currentInfoComponent = computed(() => {
+  return currentInfoType.value ? infoComponents[currentInfoType.value] : null
+})
+
+const currentIndex = computed(() => {
+  return currentInfoType.value ? energyTypes.indexOf(currentInfoType.value) : -1
+})
+
+const canGoLeft = computed(() => currentIndex.value >= 0)
+const canGoRight = computed(() => currentIndex.value >= 0)
 
 onMounted(() => {
   gameState.generateMarketPrices(Date.now())
@@ -154,6 +195,34 @@ const totalFCRRevenue = computed(() => {
   }
   return total
 })
+
+function showInfo(type: EnergyType) {
+  currentInfoType.value = type
+  showInfoModal.value = true
+}
+
+function closeModal() {
+  showInfoModal.value = false
+  currentInfoType.value = null
+}
+
+function goLeft() {
+  if (currentInfoType.value) {
+    const idx = energyTypes.indexOf(currentInfoType.value)
+    const nextIdx = idx - 1 < 0 ? energyTypes.length - 1 : idx - 1
+    const nextType = energyTypes[nextIdx]
+    if (nextType) currentInfoType.value = nextType
+  }
+}
+
+function goRight() {
+  if (currentInfoType.value) {
+    const idx = energyTypes.indexOf(currentInfoType.value)
+    const nextIdx = idx + 1 >= energyTypes.length ? 0 : idx + 1
+    const nextType = energyTypes[nextIdx]
+    if (nextType) currentInfoType.value = nextType
+  }
+}
 </script>
 
 <template>
@@ -246,46 +315,92 @@ const totalFCRRevenue = computed(() => {
       </div>
     </div>
 
-    <div class="toggles-section">
-      <div class="toggles-grid">
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.nuclear" />
-          <span class="toggle-label">Nuclear</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.hydroReservoir" />
-          <span class="toggle-label">Hydro Reservoir</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.hydroRoR" />
-          <span class="toggle-label">Hydro RoR</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.wind" />
-          <span class="toggle-label">Wind</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.solar" />
-          <span class="toggle-label">Solar</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.chp" />
-          <span class="toggle-label">CHP</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.peakers" />
-          <span class="toggle-label">Peakers</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.interconnectors" />
-          <span class="toggle-label">Interconnectors</span>
-        </label>
-        <label class="toggle">
-          <input type="checkbox" v-model="gameState.config.toggles.demandResponse" />
-          <span class="toggle-label">Demand Response</span>
-        </label>
-      </div>
+    <div class="sandbox-section">
+      <button class="sandbox-header" @click="showSandbox = !showSandbox">
+        <span class="sandbox-title">Sandbox <span class="sandbox-subtitle">(what if this was not part of the system...)</span></span>
+        <span class="chevron" :class="{ expanded: showSandbox }">▼</span>
+      </button>
+      <Transition name="expand">
+        <div v-if="showSandbox" class="toggles-section">
+          <div class="toggles-grid">
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.nuclear" />
+                <span class="toggle-label">Nuclear</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('nuclear')" title="Learn about Nuclear">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.hydroReservoir" />
+                <span class="toggle-label">Hydro Reservoir</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('hydroReservoir')" title="Learn about Hydro Reservoir">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.hydroRoR" />
+                <span class="toggle-label">Hydro RoR</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('hydroRoR')" title="Learn about Run-of-River">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.wind" />
+                <span class="toggle-label">Wind</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('wind')" title="Learn about Wind Power">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.solar" />
+                <span class="toggle-label">Solar</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('solar')" title="Learn about Solar PV">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.chp" />
+                <span class="toggle-label">CHP</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('chp')" title="Learn about Combined Heat & Power">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.peakers" />
+                <span class="toggle-label">Peakers</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('peakers')" title="Learn about Gas & Oil Peakers">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.interconnectors" />
+                <span class="toggle-label">Interconnectors</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('interconnectors')" title="Learn about Grid Interconnectors">?</button>
+            </div>
+            <div class="toggle-item">
+              <label class="toggle">
+                <input type="checkbox" v-model="gameState.config.toggles.demandResponse" />
+                <span class="toggle-label">Demand Response</span>
+              </label>
+              <button class="info-btn" @click.stop="showInfo('demandResponse')" title="Learn about Demand Response">?</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </div>
+
+    <InfoModal 
+      :show="showInfoModal" 
+      :can-go-left="canGoLeft" 
+      :can-go-right="canGoRight"
+      @close="closeModal"
+      @go-left="goLeft"
+      @go-right="goRight"
+    >
+      <component :is="currentInfoComponent" v-if="currentInfoComponent" />
+    </InfoModal>
 
     <button class="start-btn" @click="startDay">
       Start Day
@@ -486,11 +601,54 @@ h1 {
   margin-top: auto;
 }
 
-.toggles-section {
+.sandbox-section {
   background: white;
   border-radius: 12px;
-  padding: 0.75rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.sandbox-header {
+  width: 100%;
+  padding: 0.75rem;
+  background: var(--color-gray-50);
+  border: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sandbox-header:hover {
+  background: var(--color-gray-100);
+}
+
+.sandbox-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-gray-800);
+}
+
+.sandbox-subtitle {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-gray-500);
+  font-style: italic;
+}
+
+.chevron {
+  font-size: 0.75rem;
+  color: var(--color-gray-600);
+  transition: transform 0.2s;
+}
+
+.chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.toggles-section {
+  padding: 0.75rem;
 }
 
 .toggles-grid {
@@ -499,10 +657,15 @@ h1 {
   gap: 0.25rem;
 }
 
+.toggle-item {
+  display: flex;
+  align-items: center;
+}
+
 .toggle {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
+  gap: 0.25rem;
   padding: 0.25rem 0.375rem;
   border-radius: 4px;
   cursor: pointer;
@@ -524,6 +687,49 @@ h1 {
   font-size: 0.7rem;
   color: var(--color-gray-700);
   user-select: none;
+}
+
+.info-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--color-gray-300);
+  background: white;
+  color: var(--color-gray-600);
+  font-size: 0.6rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  margin-left: 0.25rem;
+}
+
+.info-btn:hover {
+  background: var(--gridio-sky-vivid);
+  border-color: var(--gridio-sky-vivid);
+  color: white;
+  transform: scale(1.1);
+}
+
+.expand-enter-active,
+.expand-leave-active {
+  transition: all 0.2s ease-out;
+  overflow: hidden;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  max-height: 0;
+  opacity: 0;
+}
+
+.expand-enter-to,
+.expand-leave-from {
+  max-height: 500px;
+  opacity: 1;
 }
 
 .start-btn {
