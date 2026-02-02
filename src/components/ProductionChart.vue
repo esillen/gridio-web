@@ -16,7 +16,8 @@ let chart: uPlot | null = null
 const COLORS = {
   nuclear: '#F0A679',
   hydro: '#4467FE',
-  total: '#55D379',
+  wind: '#95957F',
+  solar: '#FFC877',
   axis: '#6b7280',
   grid: '#e5e7eb',
 }
@@ -27,20 +28,81 @@ function formatHours(hours: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
+// Build stacked data: nuclear (bottom), hydro, wind, solar (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const nuclear: number[] = []
   const hydro: number[] = []
-  const total: number[] = []
+  const wind: number[] = []
+  const solar: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
-    nuclear.push(s.nuclearMW)
-    hydro.push(s.hydroMW)
-    total.push(s.totalMW)
+    // Cumulative stacking from bottom to top
+    const nuclearVal = s.nuclearMW
+    const hydroVal = nuclearVal + s.hydroMW
+    const windVal = hydroVal + s.windMW
+    const solarVal = windVal + s.solarMW
+    
+    nuclear.push(nuclearVal)
+    hydro.push(hydroVal)
+    wind.push(windVal)
+    solar.push(solarVal)
   }
 
-  return [times, nuclear, hydro, total]
+  // Order: time, then top-to-bottom for rendering (solar, wind, hydro, nuclear)
+  return [times, solar, wind, hydro, nuclear]
+}
+
+function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
+  const xdata = u.data[0]
+  const ydata = u.data[seriesIdx]
+  if (!xdata || !ydata) return null
+  
+  // Get the data for the series below (if any)
+  const belowIdx = seriesIdx + 1
+  const belowData = belowIdx < u.series.length ? u.data[belowIdx] : null
+  
+  const stroke = new Path2D()
+  const fill = new Path2D()
+  
+  let firstX: number | null = null
+  
+  // Draw top line left to right
+  for (let i = idx0; i <= idx1; i++) {
+    const xVal = xdata[i]
+    const yVal = ydata[i]
+    if (xVal === undefined) continue
+    const x = u.valToPos(xVal, 'x', true)
+    const y = u.valToPos(yVal ?? 0, 'y', true)
+    
+    if (firstX === null) {
+      stroke.moveTo(x, y)
+      fill.moveTo(x, y)
+      firstX = x
+    } else {
+      stroke.lineTo(x, y)
+      fill.lineTo(x, y)
+    }
+  }
+  
+  // For fill: go back along the bottom edge (either previous series or zero line)
+  for (let i = idx1; i >= idx0; i--) {
+    const xVal = xdata[i]
+    if (xVal === undefined) continue
+    const x = u.valToPos(xVal, 'x', true)
+    const y = belowData 
+      ? u.valToPos(belowData[i] ?? 0, 'y', true)
+      : u.valToPos(0, 'y', true)
+    fill.lineTo(x, y)
+  }
+  
+  fill.closePath()
+  
+  return {
+    stroke,
+    fill,
+  }
 }
 
 function getOpts(width: number, height: number): uPlot.Options {
@@ -51,6 +113,9 @@ function getOpts(width: number, height: number): uPlot.Options {
       x: {
         auto: false,
         range: () => [0, DAY_DURATION_SECONDS / 3600],
+      },
+      y: {
+        auto: true,
       },
     },
     axes: [
@@ -76,22 +141,47 @@ function getOpts(width: number, height: number): uPlot.Options {
         value: (_, v) => v != null ? formatHours(v) : '--',
       },
       {
-        label: 'Nuclear',
-        stroke: COLORS.nuclear,
-        width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+        label: 'Solar',
+        stroke: COLORS.solar,
+        fill: COLORS.solar + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
+        label: 'Wind',
+        stroke: COLORS.wind,
+        fill: COLORS.wind + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
       },
       {
         label: 'Hydro',
         stroke: COLORS.hydro,
-        width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+        fill: COLORS.hydro + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
       },
       {
-        label: 'Total',
-        stroke: COLORS.total,
-        width: 2,
-        dash: [5, 5],
+        label: 'Nuclear',
+        stroke: COLORS.nuclear,
+        fill: COLORS.nuclear + '80',
+        width: 1,
+        paths: stackedAreaPaths,
         value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
     ],

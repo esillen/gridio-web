@@ -18,3 +18,12 @@ export type { NuclearDispatch, NuclearBreakdown, DispatchMode, UnitId, UnitState
 
 export { HydroReservoirFleetModel } from './supply/HydroReservoirFleetModel'
 export type { HydroDispatch, HydroDispatchMode, HydroForecast, HydroBreakdown } from './supply/HydroReservoirFleetModel'
+
+export { WindFleetModel } from './supply/WindFleetModel'
+export type { WindInput, WindBreakdown } from './supply/WindFleetModel'
+
+export { SolarPVFleetModel } from './supply/SolarPVFleetModel'
+export type { SolarInput, SolarBreakdown } from './supply/SolarPVFleetModel'
+
+export { TransportModel } from './demand/TransportModel'
+export type { TransportInput, TransportBreakdown } from './demand/TransportModel'

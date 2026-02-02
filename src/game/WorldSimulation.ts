@@ -5,16 +5,22 @@ import {
   ResidentialSpaceHeatingModel,
   ResidentialNonHeatingModel,
   ServicesCommercialModel,
+  TransportModel,
   NuclearFleetModel,
   HydroReservoirFleetModel,
+  WindFleetModel,
+  SolarPVFleetModel,
   type WeatherOutput, 
   type ForecastOutput, 
   type ForecastArrays,
   type HeatingBreakdown,
   type NonHeatingBreakdown,
   type ServicesBreakdown,
+  type TransportBreakdown,
   type NuclearBreakdown,
-  type HydroBreakdown
+  type HydroBreakdown,
+  type WindBreakdown,
+  type SolarBreakdown
 } from '../system_model'
 
 export interface ClockState {
@@ -39,6 +45,7 @@ export interface ConsumptionSnapshot {
   heatingMW: number
   nonHeatingMW: number
   servicesMW: number
+  transportMW: number
   totalMW: number
 }
 
@@ -46,6 +53,8 @@ export interface ProductionSnapshot {
   time: number
   nuclearMW: number
   hydroMW: number
+  windMW: number
+  solarMW: number
   totalMW: number
 }
 
@@ -60,8 +69,11 @@ export class WorldSimulation {
   private _heatingDemand: ResidentialSpaceHeatingModel
   private _nonHeatingDemand: ResidentialNonHeatingModel
   private _servicesDemand: ServicesCommercialModel
+  private _transportDemand: TransportModel
   private _nuclearFleet: NuclearFleetModel
   private _hydroFleet: HydroReservoirFleetModel
+  private _windFleet: WindFleetModel
+  private _solarFleet: SolarPVFleetModel
   private _currentTime = 0
   private _weatherHistory: WeatherSnapshot[] = []
   private _consumptionHistory: ConsumptionSnapshot[] = []
@@ -85,8 +97,14 @@ export class WorldSimulation {
       'services-commercial',
       'Services & Commercial'
     )
+    this._transportDemand = new TransportModel(
+      'transport',
+      'Transport (Rail + EV)'
+    )
     this._nuclearFleet = new NuclearFleetModel()
     this._hydroFleet = new HydroReservoirFleetModel()
+    this._windFleet = new WindFleetModel()
+    this._solarFleet = new SolarPVFleetModel()
   }
 
   initialize(): void {
@@ -96,8 +114,11 @@ export class WorldSimulation {
     this._heatingDemand.reset(this._weather.state.temperatureC)
     this._nonHeatingDemand.reset()
     this._servicesDemand.reset()
+    this._transportDemand.reset()
     this._nuclearFleet.reset()
     this._hydroFleet.reset()
+    this._windFleet.reset()
+    this._solarFleet.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
@@ -106,11 +127,14 @@ export class WorldSimulation {
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
     this._grid.connect(this._hydroFleet)
+    this._grid.connect(this._windFleet)
+    this._grid.connect(this._solarFleet)
 
     // Connect demand models
     this._grid.connect(this._heatingDemand)
     this._grid.connect(this._nonHeatingDemand)
     this._grid.connect(this._servicesDemand)
+    this._grid.connect(this._transportDemand)
   }
 
   tick(): void {
@@ -134,6 +158,21 @@ export class WorldSimulation {
 
     // Update hydro fleet
     this._hydroFleet.tick(this._currentTime)
+
+    // Update wind fleet
+    this._windFleet.tick({
+      windSpeed100mMps: weatherOutput.windSpeed100mMps,
+      windGustMps: weatherOutput.windSpeed100mMps * 1.3,
+      temperatureC: weatherOutput.temperatureC,
+      icingRisk01: weatherOutput.icingRisk01,
+    })
+
+    // Update solar fleet
+    this._solarFleet.tick({
+      solarIrradianceWm2: weatherOutput.solarIrradianceWm2,
+      temperatureC: weatherOutput.temperatureC,
+      precipitationSnowMmph: weatherOutput.precipitationSnowMmph,
+    })
 
     // Update heating demand model with current weather
     this._heatingDemand.tick({
@@ -162,6 +201,14 @@ export class WorldSimulation {
       cloudCover01: weatherOutput.cloudCover01,
     })
 
+    // Update transport demand model
+    this._transportDemand.tick({
+      localHour: clock.localHour,
+      localMinute: clock.localMinute,
+      dayOfWeek: 0,
+      temperatureC: weatherOutput.temperatureC,
+    })
+
     // Record weather snapshot
     const weatherSnapshot: WeatherSnapshot = {
       time: this._currentTime,
@@ -177,22 +224,28 @@ export class WorldSimulation {
     const heatingMW = this._heatingDemand.consumptionMW
     const nonHeatingMW = this._nonHeatingDemand.consumptionMW
     const servicesMW = this._servicesDemand.consumptionMW
+    const transportMW = this._transportDemand.consumptionMW
     this._consumptionHistory.push({
       time: this._currentTime,
       heatingMW,
       nonHeatingMW,
       servicesMW,
-      totalMW: heatingMW + nonHeatingMW + servicesMW,
+      transportMW,
+      totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW,
     })
 
     // Record production breakdown
     const nuclearMW = this._nuclearFleet.productionMW
     const hydroMW = this._hydroFleet.productionMW
+    const windMW = this._windFleet.productionMW
+    const solarMW = this._solarFleet.productionMW
     this._productionHistory.push({
       time: this._currentTime,
       nuclearMW,
       hydroMW,
-      totalMW: nuclearMW + hydroMW,
+      windMW,
+      solarMW,
+      totalMW: nuclearMW + hydroMW + windMW + solarMW,
     })
 
     // Update grid (collects updates from all connected actors)
@@ -260,12 +313,24 @@ export class WorldSimulation {
     return this._servicesDemand.breakdown
   }
 
+  get transportBreakdown(): TransportBreakdown | null {
+    return this._transportDemand.breakdown
+  }
+
   get nuclearBreakdown(): NuclearBreakdown | null {
     return this._nuclearFleet.breakdown
   }
 
   get hydroBreakdown(): HydroBreakdown | null {
     return this._hydroFleet.breakdown
+  }
+
+  get windBreakdown(): WindBreakdown | null {
+    return this._windFleet.breakdown
+  }
+
+  get solarBreakdown(): SolarBreakdown | null {
+    return this._solarFleet.breakdown
   }
 
   getForecast(deltaS: number): ForecastOutput {
@@ -283,8 +348,11 @@ export class WorldSimulation {
     this._heatingDemand.reset()
     this._nonHeatingDemand.reset()
     this._servicesDemand.reset()
+    this._transportDemand.reset()
     this._nuclearFleet.reset()
     this._hydroFleet.reset()
+    this._windFleet.reset()
+    this._solarFleet.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []

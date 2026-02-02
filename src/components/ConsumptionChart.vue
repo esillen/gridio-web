@@ -17,7 +17,7 @@ const COLORS = {
   heating: '#F2555D',
   nonHeating: '#F0A679',
   services: '#4467FE',
-  total: '#374151',
+  transport: '#55D379',
   axis: '#6b7280',
   grid: '#e5e7eb',
 }
@@ -28,22 +28,81 @@ function formatHours(hours: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
+// Build stacked data: heating (bottom), services, non-heating, transport (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const heating: number[] = []
-  const nonHeating: number[] = []
   const services: number[] = []
-  const total: number[] = []
+  const nonHeating: number[] = []
+  const transport: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
-    heating.push(s.heatingMW)
-    nonHeating.push(s.nonHeatingMW)
-    services.push(s.servicesMW)
-    total.push(s.totalMW)
+    // Cumulative stacking from bottom to top
+    const heatingVal = s.heatingMW
+    const servicesVal = heatingVal + s.servicesMW
+    const nonHeatingVal = servicesVal + s.nonHeatingMW
+    const transportVal = nonHeatingVal + s.transportMW
+    
+    heating.push(heatingVal)
+    services.push(servicesVal)
+    nonHeating.push(nonHeatingVal)
+    transport.push(transportVal)
   }
 
-  return [times, heating, nonHeating, services, total]
+  // Order: time, then top-to-bottom for rendering
+  return [times, transport, nonHeating, services, heating]
+}
+
+function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
+  const xdata = u.data[0]
+  const ydata = u.data[seriesIdx]
+  if (!xdata || !ydata) return null
+  
+  // Get the data for the series below (if any)
+  const belowIdx = seriesIdx + 1
+  const belowData = belowIdx < u.series.length ? u.data[belowIdx] : null
+  
+  const stroke = new Path2D()
+  const fill = new Path2D()
+  
+  let firstX: number | null = null
+  
+  // Draw top line left to right
+  for (let i = idx0; i <= idx1; i++) {
+    const xVal = xdata[i]
+    const yVal = ydata[i]
+    if (xVal === undefined) continue
+    const x = u.valToPos(xVal, 'x', true)
+    const y = u.valToPos(yVal ?? 0, 'y', true)
+    
+    if (firstX === null) {
+      stroke.moveTo(x, y)
+      fill.moveTo(x, y)
+      firstX = x
+    } else {
+      stroke.lineTo(x, y)
+      fill.lineTo(x, y)
+    }
+  }
+  
+  // For fill: go back along the bottom edge (either previous series or zero line)
+  for (let i = idx1; i >= idx0; i--) {
+    const xVal = xdata[i]
+    if (xVal === undefined) continue
+    const x = u.valToPos(xVal, 'x', true)
+    const y = belowData 
+      ? u.valToPos(belowData[i] ?? 0, 'y', true)
+      : u.valToPos(0, 'y', true)
+    fill.lineTo(x, y)
+  }
+  
+  fill.closePath()
+  
+  return {
+    stroke,
+    fill,
+  }
 }
 
 function getOpts(width: number, height: number): uPlot.Options {
@@ -54,6 +113,9 @@ function getOpts(width: number, height: number): uPlot.Options {
       x: {
         auto: false,
         range: () => [0, DAY_DURATION_SECONDS / 3600],
+      },
+      y: {
+        auto: true,
       },
     },
     axes: [
@@ -79,28 +141,47 @@ function getOpts(width: number, height: number): uPlot.Options {
         value: (_, v) => v != null ? formatHours(v) : '--',
       },
       {
-        label: 'Heating',
-        stroke: COLORS.heating,
-        width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+        label: 'Transport',
+        stroke: COLORS.transport,
+        fill: COLORS.transport + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
       },
       {
         label: 'Non-Heating',
         stroke: COLORS.nonHeating,
-        width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+        fill: COLORS.nonHeating + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
       },
       {
         label: 'Services',
         stroke: COLORS.services,
-        width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+        fill: COLORS.services + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
       },
       {
-        label: 'Total',
-        stroke: COLORS.total,
-        width: 2,
-        dash: [5, 5],
+        label: 'Heating',
+        stroke: COLORS.heating,
+        fill: COLORS.heating + '80',
+        width: 1,
+        paths: stackedAreaPaths,
         value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
     ],

@@ -1,0 +1,410 @@
+model_part: demand_transport_rail_and_ev
+version: "1.0"
+purpose: >
+  Per-second electricity demand model for (A) electrified rail traffic and (B) EV charging in Sweden
+  during a cold winter day. Outputs MW consumption suitable for a real-time grid management game.
+
+timebase:
+  dt_seconds: 1
+  horizon_seconds: 86400   # only "think ahead" within the current day
+
+outputs_per_second:
+  # Convention: consumption_MW >= 0, production_MW = 0 for demand actors.
+  consumption_MW: "= rail_total_MW + ev_charging_total_MW"
+  production_MW: 0
+  breakdown_MW:
+    rail_total_MW: "= rail_traction_MW + rail_aux_MW"
+    rail_traction_MW: "= state.rail_traction_MW_now"
+    rail_aux_MW: "= state.rail_aux_MW_now"
+    ev_charging_total_MW: "= state.ev_charging_MW_now"
+    ev_home_MW: "= state.ev_home_MW_now"
+    ev_workplace_MW: "= state.ev_workplace_MW_now"
+    ev_public_fast_MW: "= state.ev_public_fast_MW_now"
+
+inputs_per_second:
+  # Time + calendar
+  t_day_seconds: { unit: s, range: [0, 86399], description: "Seconds since local midnight" }
+  day_type:
+    unit: enum
+    values: [weekday, weekend]
+    description: "Affects rail and workplace charging profiles"
+
+  # Weather (from your weather actors)
+  temperature_C: { unit: "°C", description: "Outdoor air temperature (national aggregate)" }
+
+  # Optional grid signals (if you later add them)
+  grid_stress_0_1:
+    unit: "fraction"
+    range: [0, 1]
+    default: 0
+    description: "0=normal, 1=extreme scarcity; used for optional smart charging throttle"
+  price_signal_0_1:
+    unit: "fraction"
+    range: [0, 1]
+    default: 0
+    description: "Normalized price proxy; can also steer smart charging"
+
+tunable_constants:
+  # -------------------------
+  # A) ELECTRIFIED RAIL (aggregate)
+  # -------------------------
+  rail:
+    # Use annual-energy-derived average to set plausible national magnitude; day profile shapes intra-day variation.
+    annual_energy_TWh_proxy: 2.875     # derived from Trafikverket total electricity proxy (see sources section)
+    avg_power_MW: "= (rail.annual_energy_TWh_proxy * 1e6) / 8760"   # TWh -> MWh / h => MW
+
+    # Split of rail electricity into traction vs auxiliary (stations, depots, signalling, heating, etc.)
+    traction_share: 0.75
+    aux_share: 0.25
+
+    # Peak multipliers for daily pattern (cold winter weekday commuting peaks)
+    traction_peak_multiplier_weekday: 1.9
+    traction_peak_multiplier_weekend: 1.3
+
+    # Temperature sensitivity (aux loads: stations/depot heating, de-icing, ventilation)
+    aux_temp_ref_C: 0
+    aux_temp_slope_per_C: 0.015   # +1.5% aux per °C below ref (heating dominates in cold)
+
+    # Per-second "activity noise" to mimic many trains accelerating/braking
+    traction_noise_sigma_frac: 0.04   # ~4% 1-s jitter
+    traction_noise_tau_s: 30          # low-pass time constant for jitter smoothing
+
+    # Rare short spikes (nationwide aggregate) from synchronized acceleration waves (kept mild)
+    spike_event_rate_per_hour_weekday: 8
+    spike_event_rate_per_hour_weekend: 4
+    spike_duration_s_range: [10, 40]
+    spike_amplitude_frac_range: [0.03, 0.10]
+
+  # -------------------------
+  # B) EV CHARGING (aggregate)
+  # -------------------------
+  ev:
+    # Fleet size (battery electric cars). If you later add PHEVs, treat them as additional smaller battery demand.
+    bev_count: 307000
+    avg_km_per_car_per_year: 11260      # from 1 126 mil/year (1 mil = 10 km)
+    avg_km_per_car_per_day: "= ev.avg_km_per_car_per_year / 365"
+
+    # Driving energy intensity (real-world average); winter increases consumption.
+    base_kWh_per_100km: 21.0
+    base_kWh_per_km: "= ev.base_kWh_per_100km / 100"
+
+    # Winter penalty (simple): up to +30% at very cold temps, fades to 0% by +15°C
+    winter_penalty_max_frac: 0.30
+    winter_penalty_warm_C: 15
+    winter_penalty_cold_C: -15
+    winter_penalty_frac:
+      formula: >
+        clamp01((winter_penalty_warm_C - temperature_C) / (winter_penalty_warm_C - winter_penalty_cold_C))
+        * winter_penalty_max_frac
+
+    effective_kWh_per_km: "= ev.base_kWh_per_km * (1 + ev.winter_penalty_frac)"
+
+    # Portion of driving energy that gets replenished as grid electricity within the day
+    # (assumes most charging is domestic; keep <1 if you want some non-charged deficit)
+    daily_recharge_fraction: 0.95
+
+    # Charging power constraints (aggregate caps). These represent infrastructure + behavior constraints.
+    # You can tune these to match desired game difficulty.
+    max_home_MW: 2200           # many 3.7–11 kW chargers aggregated, but not all simultaneous
+    max_workplace_MW: 500
+    max_public_fast_MW: 1200    # HPC stations aggregated
+
+    # Smart charging behavior
+    smart_charging_enabled: true
+    smart_charging_min_fraction: 0.40   # even under max stress, allow this fraction of planned charging
+    smart_charging_stress_exponent: 1.6 # non-linear throttle
+
+    # Charging session behavior (how quickly people "catch up" if behind plan)
+    catchup_gain_per_second: 0.0025     # proportional controller on remaining energy vs remaining time
+
+profiles:
+  # All profiles return a nonnegative "desired weight" at time t_day_seconds.
+  # They will be normalized over the remaining part of the day to allocate remaining MWh.
+
+  rail_traction_profile_weekday:
+    # Two peaks + daytime base. Times in seconds since midnight.
+    formula: >
+      0.55
+      + 0.85 * gauss(t, 8.0h, 1.7h)
+      + 0.75 * gauss(t, 16.8h, 2.2h)
+      + 0.20 * gauss(t, 12.0h, 4.5h)
+
+  rail_traction_profile_weekend:
+    formula: >
+      0.60
+      + 0.35 * gauss(t, 11.5h, 3.5h)
+      + 0.25 * gauss(t, 17.0h, 3.5h)
+
+  rail_aux_profile:
+    # Aux is flatter but slightly higher during operating hours; temperature handled elsewhere.
+    formula: >
+      0.85 + 0.15 * gauss(t, 13.0h, 6.0h)
+
+  ev_home_profile_weekday:
+    # Evening + overnight; small morning bump.
+    formula: >
+      0.25
+      + 0.90 * gauss(t, 20.5h, 2.4h)
+      + 0.55 * gauss(t, 2.0h, 2.8h)
+      + 0.20 * gauss(t, 7.0h, 1.0h)
+
+  ev_workplace_profile_weekday:
+    formula: >
+      0.05
+      + 0.85 * gauss(t, 10.5h, 2.8h)
+      + 0.55 * gauss(t, 14.0h, 2.5h)
+
+  ev_public_fast_profile_weekday:
+    # Midday + afternoon travel, some evening.
+    formula: >
+      0.10
+      + 0.45 * gauss(t, 12.5h, 2.2h)
+      + 0.55 * gauss(t, 17.5h, 2.0h)
+      + 0.25 * gauss(t, 20.5h, 1.8h)
+
+  ev_home_profile_weekend:
+    formula: >
+      0.30
+      + 0.65 * gauss(t, 21.0h, 2.7h)
+      + 0.45 * gauss(t, 9.5h, 2.5h)
+      + 0.30 * gauss(t, 2.0h, 3.0h)
+
+  ev_workplace_profile_weekend:
+    formula: "0.03 + 0.25 * gauss(t, 12.0h, 3.0h)"
+
+  ev_public_fast_profile_weekend:
+    formula: "0.08 + 0.55 * gauss(t, 13.5h, 3.5h) + 0.35 * gauss(t, 18.0h, 2.8h)"
+
+state:
+  # --- Rail ---
+  rail_traction_MW_now: 0
+  rail_aux_MW_now: 0
+  rail_noise_lp: 0
+  rail_spike_active_until_t: -1
+  rail_spike_amplitude_frac: 0
+
+  # --- EV charging ---
+  # Daily energy requirement bookkeeping
+  ev_energy_need_today_MWh: 0
+  ev_energy_delivered_today_MWh: 0
+  ev_energy_remaining_today_MWh: 0
+
+  # Per-channel bookkeeping
+  ev_home_delivered_MWh: 0
+  ev_workplace_delivered_MWh: 0
+  ev_public_fast_delivered_MWh: 0
+
+  ev_home_MW_now: 0
+  ev_workplace_MW_now: 0
+  ev_public_fast_MW_now: 0
+  ev_charging_MW_now: 0
+
+initialization_at_midnight:
+  # Compute daily EV energy need (driving consumption that day) and reset counters.
+  ev_energy_need_today_MWh: >
+    (ev.bev_count * ev.avg_km_per_car_per_day * ev.effective_kWh_per_km * ev.daily_recharge_fraction) / 1000
+  ev_energy_delivered_today_MWh: 0
+  ev_energy_remaining_today_MWh: "= state.ev_energy_need_today_MWh"
+  ev_home_delivered_MWh: 0
+  ev_workplace_delivered_MWh: 0
+  ev_public_fast_delivered_MWh: 0
+
+per_second_update:
+  steps:
+    # -------------------------
+    # 1) RAIL DEMAND
+    # -------------------------
+    - name: rail_base_levels
+      compute:
+        rail_total_avg_MW: "= rail.avg_power_MW"
+        rail_traction_base_MW: "= rail_total_avg_MW * rail.traction_share"
+        rail_aux_base_MW: "= rail_total_avg_MW * rail.aux_share"
+
+    - name: rail_profile_multiplier
+      compute:
+        traction_profile_weight:
+          formula: >
+            if(day_type == weekday,
+              profiles.rail_traction_profile_weekday(t_day_seconds),
+              profiles.rail_traction_profile_weekend(t_day_seconds)
+            )
+        # Normalize by typical mean weight (~1). We assume these profiles are roughly O(1).
+        traction_peak_mult:
+          formula: >
+            if(day_type == weekday, rail.traction_peak_multiplier_weekday, rail.traction_peak_multiplier_weekend)
+
+        rail_traction_target_MW: "= rail_traction_base_MW * traction_peak_mult * traction_profile_weight"
+
+        aux_profile_weight: "= profiles.rail_aux_profile(t_day_seconds)"
+        aux_temp_mult:
+          formula: >
+            1 + rail.aux_temp_slope_per_C * max(0, (rail.aux_temp_ref_C - temperature_C))
+        rail_aux_target_MW: "= rail_aux_base_MW * aux_profile_weight * aux_temp_mult"
+
+    - name: rail_spike_process
+      logic: >
+        # If no spike active, randomly start one with a Poisson rate; if active, keep amplitude until expiry.
+        # Use your game's RNG with deterministic seeding for reproducibility.
+      compute:
+        spike_rate_per_s:
+          formula: >
+            (if(day_type==weekday, rail.spike_event_rate_per_hour_weekday, rail.spike_event_rate_per_hour_weekend)) / 3600
+        if_start_spike:
+          condition: "t_day_seconds >= state.rail_spike_active_until_t AND rand01() < spike_rate_per_s"
+          set:
+            rail_spike_amplitude_frac: "rand_range(rail.spike_amplitude_frac_range)"
+            rail_spike_active_until_t: "t_day_seconds + rand_int_range(rail.spike_duration_s_range)"
+
+        spike_mult:
+          formula: >
+            if(t_day_seconds < state.rail_spike_active_until_t, 1 + state.rail_spike_amplitude_frac, 1)
+
+    - name: rail_noise_lowpass
+      compute:
+        # Low-pass filtered noise term in fraction units
+        rail_noise_instant: "= rand_normal(mean=0, sigma=rail.traction_noise_sigma_frac)"
+        alpha: "= 1 - exp(-1 / rail.traction_noise_tau_s)"
+        rail_noise_lp_new: "= (1 - alpha) * state.rail_noise_lp + alpha * rail_noise_instant"
+      set:
+        rail_noise_lp: "= rail_noise_lp_new"
+
+    - name: rail_finalize_MW
+      compute:
+        rail_traction_MW_new:
+          formula: >
+            max(0,
+              rail_traction_target_MW
+              * spike_mult
+              * (1 + state.rail_noise_lp)
+            )
+        rail_aux_MW_new: "max(0, rail_aux_target_MW)"
+      set:
+        rail_traction_MW_now: "= rail_traction_MW_new"
+        rail_aux_MW_now: "= rail_aux_MW_new"
+
+    # -------------------------
+    # 2) EV CHARGING DEMAND (deliver today's needed MWh using time-of-day allocations)
+    # -------------------------
+    - name: ev_update_daily_need (optional_recompute)
+      note: >
+        If temperature_C changes materially during the day and you want EV driving energy to adjust,
+        you may slowly blend ev_energy_need_today_MWh toward a recomputed value. For simplicity you can skip.
+      compute:
+        ev_energy_remaining_today_MWh: "= max(0, state.ev_energy_need_today_MWh - state.ev_energy_delivered_today_MWh)"
+
+    - name: ev_remaining_time
+      compute:
+        remaining_seconds: "= max(1, 86400 - t_day_seconds)"
+        remaining_hours: "= remaining_seconds / 3600"
+
+    - name: ev_profile_weights_now
+      compute:
+        home_w:
+          formula: >
+            if(day_type==weekday,
+              profiles.ev_home_profile_weekday(t_day_seconds),
+              profiles.ev_home_profile_weekend(t_day_seconds)
+            )
+        work_w:
+          formula: >
+            if(day_type==weekday,
+              profiles.ev_workplace_profile_weekday(t_day_seconds),
+              profiles.ev_workplace_profile_weekend(t_day_seconds)
+            )
+        fast_w:
+          formula: >
+            if(day_type==weekday,
+              profiles.ev_public_fast_profile_weekday(t_day_seconds),
+              profiles.ev_public_fast_profile_weekend(t_day_seconds)
+            )
+
+        w_sum: "= max(1e-6, home_w + work_w + fast_w)"
+        share_home: "= home_w / w_sum"
+        share_work: "= work_w / w_sum"
+        share_fast: "= fast_w / w_sum"
+
+    - name: ev_planned_average_power_to_finish_today
+      compute:
+        # Baseline: spread remaining MWh evenly over remaining time (MW = MWh / h)
+        avg_MW_needed: "= state.ev_energy_remaining_today_MWh / remaining_hours"
+
+        # Catch-up controller: if we're behind a "typical" cumulative curve, increase near-term MW modestly.
+        # Define a simple expected-delivered fraction by time-of-day (weekday/weekend) using the same weights.
+        # expected_fraction is computed by integrating profile weights from midnight to now and normalizing by full-day integral.
+        expected_fraction_delivered:
+          formula: >
+            expected_cum_fraction_from_profiles(day_type, t_day_seconds)   # helper; precompute lookup table once per day
+
+        actual_fraction_delivered:
+          formula: >
+            if(state.ev_energy_need_today_MWh > 0,
+               state.ev_energy_delivered_today_MWh / state.ev_energy_need_today_MWh,
+               1
+            )
+
+        backlog_frac: "= clamp(-0.5, 0.5, expected_fraction_delivered - actual_fraction_delivered)"
+        catchup_mult: "= 1 + ev.catchup_gain_per_second * backlog_frac * 3600"   # scale to "per hour" effect
+
+        planned_total_MW_now: "= max(0, avg_MW_needed * catchup_mult)"
+
+    - name: ev_smart_charging_throttle
+      compute:
+        throttle:
+          formula: >
+            if(ev.smart_charging_enabled,
+              max(ev.smart_charging_min_fraction, (1 - grid_stress_0_1) ^ ev.smart_charging_stress_exponent),
+              1
+            )
+        planned_total_MW_throttled: "= planned_total_MW_now * throttle"
+
+    - name: ev_allocate_channels_and_apply_caps
+      compute:
+        ev_home_MW_desired: "= planned_total_MW_throttled * share_home"
+        ev_work_MW_desired: "= planned_total_MW_throttled * share_work"
+        ev_fast_MW_desired: "= planned_total_MW_throttled * share_fast"
+
+        ev_home_MW_capped: "= min(ev.max_home_MW, ev_home_MW_desired)"
+        ev_work_MW_capped: "= min(ev.max_workplace_MW, ev_work_MW_desired)"
+        ev_fast_MW_capped: "= min(ev.max_public_fast_MW, ev_fast_MW_desired)"
+
+        ev_total_MW_capped: "= ev_home_MW_capped + ev_work_MW_capped + ev_fast_MW_capped"
+
+        # Don't over-deliver beyond remaining energy (convert MW over 1s to MWh)
+        deliverable_MWh_this_step: "= ev_total_MW_capped / 3600"
+        actual_deliver_MWh_this_step: "= min(deliverable_MWh_this_step, state.ev_energy_remaining_today_MWh)"
+
+        # If we had to clip due to running out of remaining MWh, scale channel MWs proportionally this second.
+        scale_if_clipped:
+          formula: >
+            if(deliverable_MWh_this_step > 1e-9,
+              actual_deliver_MWh_this_step / deliverable_MWh_this_step,
+              0
+            )
+
+        ev_home_MW_final: "= ev_home_MW_capped * scale_if_clipped"
+        ev_work_MW_final: "= ev_work_MW_capped * scale_if_clipped"
+        ev_fast_MW_final: "= ev_fast_MW_capped * scale_if_clipped"
+        ev_total_MW_final: "= ev_total_MW_capped * scale_if_clipped"
+
+    - name: ev_update_state_and_outputs
+      set:
+        ev_home_MW_now: "= ev_home_MW_final"
+        ev_workplace_MW_now: "= ev_work_MW_final"
+        ev_public_fast_MW_now: "= ev_fast_MW_final"
+        ev_charging_MW_now: "= ev_total_MW_final"
+
+        ev_energy_delivered_today_MWh: "= state.ev_energy_delivered_today_MWh + (ev_total_MW_final / 3600)"
+        ev_home_delivered_MWh: "= state.ev_home_delivered_MWh + (ev_home_MW_final / 3600)"
+        ev_workplace_delivered_MWh: "= state.ev_workplace_delivered_MWh + (ev_work_MW_final / 3600)"
+        ev_public_fast_delivered_MWh: "= state.ev_public_fast_delivered_MWh + (ev_fast_MW_final / 3600)"
+
+helper_functions_needed:
+  clamp01: "clamp 0..1"
+  clamp: "clamp(min, max, x)"
+  gauss:
+    description: "Gaussian bump with center and sigma expressed in hours"
+    formula: "exp(-0.5 * ((t - center_seconds) / sigma_seconds)^2)"
+  expected_cum_fraction_from_profiles:
+    description: >
+      Precompute once per day: integrate (home_w + work_w + fast_w) from 0..t and normalize by 0..86400.
+      Use a 1-minute lookup table to keep it cheap; interpolate per second.

@@ -1,0 +1,168 @@
+model_part: generation_solar_pv_fleet
+version: 1.0
+tick_s: 1
+
+description: >
+  Swedish solar PV fleet generation (MW) driven by global horizontal irradiance proxy (GHI) from weather.
+  Simple but game-friendly: DC power ~ irradiance * temp efficiency, then inverter/clipping and losses,
+  plus optional snow-cover loss with accumulation/melt. Includes per-second smoothing and a 24h forecast.
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  irradiance: W_per_m2
+  temperature: C
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+
+  weather_now_sweden:
+    solar_irradiance_Wm2: float         # from weather_now_sweden
+    temperature_C: float
+    cloud_cover_0_1: float              # optional (not required if irradiance already includes cloud)
+    precipitation_snow_mmph: float      # snow water equivalent, mm/hour
+
+  weather_forecast_24h:
+    step_s: int
+    forecast_solar_irradiance_Wm2: [float]   # length = 86400/step_s, index 0 = now
+    forecast_temperature_C: [float]          # optional but recommended
+    forecast_precipitation_snow_mmph: [float] # optional if you want snow-cover forecast
+
+  curtailment:
+    curtailment_frac_0_1: float   # 0=no curtailment, 1=full curtailment
+
+state:
+  # Smooth output for stable 60fps graphs
+  power_frac_smooth_0_1: float
+
+  # Snow cover fraction on panels (0..1), where 1 means fully covered and PV produces ~0
+  snow_cover_0_1: float
+
+constants:
+  # --- Real-world scale (Sweden total grid-connected PV end of 2024) ---
+  installed_capacity_MW_AC: 4808.4   # MW (grid-connected capacity, AC)
+
+  # --- DC/AC sizing and clipping ---
+  # Many fleets are DC-oversized vs inverter AC; represent this with a DC/AC ratio.
+  dc_ac_ratio: 1.15
+  installed_capacity_MW_DC: "= installed_capacity_MW_AC * dc_ac_ratio"
+  inverter_clip_factor_0_1: 1.00  # AC cannot exceed installed_capacity_MW_AC
+
+  # --- Base losses (fleet-level) ---
+  availability_0_1: 0.995
+  soiling_loss_0_1: 0.03           # dirt (winter often lower, but keep constant/simple)
+  wiring_and_mismatch_loss_0_1: 0.05
+  inverter_loss_0_1: 0.03
+  net_loss_factor_0_1: "= (1-soiling_loss_0_1) * (1-wiring_and_mismatch_loss_0_1) * (1-inverter_loss_0_1)"
+
+  # --- PV conversion model (DC power fraction from irradiance + temperature) ---
+  # Use GHI proxy scaled by an empirical "fleet geometry factor" to account for tilt/orientation
+  # because GHI is horizontal while modules are tilted. Keep constant for simplicity.
+  ghi_to_plane_factor: 1.10             # converts GHI proxy to an effective plane-of-array irradiance
+  irradiance_ref_Wm2: 1000.0            # STC reference
+  min_irradiance_Wm2: 10.0              # below this treat as night
+
+  # Module temperature model (very simple NOCT approach)
+  # T_cell = T_air + (NOCT-20)/800 * POA
+  NOCT_C: 45.0
+
+  # Temperature coefficient for PV power (relative per °C)
+  # Typical around -0.4%/°C for crystalline silicon.
+  temp_coeff_per_C: -0.004
+  T_ref_C: 25.0
+
+  # --- Snow cover model ---
+  # Accumulation rate from snow precipitation, with stronger accumulation below freezing.
+  snow_accum_temp_threshold_C: 1.0
+  snow_accum_rate_per_mm: 0.12          # snow_cover increase per mm water-equivalent
+  snow_accum_cold_boost: 1.5            # faster accumulation when cold
+
+  # Melt/slide-off: driven by temperature above 0 and solar irradiance
+  snow_melt_temp_start_C: 0.0
+  snow_melt_rate_per_s_at_5C: 2.5e-5    # ~0.09/hour at +5C, tune
+  snow_melt_solar_rate_per_Wm2_per_s: 2.0e-8  # sunlight helps clear snow
+
+  # Snow loss effect on power (linear)
+  snow_power_multiplier: "1 - snow_cover_0_1"  # 0..1
+
+  # --- Smoothing for visuals ---
+  tau_power_smooth_s: 10.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+update_per_tick:
+  # 1) Compute effective plane-of-array irradiance
+  - poa_Wm2: "= weather_now_sweden.solar_irradiance_Wm2 * ghi_to_plane_factor"
+
+  # 2) Update snow cover state (accumulate from snowfall, melt/clear from warmth and sun)
+  - snowing_now: "= (weather_now_sweden.precipitation_snow_mmph > 0.05)"
+  - snow_mm_this_tick: "= weather_now_sweden.precipitation_snow_mmph * (tick_s / 3600.0)"  # mm in this second
+
+  - cold_boost: "= (weather_now_sweden.temperature_C <= snow_accum_temp_threshold_C) ? snow_accum_cold_boost : 1.0"
+  - snow_accum_delta: "= snow_mm_this_tick * snow_accum_rate_per_mm * cold_boost"
+
+  - temp_above_0_C: "= max(0, weather_now_sweden.temperature_C - snow_melt_temp_start_C)"
+  - melt_rate_temp_per_s: "= snow_melt_rate_per_s_at_5C * (temp_above_0_C / 5.0)"  # linear with temp
+  - melt_rate_solar_per_s: "= snow_melt_solar_rate_per_Wm2_per_s * max(0, poa_Wm2)"
+  - snow_melt_delta: "= (melt_rate_temp_per_s + melt_rate_solar_per_s) * tick_s"
+
+  - state.snow_cover_0_1: >
+      clamp01(
+        state.snow_cover_0_1
+        + snow_accum_delta
+        - snow_melt_delta
+      )
+
+  # 3) Irradiance-based DC power fraction (0..1)
+  - if poa_Wm2 < min_irradiance_Wm2:
+      - power_frac_dc_0_1: 0.0
+  - else:
+      - power_frac_irr_0_1: "= clamp01(poa_Wm2 / irradiance_ref_Wm2)"
+
+      # 4) Cell temperature & temperature efficiency
+      - T_cell_C: "= weather_now_sweden.temperature_C + ((NOCT_C - 20.0) / 800.0) * poa_Wm2"
+      - temp_eff_0_1: "= clamp(1.0 + temp_coeff_per_C * (T_cell_C - T_ref_C), 0.75, 1.10)"
+
+      # 5) Combine into DC fraction
+      - power_frac_dc_0_1: "= clamp01(power_frac_irr_0_1 * temp_eff_0_1)"
+
+  # 6) Apply fleet losses, availability, curtailment, snow loss; convert DC->AC with clipping
+  - curtail_factor_0_1: "= clamp01(1.0 - curtailment.curtailment_frac_0_1)"
+  - snow_factor_0_1: "= clamp01(1.0 - state.snow_cover_0_1)"
+
+  - power_frac_ac_instant_0_1: >
+      clamp01(
+        power_frac_dc_0_1
+        * availability_0_1
+        * net_loss_factor_0_1
+        * curtail_factor_0_1
+        * snow_factor_0_1
+      )
+
+  # 7) Smooth power fraction (for stable visuals)
+  - state.power_frac_smooth_0_1: >
+      state.power_frac_smooth_0_1
+      + (power_frac_ac_instant_0_1 - state.power_frac_smooth_0_1) * (tick_s / tau_power_smooth_s)
+
+  # 8) Output MW with AC clipping
+  - production_MW_now: "= installed_capacity_MW_AC * state.power_frac_smooth_0_1"
+
+outputs:
+  production_MW: "= production_MW_now"
+  consumption_MW: 0.0
+  capacity_MW_AC: "= installed_capacity_MW_AC"
+  power_frac_0_1: "= state.power_frac_smooth_0_1"
+  snow_cover_0_1: "= state.snow_cover_0_1"
+
+  forecast_24h:
+    step_s: "= weather_forecast_24h.step_s"
+    production_MW: >
+      let step = weather_forecast_24h.step_s;
+      let N = len(weather_forecast_24h
