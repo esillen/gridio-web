@@ -1,0 +1,197 @@
+model_part: tso_reserve_mfrr
+version: 1.0
+tick_s: 1
+
+description: >
+  Manual Frequency Restoration Reserve (mFRR) activation model.
+  Represents discrete manual/market-activated blocks (MW) with minutes-scale delay, used when imbalance persists
+  or when aFRR is saturated. Outputs activated MW to inject into system_frequency_and_imbalance.
+  Horizon: think-ahead <= 24h.
+
+units:
+  power: MW
+  time: s
+  frequency: Hz
+
+inputs:
+  frequency:
+    frequency_Hz: float
+
+  # Available mFRR headroom each tick (can be tied to peakers, hydro headroom, demand shedding contracts, etc.)
+  availability:
+    up_capacity_MW: float
+    down_capacity_MW: float
+
+  # Signals from system/controller layer
+  system:
+    net_imbalance_MW: float     # generation - consumption (MW), optional but recommended
+
+  afrr_status:
+    activated_MW: float
+    up_capacity_MW: float
+    down_capacity_MW: float
+
+  enabled: bool
+
+state:
+  activated_MW: float
+
+  # A queue of pending activations (each has signed MW and remaining delay)
+  pending:
+    blocks_MW: [float]
+    time_to_go_s: [float]
+
+  # Persistence timer
+  persistent_timer_s: float
+
+constants:
+  f_nom_Hz: 50.0
+
+  # Trigger thresholds
+  freq_trigger_Hz: 49.85             # if below, consider up mFRR
+  freq_trigger_high_Hz: 50.15        # if above, consider down mFRR
+
+  imbalance_trigger_MW: 500.0        # if |imbalance| above this, consider mFRR
+
+  # Persistence requirement (avoid triggering on short events)
+  persistence_s: 180.0               # 3 minutes
+
+  # Activation delay and block size
+  activation_delay_s: 300.0          # 5 minutes typical
+  block_size_MW: 100.0               # mFRR often comes in blocks; tune 50..200
+  max_blocks_per_activation: 5       # limit how many blocks you can schedule at once
+
+  # Saturation logic: if aFRR uses most of its capacity, escalate to mFRR
+  afrr_saturation_frac_trigger: 0.80
+
+  # Ramping when blocks arrive (avoid instant jumps in visuals)
+  ramp_up_MW_per_s: 10.0
+  ramp_down_MW_per_s: 15.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  sign: "sign(x) = (x>0?1:(x<0?-1:0))"
+  round_to_block: "round_to_block(x, block)= block * round(x / block)"
+
+update_per_tick:
+  - if enabled != true:
+      - state.activated_MW: 0.0
+      - state.pending.blocks_MW: []
+      - state.pending.time_to_go_s: []
+      - state.persistent_timer_s: 0.0
+      - return
+
+  # 1) Determine imbalance estimate
+  - P_imbalance_MW: >
+      if system.net_imbalance_MW != null:
+        system.net_imbalance_MW
+      else:
+        0.0
+
+  # 2) Determine if conditions suggest persistent shortage/surplus
+  - freq_low: "= (frequency.frequency_Hz <= freq_trigger_Hz) ? 1 : 0"
+  - freq_high: "= (frequency.frequency_Hz >= freq_trigger_high_Hz) ? 1 : 0"
+  - imbalance_high: "= (abs(P_imbalance_MW) >= imbalance_trigger_MW) ? 1 : 0"
+
+  - afrr_up_sat: >
+      if max(1e-6, afrr_status.up_capacity_MW) > 0:
+        (max(0, afrr_status.activated_MW) / max(1e-6, afrr_status.up_capacity_MW))
+      else:
+        0.0
+  - afrr_down_sat: >
+      if max(1e-6, afrr_status.down_capacity_MW) > 0:
+        (max(0, -afrr_status.activated_MW) / max(1e-6, afrr_status.down_capacity_MW))
+      else:
+        0.0
+  - afrr_saturated: "= ((afrr_up_sat >= afrr_saturation_frac_trigger) or (afrr_down_sat >= afrr_saturation_frac_trigger)) ? 1 : 0"
+
+  - need_up: "= (freq_low == 1) or (P_imbalance_MW < -imbalance_trigger_MW) or (afrr_saturated == 1 and frequency.frequency_Hz < f_nom_Hz)"
+  - need_down: "= (freq_high == 1) or (P_imbalance_MW > imbalance_trigger_MW) or (afrr_saturated == 1 and frequency.frequency_Hz > f_nom_Hz)"
+
+  - if need_up == true or need_down == true:
+      - state.persistent_timer_s: "= state.persistent_timer_s + tick_s"
+  - else:
+      - state.persistent_timer_s: "= max(0, state.persistent_timer_s - 2*tick_s)"
+
+  # 3) If persistent, schedule new blocks (respect available capacity minus already activated/pending)
+  - if state.persistent_timer_s >= persistence_s:
+      - direction: "= need_up ? 1 : (need_down ? -1 : 0)"
+      - if direction != 0:
+          # Estimate how much we want: roughly cancel the imbalance plus relieve aFRR.
+          - desired_MW: >
+              if system.net_imbalance_MW != null:
+                clamp(abs(P_imbalance_MW), 0, 2000)
+              else:
+                500.0
+          - desired_MW: "= min(desired_MW, max_blocks_per_activation * block_size_MW)"
+
+          - desired_blocks: "= round(desired_MW / block_size_MW)"
+          - desired_blocks: "= clamp(desired_blocks, 1, max_blocks_per_activation)"
+          - schedule_MW: "= direction * desired_blocks * block_size_MW"
+
+          # Respect remaining capacity accounting for already activated and pending
+          - pending_sum_MW: "= sum(state.pending.blocks_MW)"
+          - current_plus_pending_MW: "= state.activated_MW + pending_sum_MW"
+
+          - up_cap: "= max(0, availability.up_capacity_MW)"
+          - down_cap: "= max(0, availability.down_capacity_MW)"
+
+          - remaining_up: "= max(0, up_cap - max(0, current_plus_pending_MW))"
+          - remaining_down: "= max(0, down_cap - max(0, -current_plus_pending_MW))"
+
+          - feasible_schedule_MW: >
+              if schedule_MW > 0:
+                min(schedule_MW, remaining_up)
+              else:
+                max(schedule_MW, -remaining_down)
+
+          - if abs(feasible_schedule_MW) >= block_size_MW:
+              - # push one event into pending queue
+              - state.pending.blocks_MW: "= append(state.pending.blocks_MW, feasible_schedule_MW)"
+              - state.pending.time_to_go_s: "= append(state.pending.time_to_go_s, activation_delay_s)"
+              - # reset timer so we don't schedule every second
+              - state.persistent_timer_s: 0.0
+
+  # 4) Advance pending queue; when timer reaches 0, add block to target
+  - for each idx in 0..len(state.pending.time_to_go_s)-1:
+      - state.pending.time_to_go_s[idx]: "= max(0, state.pending.time_to_go_s[idx] - tick_s)"
+
+  - arrived_blocks_MW: "= sum( state.pending.blocks_MW where corresponding time_to_go_s == 0 )"
+  - if arrived_blocks_MW != 0:
+      - # remove arrived entries
+      - state.pending = remove_entries_where_time_to_go_s_is_zero(state.pending)
+
+  # 5) Compute new target activation after arrivals and clamp to capacity
+  - target_MW: "= state.activated_MW + arrived_blocks_MW"
+  - target_MW: "= clamp(target_MW, -max(0, availability.down_capacity_MW), max(0, availability.up_capacity_MW))"
+
+  # 6) Ramp actual activated toward target
+  - delta: "= target_MW - state.activated_MW"
+  - delta_limited: >
+      if delta >= 0:
+        min(delta, ramp_up_MW_per_s * tick_s)
+      else:
+        max(delta, -ramp_down_MW_per_s * tick_s)
+  - state.activated_MW: "= state.activated_MW + delta_limited"
+
+outputs:
+  activated_MW: "= state.activated_MW"
+  up_used_MW: "= max(0, state.activated_MW)"
+  down_used_MW: "= max(0, -state.activated_MW)"
+  pending_MW: "= sum(state.pending.blocks_MW)"
+  pending_count: "= len(state.pending.blocks_MW)"
+  persistent_timer_s: "= state.persistent_timer_s"
+  available_up_MW: "= max(0, availability.up_capacity_MW)"
+  available_down_MW: "= max(0, availability.down_capacity_MW)"
+
+  forecast_24h:
+    # mFRR is path-dependent; simplest is "hold current and pending schedule".
+    step_s: 300
+    activated_MW: >
+      let step = 300;
+      let N = 86400/step;
+      let out = [];
+      for i in 0..N-1:
+        out[i] = state.activated_MW
+      return out

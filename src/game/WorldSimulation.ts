@@ -15,6 +15,9 @@ import {
   SolarPVFleetModel,
   BiofuelWasteCHPModel,
   FrequencyModel,
+  FCRModel,
+  AFRRModel,
+  MFRRModel,
   type WeatherOutput, 
   type ForecastOutput, 
   type ForecastArrays,
@@ -31,7 +34,10 @@ import {
   type SolarBreakdown,
   type CHPBreakdown,
   type FrequencyBreakdown,
-  type FrequencyBand
+  type FrequencyBand,
+  type FCRBreakdown,
+  type AFRRBreakdown,
+  type MFRRBreakdown
 } from '../system_model'
 
 export interface ClockState {
@@ -83,6 +89,15 @@ export interface FrequencySnapshot {
   sBaseMW: number
 }
 
+export interface BalancingSnapshot {
+  time: number
+  fcrMW: number
+  afrrMW: number
+  mfrrMW: number
+  totalReserveMW: number
+  frequencyHz: number
+}
+
 export interface WorldConfig {
   startDayOfYear: number
 }
@@ -104,11 +119,15 @@ export class WorldSimulation {
   private _solarFleet: SolarPVFleetModel
   private _chpFleet: BiofuelWasteCHPModel
   private _frequencyModel: FrequencyModel
+  private _fcrModel: FCRModel
+  private _afrrModel: AFRRModel
+  private _mfrrModel: MFRRModel
   private _currentTime = 0
   private _weatherHistory: WeatherSnapshot[] = []
   private _consumptionHistory: ConsumptionSnapshot[] = []
   private _productionHistory: ProductionSnapshot[] = []
   private _frequencyHistory: FrequencySnapshot[] = []
+  private _balancingHistory: BalancingSnapshot[] = []
   private _config: WorldConfig
 
   constructor(config: WorldConfig) {
@@ -147,6 +166,9 @@ export class WorldSimulation {
     this._solarFleet = new SolarPVFleetModel()
     this._chpFleet = new BiofuelWasteCHPModel()
     this._frequencyModel = new FrequencyModel()
+    this._fcrModel = new FCRModel()
+    this._afrrModel = new AFRRModel()
+    this._mfrrModel = new MFRRModel()
   }
 
   initialize(): void {
@@ -166,11 +188,15 @@ export class WorldSimulation {
     this._solarFleet.reset()
     this._chpFleet.reset()
     this._frequencyModel.reset()
+    this._fcrModel.reset()
+    this._afrrModel.reset()
+    this._mfrrModel.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
     this._productionHistory = []
     this._frequencyHistory = []
+    this._balancingHistory = []
 
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
@@ -336,9 +362,12 @@ export class WorldSimulation {
       totalMW: totalProductionMW,
     })
 
-    // Update frequency model
+    // Update frequency model with reserve control loop
     const totalConsumptionMW = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW
     const motorLoadMW = industryMW * 0.6 + transportMW * 0.3 // rough motor load estimate
+    const rawImbalanceMW = totalProductionMW - totalConsumptionMW
+    
+    // First pass: compute frequency from raw imbalance (to get frequency for reserves)
     const freqBreakdown = this._frequencyModel.tick({
       totalGenerationMW: totalProductionMW,
       totalConsumptionMW,
@@ -350,14 +379,61 @@ export class WorldSimulation {
         motorLoadMW,
       },
     })
-    this._frequencyHistory.push({
-      time: this._currentTime,
+    
+    // Run reserve controllers
+    const fcrBreakdown = this._fcrModel.tick({
       frequencyHz: freqBreakdown.frequencyHz,
       rocofHzPerS: freqBreakdown.rocofHzPerS,
-      imbalanceMW: freqBreakdown.imbalanceRawMW,
-      band: freqBreakdown.band,
-      hEquivS: freqBreakdown.hEquivS,
-      sBaseMW: freqBreakdown.sBaseMW,
+    })
+    
+    const afrrBreakdown = this._afrrModel.tick({
+      frequencyHz: freqBreakdown.frequencyHz,
+      netImbalanceMW: rawImbalanceMW,
+    })
+    
+    const mfrrBreakdown = this._mfrrModel.tick({
+      frequencyHz: freqBreakdown.frequencyHz,
+      netImbalanceMW: rawImbalanceMW,
+      afrrActivatedMW: afrrBreakdown.activatedMW,
+      afrrUpCapacityMW: afrrBreakdown.availableUpMW,
+      afrrDownCapacityMW: afrrBreakdown.availableDownMW,
+    })
+    
+    // Total reserve injection (positive = adding power, negative = absorbing)
+    const totalReserveMW = fcrBreakdown.activatedMW + afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
+    
+    // Second pass: recompute frequency with reserve injection
+    const finalFreqBreakdown = this._frequencyModel.tick({
+      totalGenerationMW: totalProductionMW,
+      totalConsumptionMW,
+      ffrMW: totalReserveMW,
+      inertia: {
+        nuclearMW,
+        hydroReservoirMW,
+        hydroRoRMW,
+        bioWasteChpMW: chpMW,
+        motorLoadMW,
+      },
+    })
+    
+    this._frequencyHistory.push({
+      time: this._currentTime,
+      frequencyHz: finalFreqBreakdown.frequencyHz,
+      rocofHzPerS: finalFreqBreakdown.rocofHzPerS,
+      imbalanceMW: finalFreqBreakdown.imbalanceRawMW,
+      band: finalFreqBreakdown.band,
+      hEquivS: finalFreqBreakdown.hEquivS,
+      sBaseMW: finalFreqBreakdown.sBaseMW,
+    })
+    
+    // Record balancing history
+    this._balancingHistory.push({
+      time: this._currentTime,
+      fcrMW: fcrBreakdown.activatedMW,
+      afrrMW: afrrBreakdown.activatedMW,
+      mfrrMW: mfrrBreakdown.activatedMW,
+      totalReserveMW,
+      frequencyHz: finalFreqBreakdown.frequencyHz,
     })
 
     // Update grid (collects updates from all connected actors)
@@ -453,6 +529,10 @@ export class WorldSimulation {
     return this._frequencyHistory
   }
 
+  get balancingHistory(): BalancingSnapshot[] {
+    return this._balancingHistory
+  }
+
   get latestGridSnapshot(): GridSnapshot | null {
     return this._grid.latestSnapshot
   }
@@ -525,6 +605,18 @@ export class WorldSimulation {
     return this._frequencyModel.currentBand
   }
 
+  get fcrBreakdown(): FCRBreakdown | null {
+    return this._fcrModel.breakdown
+  }
+
+  get afrrBreakdown(): AFRRBreakdown | null {
+    return this._afrrModel.breakdown
+  }
+
+  get mfrrBreakdown(): MFRRBreakdown | null {
+    return this._mfrrModel.breakdown
+  }
+
   getForecast(deltaS: number): ForecastOutput {
     return this._forecast.getForecast(deltaS)
   }
@@ -550,10 +642,14 @@ export class WorldSimulation {
     this._solarFleet.reset()
     this._chpFleet.reset()
     this._frequencyModel.reset()
+    this._fcrModel.reset()
+    this._afrrModel.reset()
+    this._mfrrModel.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
     this._productionHistory = []
     this._frequencyHistory = []
+    this._balancingHistory = []
   }
 }

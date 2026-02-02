@@ -1,5 +1,5 @@
 import { reactive, markRaw } from 'vue'
-import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot } from './WorldSimulation'
+import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot, type BalancingSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
 import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
 
@@ -130,6 +130,10 @@ class GameState {
 
   get frequencyHistory(): FrequencySnapshot[] {
     return this._world?.frequencyHistory ?? []
+  }
+
+  get balancingHistory(): BalancingSnapshot[] {
+    return this._world?.balancingHistory ?? []
   }
 
   get forecastArrays(): ForecastArrays | null {

@@ -42,3 +42,12 @@ export type { IndustryInput, IndustryBreakdown } from './demand/IndustryProcessM
 
 export { GridLossesModel } from './demand/GridLossesModel'
 export type { GridLossesInput, GridLossesBreakdown } from './demand/GridLossesModel'
+
+export { FCRModel } from './other/FCRModel'
+export type { FCRInput, FCRBreakdown } from './other/FCRModel'
+
+export { AFRRModel } from './other/AFRRModel'
+export type { AFRRInput, AFRRBreakdown } from './other/AFRRModel'
+
+export { MFRRModel } from './other/MFRRModel'
+export type { MFRRInput, MFRRBreakdown } from './other/MFRRModel'

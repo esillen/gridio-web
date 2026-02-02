@@ -1,0 +1,143 @@
+model_part: tso_reserve_afrr
+version: 1.0
+tick_s: 1
+
+description: >
+  Automatic Frequency Restoration Reserve (aFRR) controller. Slower centralized PI-like action that
+  restores frequency toward 50.0 and relieves FCR. Outputs activated reserve power (MW) to inject into
+  system_frequency_and_imbalance (same sign convention as FCR).
+  Includes activation delay and ramping.
+  Horizon: think-ahead <= 24h (controller stateful).
+
+units:
+  power: MW
+  frequency: Hz
+  time: s
+
+inputs:
+  frequency:
+    frequency_Hz: float
+    rocof_Hz_per_s: float
+
+  # Available aFRR headroom each tick
+  availability:
+    up_capacity_MW: float
+    down_capacity_MW: float
+
+  # Optional: measured net imbalance (ACE proxy). If present, controller can use it; otherwise uses frequency error only.
+  system:
+    net_imbalance_MW: float   # generation - consumption (MW), optional
+
+  enabled: bool
+
+state:
+  freq_meas_Hz: float
+  integral_Hz_s: float
+  activated_MW: float
+  timer_since_disturbance_s: float
+  last_df_Hz: float
+
+constants:
+  f_nom_Hz: 50.0
+
+  # aFRR starts after disturbance persists (prevents fighting FCR for tiny blips)
+  activation_delay_s: 30.0
+
+  # Frequency error threshold to start the disturbance timer
+  disturbance_threshold_Hz: 0.03
+
+  # Measurement filter
+  tau_freq_filter_s: 5.0
+
+  # PI gains (tunable; these are game-friendly)
+  # Output MW = Kp*(f_nom - f) + Ki * integral(f_nom - f) dt
+  Kp_MW_per_Hz: 5000.0
+  Ki_MW_per_Hz_s: 120.0
+
+  # Integral anti-windup clamp (Hz*s)
+  integral_limit_Hz_s: 0.50 * 3600.0   # e.g. up to 0.5 Hz-hour
+
+  # Ramp limits
+  ramp_up_MW_per_s: 40.0
+  ramp_down_MW_per_s: 60.0
+
+  # Optional "leak" so integral decays slowly when close to nominal
+  integral_leak_per_s: 0.0002
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+update_per_tick:
+  - if enabled != true:
+      - state.activated_MW: 0.0
+      - state.integral_Hz_s: 0.0
+      - state.timer_since_disturbance_s: 0.0
+      - state.freq_meas_Hz: "= frequency.frequency_Hz"
+      - return
+
+  # 1) Filter frequency
+  - state.freq_meas_Hz: >
+      state.freq_meas_Hz
+      + (frequency.frequency_Hz - state.freq_meas_Hz) * (tick_s / tau_freq_filter_s)
+
+  - df_Hz: "= state.freq_meas_Hz - f_nom_Hz"
+  - err_Hz: "= f_nom_Hz - state.freq_meas_Hz"   # positive if frequency low => need up
+
+  # 2) Disturbance timer logic
+  - if abs(df_Hz) >= disturbance_threshold_Hz:
+      - state.timer_since_disturbance_s: "= state.timer_since_disturbance_s + tick_s"
+  - else:
+      - state.timer_since_disturbance_s: "= max(0, state.timer_since_disturbance_s - 2*tick_s)"
+
+  - active_gate_0_1: "= (state.timer_since_disturbance_s >= activation_delay_s) ? 1 : 0"
+
+  # 3) Integral update (only when active gate is open)
+  - if active_gate_0_1 == 1:
+      - state.integral_Hz_s: "= state.integral_Hz_s + err_Hz * tick_s"
+  - else:
+      - state.integral_Hz_s: "= state.integral_Hz_s * (1 - integral_leak_per_s * tick_s)"
+
+  - state.integral_Hz_s: "= clamp(state.integral_Hz_s, -integral_limit_Hz_s, integral_limit_Hz_s)"
+
+  # 4) PI requested MW
+  - req_MW_raw: "= Kp_MW_per_Hz * err_Hz + Ki_MW_per_Hz_s * state.integral_Hz_s"
+
+  # Optional ACE-like assist if net_imbalance provided: gently bias toward correcting measured MW imbalance
+  - if system.net_imbalance_MW != null:
+      - req_MW_raw: "= req_MW_raw + 0.15 * (-system.net_imbalance_MW)"  # deficit (negative imbalance) -> add positive MW
+
+  # 5) Clamp to available capacities
+  - up_cap: "= max(0, availability.up_capacity_MW)"
+  - down_cap: "= max(0, availability.down_capacity_MW)"
+  - req_MW: "= clamp(req_MW_raw, -down_cap, up_cap)"
+
+  # 6) Ramp limit
+  - delta: "= req_MW - state.activated_MW"
+  - delta_limited: >
+      if delta >= 0:
+        min(delta, ramp_up_MW_per_s * tick_s)
+      else:
+        max(delta, -ramp_down_MW_per_s * tick_s)
+  - state.activated_MW: "= state.activated_MW + delta_limited"
+
+outputs:
+  activated_MW: "= state.activated_MW"
+  up_used_MW: "= max(0, state.activated_MW)"
+  down_used_MW: "= max(0, -state.activated_MW)"
+  freq_meas_Hz: "= state.freq_meas_Hz"
+  integral_Hz_s: "= state.integral_Hz_s"
+  active_gate_0_1: "= active_gate_0_1"
+  available_up_MW: "= max(0, availability.up_capacity_MW)"
+  available_down_MW: "= max(0, availability.down_capacity_MW)"
+
+  forecast_24h:
+    # aFRR is path-dependent; for gameplay you can omit or keep as "hold current activation".
+    step_s: 60
+    activated_MW: >
+      let step = 60;
+      let N = 86400/step;
+      let out = [];
+      for i in 0..N-1:
+        out[i] = state.activated_MW
+      return out

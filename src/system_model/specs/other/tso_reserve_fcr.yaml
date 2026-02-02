@@ -1,0 +1,104 @@
+model_part: tso_reserve_fcr
+version: 1.0
+tick_s: 1
+
+description: >
+  Frequency Containment Reserve (FCR) controller. Fast proportional response to frequency deviation.
+  Outputs activated reserve power (MW) that should be injected into system_frequency_and_imbalance as control_inputs.ffr_MW (or a dedicated field).
+  Positive output means "add power / reduce deficit" (up-regulation). Negative means down-regulation.
+  Horizon: think-ahead <= 24h, but controller is memoryless aside from optional measurement filtering.
+
+units:
+  power: MW
+  frequency: Hz
+  time: s
+
+inputs:
+  frequency:
+    frequency_Hz: float
+    rocof_Hz_per_s: float
+
+  # Available reserve headroom (set by your dispatcher / assets each tick)
+  availability:
+    up_capacity_MW: float      # how much upward FCR can deliver right now
+    down_capacity_MW: float    # how much downward FCR can deliver right now (positive number)
+
+  # Optional enable/disable
+  enabled: bool
+
+state:
+  freq_meas_Hz: float
+  activated_MW: float
+
+constants:
+  f_nom_Hz: 50.0
+
+  # Deadband around nominal where FCR doesn't respond (tunable)
+  deadband_Hz: 0.02            # ±0.02 Hz
+
+  # Full activation at these deviations (tunable, game-friendly)
+  full_activation_dev_Hz: 0.20 # e.g. at 49.80/50.20, FCR is fully activated (within available capacity)
+
+  # Measurement filtering for smoothness (optional)
+  tau_freq_filter_s: 2.0
+
+  # Ramp rate (FCR is fast, but not infinite; helps visuals)
+  ramp_up_MW_per_s: 200.0
+  ramp_down_MW_per_s: 300.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  sign: "sign(x) = (x>0?1:(x<0?-1:0))"
+
+update_per_tick:
+  - if enabled != true:
+      - state.activated_MW: 0.0
+      - state.freq_meas_Hz: "= frequency.frequency_Hz"
+      - return
+
+  # 1) Filter frequency measurement
+  - state.freq_meas_Hz: >
+      state.freq_meas_Hz
+      + (frequency.frequency_Hz - state.freq_meas_Hz) * (tick_s / tau_freq_filter_s)
+
+  # 2) Compute deviation
+  - df_Hz: "= state.freq_meas_Hz - f_nom_Hz"
+  - abs_df_Hz: "= abs(df_Hz)"
+
+  # 3) Apply deadband, map deviation to requested fraction
+  - if abs_df_Hz <= deadband_Hz:
+      - req_frac_0_1: 0.0
+  - else:
+      - effective_dev_Hz: "= abs_df_Hz - deadband_Hz"
+      - span_Hz: "= max(1e-6, full_activation_dev_Hz - deadband_Hz)"
+      - req_frac_0_1: "= clamp01(effective_dev_Hz / span_Hz)"
+
+  # 4) Requested MW with sign: if frequency low (df<0) => need up (+MW). If high => down (-MW).
+  - up_cap: "= max(0, availability.up_capacity_MW)"
+  - down_cap: "= max(0, availability.down_capacity_MW)"
+  - req_MW: >
+      if df_Hz < 0:
+        req_frac_0_1 * up_cap
+      else if df_Hz > 0:
+        -req_frac_0_1 * down_cap
+      else:
+        0.0
+
+  # 5) Ramp limit toward requested MW
+  - delta: "= req_MW - state.activated_MW"
+  - delta_limited: >
+      if delta >= 0:
+        min(delta, ramp_up_MW_per_s * tick_s)
+      else:
+        max(delta, -ramp_down_MW_per_s * tick_s)
+  - state.activated_MW: "= state.activated_MW + delta_limited"
+
+outputs:
+  activated_MW: "= state.activated_MW"
+  up_used_MW: "= max(0, state.activated_MW)"
+  down_used_MW: "= max(0, -state.activated_MW)"
+  freq_meas_Hz: "= state.freq_meas_Hz"
+  request_fraction_0_1: "= req_frac_0_1"
+  available_up_MW: "= max(0, availability.up_capacity_MW)"
+  available_down_MW: "= max(0, availability.down_capacity_MW)"

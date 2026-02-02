@@ -7,18 +7,20 @@ import WeatherChart from '../components/WeatherChart.vue'
 import ConsumptionChart from '../components/ConsumptionChart.vue'
 import ProductionChart from '../components/ProductionChart.vue'
 import FrequencyChart from '../components/FrequencyChart.vue'
+import BalancingChart from '../components/BalancingChart.vue'
 
 const router = useRouter()
 
 const speeds: SimulationSpeed[] = [1, 10, 50, 1000, 2000, 3000]
 
-type SecondaryChart = 'weather' | 'consumption' | 'production' | 'frequency'
-const chartOptions: SecondaryChart[] = ['weather', 'consumption', 'production', 'frequency']
+type SecondaryChart = 'weather' | 'consumption' | 'production' | 'frequency' | 'balancing'
+const chartOptions: SecondaryChart[] = ['weather', 'consumption', 'production', 'frequency', 'balancing']
 const chartLabels: Record<SecondaryChart, string> = {
   weather: 'Weather',
   consumption: 'Consumption Breakdown',
   production: 'Production Breakdown',
   frequency: 'System Frequency',
+  balancing: 'Balancing Services',
 }
 
 const activeChart = ref<SecondaryChart>('weather')
@@ -143,6 +145,11 @@ function endDayEarly() {
       <FrequencyChart
         v-else-if="activeChart === 'frequency'"
         :history="gameState.frequencyHistory"
+        :version="gameState.historyVersion"
+      />
+      <BalancingChart
+        v-else-if="activeChart === 'balancing'"
+        :history="gameState.balancingHistory"
         :version="gameState.historyVersion"
       />
     </div>
