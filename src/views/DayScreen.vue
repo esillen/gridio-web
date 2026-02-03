@@ -62,7 +62,7 @@ function handleKeydown(e: KeyboardEvent) {
   } else if (e.key === 'Enter') {
     e.preventDefault()
     cycleBottomChart()
-  } else if (e.key >= '1' && e.key <= '6') {
+  } else if (e.key >= '1' && e.key <= '7') {
     const speedIndex = parseInt(e.key) - 1
     const speed = speeds[speedIndex]
     if (speed !== undefined) {

@@ -58,19 +58,19 @@ const steps: TutorialStep[] = [
   {
     title: 'Prices Are Revealed Early',
     description: 'In real markets, prices aren\'t known until after the auction clears. For gameplay, we show prices upfront so you can plan strategically. Use this to maximize your revenue!',
-    highlight: null,
+    highlight: 'fcr-prices',
     position: 'center',
   },
   // Game interface steps
   {
     title: 'Battery Fleet Panel',
-    description: 'This panel shows your battery energy storage systems (BESS). Each unit has a state of charge meter and power output display.',
+    description: 'This panel shows your battery energy storage systems (BESS). Each unit has a state of charge meter and power output display. Note that each battery starts at 50% charge.',
     highlight: 'bess-panel',
     position: 'right',
   },
   {
     title: 'Battery Market Mode',
-    description: 'Click the market button (DA/FCR/AUTO) to choose which market each battery serves. AUTO automatically allocates based on your bids.',
+    description: 'Click the market button (DA/FCR/AUTO) to choose which market each battery serves. AUTO automatically allocates based on your bids. Enough batteries MUST be allocated to the market you bid on (or be on  AUTO) AND have the charge left to participate to avoid penalties.',
     highlight: 'market-toggle',
     position: 'right',
   },
@@ -96,18 +96,6 @@ const steps: TutorialStep[] = [
     title: 'Chart Tabs',
     description: 'Switch between different views: System Frequency, DA Bids, FCR Bids, and Imbalance Settlement. Press Tab to cycle.',
     highlight: 'chart-tabs',
-    position: 'bottom',
-  },
-  {
-    title: 'Day-Ahead Performance',
-    description: 'Shows your hourly energy commitments. Blue bars are your bids, the line shows actual delivery. Match them to avoid penalties.',
-    highlight: 'da-chart',
-    position: 'bottom',
-  },
-  {
-    title: 'FCR Performance',
-    description: 'FCR capacity you\'ve committed. When frequency deviates, your batteries must respond. Failed delivery = penalties.',
-    highlight: 'fcr-chart',
     position: 'bottom',
   },
   {
