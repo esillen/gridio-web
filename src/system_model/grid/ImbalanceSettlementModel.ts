@@ -49,6 +49,11 @@ export interface ImbalanceSettlementOutput {
   cumulativeDeviationMWh: number
   cumulativeFcrShortfallMWh: number
   cumulativeNetCashEur: number
+  cumulativeDaImbalanceCashflowEur: number
+  cumulativeFcrPenaltyEur: number
+  cumulativeFeeVolumeEur: number
+  cumulativeFeeImbalanceEur: number
+  cumulativeFeeWeeklyAllocEur: number
   forecast4h: SettlementForecastOutput
 }
 
@@ -94,6 +99,11 @@ export class ImbalanceSettlementModel {
   private cumulativeDeviationMWh = 0
   private cumulativeFcrShortfallMWh = 0
   private cumulativeNetCashEur = 0
+  private cumulativeDaImbalanceCashflowEur = 0
+  private cumulativeFcrPenaltyEur = 0
+  private cumulativeFeeVolumeEur = 0
+  private cumulativeFeeImbalanceEur = 0
+  private cumulativeFeeWeeklyAllocEur = 0
   private _history: SettlementSnapshot[] = []
 
   get history(): SettlementSnapshot[] {
@@ -110,6 +120,11 @@ export class ImbalanceSettlementModel {
     this.cumulativeDeviationMWh = 0
     this.cumulativeFcrShortfallMWh = 0
     this.cumulativeNetCashEur = 0
+    this.cumulativeDaImbalanceCashflowEur = 0
+    this.cumulativeFcrPenaltyEur = 0
+    this.cumulativeFeeVolumeEur = 0
+    this.cumulativeFeeImbalanceEur = 0
+    this.cumulativeFeeWeeklyAllocEur = 0
     this._history = []
     this.lastSettlement = {
       ispStartUnixS: 0,
@@ -207,6 +222,11 @@ export class ImbalanceSettlementModel {
       this.cumulativeDeviationMWh += daDeviationMWh
       this.cumulativeFcrShortfallMWh += fcrShortfallMWh
       this.cumulativeNetCashEur += netCashflowEur
+      this.cumulativeDaImbalanceCashflowEur += daImbalanceCashflowEur
+      this.cumulativeFcrPenaltyEur += fcrPenaltyEur
+      this.cumulativeFeeVolumeEur += feeVolumeEur
+      this.cumulativeFeeImbalanceEur += feeImbalanceEur
+      this.cumulativeFeeWeeklyAllocEur += feeWeeklyAllocEur
 
       // Record hourly history at the END of the settled hour
       // Settlement for hour H (H:00 to H+1:00) is recorded at time (H+1):00
@@ -255,6 +275,11 @@ export class ImbalanceSettlementModel {
       cumulativeDeviationMWh: this.cumulativeDeviationMWh,
       cumulativeFcrShortfallMWh: this.cumulativeFcrShortfallMWh,
       cumulativeNetCashEur: this.cumulativeNetCashEur,
+      cumulativeDaImbalanceCashflowEur: this.cumulativeDaImbalanceCashflowEur,
+      cumulativeFcrPenaltyEur: this.cumulativeFcrPenaltyEur,
+      cumulativeFeeVolumeEur: this.cumulativeFeeVolumeEur,
+      cumulativeFeeImbalanceEur: this.cumulativeFeeImbalanceEur,
+      cumulativeFeeWeeklyAllocEur: this.cumulativeFeeWeeklyAllocEur,
       forecast4h,
     }
   }

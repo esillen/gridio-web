@@ -501,39 +501,25 @@ export class WorldSimulation {
     const motorLoadMW = industryMW * 0.6 + transportMW * 0.3 // rough motor load estimate
     const rawImbalanceMW = totalProductionMW - totalConsumptionMW
     
-    // First pass: compute frequency from raw imbalance (to get frequency for reserves)
-    const freqBreakdown = this._frequencyModel.tick({
-      totalGenerationMW: totalProductionMW,
-      totalConsumptionMW,
-      inertia: {
-        nuclearMW,
-        hydroReservoirMW,
-        hydroRoRMW,
-        bioWasteChpMW: chpMW,
-        industrialChpMW,
-        motorLoadMW,
-      },
-    })
-    
-    // Run reserve controllers with dispatcher-provided capacities
+    // Get reserve capacities from dispatcher
     const reserveAvail = dispatcherBreakdown.reserveAvailability
     
-    const fcrBreakdown = this._fcrModel.tick({
-      frequencyHz: freqBreakdown.frequencyHz,
-      rocofHzPerS: freqBreakdown.rocofHzPerS,
-      upCapacityMW: reserveAvail.fcr.upCapacityMW,
-      downCapacityMW: reserveAvail.fcr.downCapacityMW,
-    })
+    // Total FCR capacity (symmetric - use min of up/down for simplicity)
+    const fcrCapacityMW = Math.min(reserveAvail.fcr.upCapacityMW, reserveAvail.fcr.downCapacityMW)
     
+    // Current frequency for reserve controllers
+    const currentFreqHz = this._frequencyModel.currentFrequencyHz
+    
+    // Run slower reserve controllers (aFRR, mFRR) based on current frequency
     const afrrBreakdown = this._afrrModel.tick({
-      frequencyHz: freqBreakdown.frequencyHz,
+      frequencyHz: currentFreqHz,
       netImbalanceMW: rawImbalanceMW,
       upCapacityMW: reserveAvail.afrr.upCapacityMW,
       downCapacityMW: reserveAvail.afrr.downCapacityMW,
     })
     
     const mfrrBreakdown = this._mfrrModel.tick({
-      frequencyHz: freqBreakdown.frequencyHz,
+      frequencyHz: currentFreqHz,
       netImbalanceMW: rawImbalanceMW,
       afrrActivatedMW: afrrBreakdown.activatedMW,
       afrrUpCapacityMW: afrrBreakdown.availableUpMW,
@@ -542,14 +528,15 @@ export class WorldSimulation {
       downCapacityMW: reserveAvail.mfrr.downCapacityMW,
     })
     
-    // Total reserve injection (positive = adding power, negative = absorbing)
-    const totalReserveMW = fcrBreakdown.activatedMW + afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
+    // Slower reserves injection (FCR is now handled internally by frequency model)
+    const slowerReservesMW = afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
     
-    // Second pass: recompute frequency with reserve injection
+    // Single frequency tick with internal FCR droop + external slower reserves
     const finalFreqBreakdown = this._frequencyModel.tick({
       totalGenerationMW: totalProductionMW,
       totalConsumptionMW,
-      ffrMW: totalReserveMW,
+      ffrMW: slowerReservesMW,  // aFRR + mFRR only (FCR is internal)
+      fcrCapacityMW,            // FCR handled internally with droop
       inertia: {
         nuclearMW,
         hydroReservoirMW,
@@ -558,6 +545,14 @@ export class WorldSimulation {
         industrialChpMW,
         motorLoadMW,
       },
+    })
+    
+    // Update external FCR model for tracking/reporting (uses new frequency)
+    this._fcrModel.tick({
+      frequencyHz: finalFreqBreakdown.frequencyHz,
+      rocofHzPerS: finalFreqBreakdown.rocofHzPerS,
+      upCapacityMW: reserveAvail.fcr.upCapacityMW,
+      downCapacityMW: reserveAvail.fcr.downCapacityMW,
     })
     
     if (shouldRecordHistory) {
@@ -571,9 +566,12 @@ export class WorldSimulation {
         sBaseMW: finalFreqBreakdown.sBaseMW,
       })
 
+      // Total reserve = internal FCR response + slower reserves (aFRR + mFRR)
+      const totalReserveMW = finalFreqBreakdown.fcrResponseMW + slowerReservesMW
+      
       this._balancingHistory.push({
         time: this._currentTime,
-        fcrMW: fcrBreakdown.activatedMW,
+        fcrMW: finalFreqBreakdown.fcrResponseMW,  // Use internal FCR response
         afrrMW: afrrBreakdown.activatedMW,
         mfrrMW: mfrrBreakdown.activatedMW,
         totalReserveMW,

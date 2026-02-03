@@ -21,6 +21,8 @@ export interface FrequencyInput {
   inertia: InertiaInputs
   ffrMW?: number
   loadShedMW?: number
+  fcrCapacityMW?: number        // FCR capacity for internal droop calculation
+  fcrFullActivationHz?: number  // Hz deviation for full FCR activation (default 0.2)
 }
 
 export interface FrequencyBreakdown {
@@ -29,6 +31,8 @@ export interface FrequencyBreakdown {
   imbalanceRawMW: number
   imbalanceWithControlsMW: number
   imbalanceDampedMW: number
+  fcrResponseMW: number
+  loadDampingMW: number
   sBaseMW: number
   hEquivS: number
   synchronousOnlineMW: number
@@ -48,11 +52,13 @@ const H_BY_TYPE_S = {
 }
 
 const H_MOTOR_S = 1.5
-const D_MW_PER_HZ = 450.0
+const D_LOAD_MW_PER_HZ = 450.0        // Load damping only (realistic)
 const F_NOM_HZ = 50.0
 const S_BASE_MIN_MW = 2000.0
 const H_EQUIV_MIN_S = 0.5
 const H_EQUIV_MAX_S = 12.0
+const FCR_DEADBAND_HZ = 0.02          // FCR deadband
+const DEFAULT_FCR_FULL_ACTIVATION_HZ = 0.20  // Full FCR at ±0.2 Hz
 
 const LIMITS = {
   normalLowHz: 49.90,
@@ -134,13 +140,37 @@ export class FrequencyModel {
     const hEquivRaw = (hSynWeighted + hMotorWeighted + hVirtWeighted) / sBaseMW
     const hEquivS = clamp(hEquivRaw, H_EQUIV_MIN_S, H_EQUIV_MAX_S)
 
-    // Damping term
+    // Frequency deviation
     const deltaFHz = this.frequencyHz - F_NOM_HZ
-    const pDampedMW = pNetMW - D_MW_PER_HZ * deltaFHz
 
-    // Swing equation: df/dt = P / (2 * H * S_base)
+    // Load damping (natural load response to frequency)
+    const loadDampingMW = D_LOAD_MW_PER_HZ * deltaFHz
+
+    // Internal FCR droop response (immediate, no delay)
+    // This provides the primary frequency control that keeps frequency stable
+    const fcrCapMW = input.fcrCapacityMW ?? 600  // Default 600 MW symmetric
+    const fcrFullActHz = input.fcrFullActivationHz ?? DEFAULT_FCR_FULL_ACTIVATION_HZ
+    
+    let fcrResponseMW = 0
+    const absDeltaF = Math.abs(deltaFHz)
+    if (absDeltaF > FCR_DEADBAND_HZ) {
+      // Linear droop from deadband to full activation
+      const effectiveDevHz = absDeltaF - FCR_DEADBAND_HZ
+      const spanHz = Math.max(1e-6, fcrFullActHz - FCR_DEADBAND_HZ)
+      const fcrFrac = clamp01(effectiveDevHz / spanHz)
+      // Negative deltaF (low freq) => positive response (add power)
+      // Positive deltaF (high freq) => negative response (reduce power)
+      fcrResponseMW = -Math.sign(deltaFHz) * fcrFrac * fcrCapMW
+    }
+
+    // Total damping/control effect
+    // pDampedMW = imbalance + external controls - load damping - FCR response
+    const pDampedMW = pNetMW - loadDampingMW + fcrResponseMW
+
+    // Swing equation: df/dt = f0 * P / (2 * H * S_base)
+    // Added f0 factor for correct dynamics
     const denom = 2.0 * hEquivS * sBaseMW
-    this.rocofHzPerS = pDampedMW / safe(denom, 1e-6)
+    this.rocofHzPerS = (F_NOM_HZ * pDampedMW) / safe(denom, 1e-6)
 
     // Integrate frequency (clamped to physically realistic bounds)
     this.frequencyHz += this.rocofHzPerS * dt
@@ -179,6 +209,8 @@ export class FrequencyModel {
       imbalanceRawMW: pImbalanceMW,
       imbalanceWithControlsMW: pNetMW,
       imbalanceDampedMW: pDampedMW,
+      fcrResponseMW,
+      loadDampingMW,
       sBaseMW,
       hEquivS,
       synchronousOnlineMW: synTotalMW,
