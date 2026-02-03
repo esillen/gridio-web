@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
-import type { HourlyData } from '../introSimulation'
 
 export interface ChartSeries {
   key: string

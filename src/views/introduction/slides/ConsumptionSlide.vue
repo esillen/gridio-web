@@ -79,7 +79,7 @@ const title = computed(() => {
       
       <div class="chart-container">
         <IntroChart 
-          :data="data" 
+          :data="(data as unknown as Record<string, number>[])" 
           :series="series"
           :maxY="22000"
         />

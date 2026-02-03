@@ -110,7 +110,7 @@ const explanationText = computed(() => {
     
     <div class="chart-container">
       <IntroChart 
-        :data="dataWithCurtailment" 
+        :data="(dataWithCurtailment as unknown as Record<string, number>[])" 
         :series="series"
         :maxY="22000"
       />

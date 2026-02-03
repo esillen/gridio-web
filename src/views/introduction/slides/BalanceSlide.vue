@@ -39,7 +39,7 @@ const series = computed<ChartSeries[]>(() => [
     
     <div class="chart-container">
       <IntroChart 
-        :data="dataWithTotals" 
+        :data="(dataWithTotals as unknown as Record<string, number>[])" 
         :series="series"
         :maxY="22000"
       />
