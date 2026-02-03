@@ -29,7 +29,7 @@ const steps: TutorialStep[] = [
     title: 'Your Fleet Capacity',
     description: 'Your combined BESS fleet has 45 MW power and 70 MWh storage. This is your volume ceiling — you cannot bid more than your fleet can deliver.',
     highlight: 'fleet-capacity',
-    position: 'bottom',
+    position: 'center',
   },
   {
     title: 'Day-Ahead (DA) Market',
@@ -62,6 +62,12 @@ const steps: TutorialStep[] = [
     position: 'center',
   },
   // Game interface steps
+  {
+    title: 'The control room',
+    description: 'When the day starts, you enter into the control room.',
+    highlight: 'none ',
+    position: 'center',
+  },
   {
     title: 'Battery Fleet Panel',
     description: 'This panel shows your battery energy storage systems (BESS). Each unit has a state of charge meter and power output display. Note that each battery starts at 50% charge.',
@@ -116,7 +122,7 @@ const currentStepIndex = ref(0)
 const currentStep = computed(() => steps[currentStepIndex.value]!)
 
 // Fixed prices for tutorial display (not random)
-const daPrices = [28, 25, 22, 35, 42, 58, 72, 65, 48, 38, 32, 45]
+const daPrices = [28, 25, 22, 35, 42, 58, 30, 65, 48, 38, 32, 45]
 const fcrPrices = [18, 22, 25, 28, 32, 35, 30, 26, 24, 20, 18, 22]
 
 function getDAPriceDisplayStyle(h: number) {

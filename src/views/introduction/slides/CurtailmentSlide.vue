@@ -93,8 +93,8 @@ const series = computed<ChartSeries[]>(() => {
 const explanationText = computed(() => {
   if (props.step === 0) {
     return {
-      main: 'Production must be curtailed to match consumption',
-      detail: 'When there\'s excess production (like on windy days), generators must reduce output. This is called curtailment.',
+      main: 'The grid operators must modify production to match consumption',
+      detail: 'When there\'s excess production (like on windy days), generators must reduce output. This is called curtailment. When there\'s too little production, extra reserves kick in to match consumption. It is in some cases even possible to curtail or increase consumption!',
     }
   }
   return {

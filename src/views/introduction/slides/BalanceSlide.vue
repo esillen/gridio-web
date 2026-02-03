@@ -61,7 +61,7 @@ const series = computed<ChartSeries[]>(() => [
         At every moment, production must <strong>exactly</strong> match consumption.
       </p>
       <p class="explanation detail">
-        When they don't match, the grid frequency deviates from 50 Hz. Too much deviation causes equipment damage and blackouts.
+        When they don't match, the deviation can causewithin seconds when frequency deviates equipment damage and blackouts.
       </p>
     </div>
     

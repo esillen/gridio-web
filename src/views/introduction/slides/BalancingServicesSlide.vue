@@ -18,18 +18,16 @@
           <h3>FCR Market</h3>
           <p>Get paid for <strong>capacity</strong> — your ability to respond within seconds when frequency deviates.</p>
         </div>
+
+        <p class="explanation">
+      Actors who can quickly adjust their power output or consumption are essential for grid stability.
+    </p>
         
-        <div class="market-card da">
-          <div class="market-icon">📊</div>
-          <h3>Day-Ahead Market</h3>
-          <p>Get paid for <strong>energy</strong> — commit to deliver or consume a specific amount each hour.</p>
-        </div>
+        
       </div>
     </div>
     
-    <p class="explanation">
-      Actors who can quickly adjust their power output or consumption are essential for grid stability.
-    </p>
+    
     
     <div class="hint">
       Press <kbd>Space</kbd> to continue
