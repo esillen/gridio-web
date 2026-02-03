@@ -5,8 +5,13 @@ import { gameState, type BESSMode, type BESSMarket } from '../game/GameState'
 const bessUnits = computed(() => gameState.bessStates)
 const totalPower = computed(() => gameState.totalBessPowerMW)
 
-function setUnitMode(unitId: string, mode: BESSMode | null) {
-  gameState.setUnitMode(unitId, mode)
+function toggleUnitMode(unitId: string, mode: BESSMode) {
+  const unit = bessUnits.value.find(u => u.id === unitId)
+  if (unit?.mode === mode) {
+    gameState.setUnitMode(unitId, null)
+  } else {
+    gameState.setUnitMode(unitId, mode)
+  }
 }
 
 function cycleMarket(unitId: string) {
@@ -78,15 +83,15 @@ function formatPower(mw: number): string {
         <div class="unit-controls">
           <button 
             :class="['unit-ctrl-btn', { active: unit.mode === 'charge' }]"
-            @click="setUnitMode(unit.id, 'charge')"
-            title="Charge at max power"
+            @click="toggleUnitMode(unit.id, 'charge')"
+            title="Charge at max power (click again to stop)"
           >
             Charge
           </button>
           <button 
             :class="['unit-ctrl-btn', { active: unit.mode === 'discharge' }]"
-            @click="setUnitMode(unit.id, 'discharge')"
-            title="Discharge at max power"
+            @click="toggleUnitMode(unit.id, 'discharge')"
+            title="Discharge at max power (click again to stop)"
           >
             Discharge
           </button>

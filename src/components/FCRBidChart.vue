@@ -26,7 +26,9 @@ function formatHours(hours: number): string {
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const bids: number[] = []
-  const failedImbalance: number[] = []
+  const requiredMWh: number[] = []
+  const deliveredMWh: number[] = []
+  const failedMWh: number[] = []
   
   const currentHour = Math.floor(gameState.currentTime / 3600)
   const performance = gameState.bessPerformance.fcrPerformance
@@ -36,13 +38,17 @@ function buildData(): uPlot.AlignedData {
     bids.push(performance[h]?.allocatedMW ?? 0)
     
     if (h <= currentHour) {
-      failedImbalance.push(performance[h]?.failedMWh ?? 0)
+      requiredMWh.push(performance[h]?.requiredMWh ?? 0)
+      deliveredMWh.push(performance[h]?.deliveredMWh ?? 0)
+      failedMWh.push(performance[h]?.failedMWh ?? 0)
     } else {
-      failedImbalance.push(NaN)
+      requiredMWh.push(NaN)
+      deliveredMWh.push(NaN)
+      failedMWh.push(NaN)
     }
   }
   
-  return [times, bids, failedImbalance]
+  return [times, bids, requiredMWh, deliveredMWh, failedMWh]
 }
 
 function getOpts(width: number, height: number): uPlot.Options {
@@ -54,7 +60,8 @@ function getOpts(width: number, height: number): uPlot.Options {
     legend: { show: true },
     scales: {
       x: { time: false, min: 0, max: 24 },
-      y: { auto: true },
+      mw: { auto: true },
+      mwh: { auto: true },
     },
     axes: [
       {
@@ -66,7 +73,8 @@ function getOpts(width: number, height: number): uPlot.Options {
         size: 30,
       },
       {
-        stroke: COLORS.axis,
+        scale: 'mw',
+        stroke: COLORS.bid,
         grid: { stroke: COLORS.grid, width: 1 },
         ticks: { stroke: COLORS.grid },
         values: (_u, vals) => vals.map(v => `${v.toFixed(0)}`),
@@ -75,18 +83,46 @@ function getOpts(width: number, height: number): uPlot.Options {
         label: 'MW',
         labelSize: 12,
       },
+      {
+        scale: 'mwh',
+        side: 1,
+        stroke: '#ef4444',
+        grid: { show: false },
+        ticks: { stroke: '#ef4444' },
+        values: (_u, vals) => vals.map(v => `${v.toFixed(1)}`),
+        gap: 5,
+        size: 50,
+        label: 'MWh',
+        labelSize: 12,
+      },
     ],
     series: [
       {},
       {
-        label: 'FCR Capacity',
+        label: 'FCR Capacity (MW)',
+        scale: 'mw',
         stroke: COLORS.bid,
         width: 2,
         fill: COLORS.bid + '30',
         paths: uPlot.paths.bars!({ size: [0.6, 100] }),
       },
       {
-        label: 'Failed Delivery (MWh)',
+        label: 'Required (MWh)',
+        scale: 'mwh',
+        stroke: '#9ca3af',
+        width: 2,
+        dash: [4, 4],
+      },
+      {
+        label: 'Delivered (MWh)',
+        scale: 'mwh',
+        stroke: '#10b981',
+        width: 2,
+        points: { show: true, size: 4, fill: '#10b981' },
+      },
+      {
+        label: 'Failed (MWh)',
+        scale: 'mwh',
         stroke: '#ef4444',
         width: 3,
         points: { show: true, size: 6, fill: '#ef4444' },

@@ -290,6 +290,13 @@ class GameState {
       const result = unit.tick(1, { targetPowerMW: targetMW, source: 'da' })
       totalActualPower += result.actualPowerMW
       
+      // Auto-stop manual mode when SoC limits reached
+      if (unit.mode === 'charge' && result.soc01 >= 1) {
+        unit.mode = null
+      } else if (unit.mode === 'discharge' && result.soc01 <= 0) {
+        unit.mode = null
+      }
+      
       if (unit.market === 'da' && !unit.mode) {
         totalDADelivered += result.actualPowerMW
       } else if (unit.market === 'fcr' && !unit.mode) {
@@ -354,6 +361,10 @@ class GameState {
     const unit = this._bessFleet.units.find(u => u.config.id === unitId)
     if (unit) {
       unit.mode = mode
+      if (mode !== null) {
+        unit.market = 'inactive'
+      }
+      this.syncBESSState()
     }
   }
 
@@ -367,6 +378,10 @@ class GameState {
       } else {
         unit.market = 'da'
       }
+      if (unit.market !== 'inactive') {
+        unit.mode = null
+      }
+      this.syncBESSState()
     }
   }
 

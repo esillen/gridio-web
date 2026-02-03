@@ -104,12 +104,16 @@ function formatEur(value: number): string {
         <FCRBidChart :version="0" />
         <div class="chart-stats">
           <div class="stat-row">
-            <span class="stat-label">Total Capacity:</span>
-            <span class="stat-value">{{ fcrStats.totalAllocated.toFixed(1) }} MW·h</span>
+            <span class="stat-label">Required by Grid:</span>
+            <span class="stat-value">{{ fcrStats.totalRequired.toFixed(1) }} MWh</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Delivered:</span>
+            <span class="stat-value">{{ fcrStats.totalDelivered.toFixed(1) }} MWh</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">Failed Delivery:</span>
-            <span class="stat-value bad">{{ revenueBreakdown.totalFailed.toFixed(1) }} MWh</span>
+            <span class="stat-value" :class="{ bad: revenueBreakdown.totalFailed > 0 }">{{ revenueBreakdown.totalFailed.toFixed(1) }} MWh</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">Reliability:</span>
