@@ -18,9 +18,14 @@ function cycleMarket(unitId: string) {
   gameState.cycleUnitMarket(unitId)
 }
 
-function getMarketLabel(market: BESSMarket): string {
+function getMarketLabel(market: BESSMarket, autoEffective: 'da' | 'fcr' | 'inactive' | null): string {
   if (market === 'da') return 'DA'
   if (market === 'fcr') return 'FCR'
+  if (market === 'auto') {
+    if (autoEffective === 'da') return 'AUTO (DA)'
+    if (autoEffective === 'fcr') return 'AUTO (FCR)'
+    return 'AUTO (—)'
+  }
   return 'Inactive'
 }
 
@@ -74,11 +79,11 @@ function formatPower(mw: number): string {
           {{ formatPower(unit.currentPowerMW) }} MW
         </div>
         <button 
-          :class="['market-toggle', `market-${unit.market}`]"
+          :class="['market-toggle', `market-${unit.market}`, unit.market === 'auto' ? `auto-${unit.autoEffectiveMarket}` : '']"
           @click="cycleMarket(unit.id)"
-          :title="`Click to cycle: DA → FCR → Inactive`"
+          :title="`Click to cycle: DA → FCR → AUTO → Inactive`"
         >
-          {{ getMarketLabel(unit.market) }}
+          {{ getMarketLabel(unit.market, unit.autoEffectiveMarket) }}
         </button>
         <div class="unit-controls">
           <button 
@@ -256,6 +261,31 @@ function formatPower(mw: number): string {
 
 .market-toggle.market-fcr:hover {
   background: #fde68a;
+}
+
+.market-toggle.market-auto {
+  background: #f0fdf4;
+  border-color: #22c55e;
+  color: #166534;
+}
+
+.market-toggle.market-auto:hover {
+  background: #dcfce7;
+}
+
+.market-toggle.market-auto.auto-da {
+  background: linear-gradient(135deg, #f0fdf4 0%, #dbeafe 100%);
+  border-color: #22c55e;
+}
+
+.market-toggle.market-auto.auto-fcr {
+  background: linear-gradient(135deg, #f0fdf4 0%, #fef3c7 100%);
+  border-color: #22c55e;
+}
+
+.market-toggle.market-auto.auto-inactive {
+  background: linear-gradient(135deg, #f0fdf4 0%, #f3f4f6 100%);
+  border-color: #22c55e;
 }
 
 .market-toggle.market-inactive {

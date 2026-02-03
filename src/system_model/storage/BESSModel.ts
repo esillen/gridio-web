@@ -8,7 +8,7 @@ export interface BESSConfig {
 }
 
 export type BESSMode = 'charge' | 'discharge'
-export type BESSMarket = 'da' | 'fcr' | 'inactive'
+export type BESSMarket = 'da' | 'fcr' | 'auto' | 'inactive'
 
 export interface BESSState {
   soc01: number
@@ -45,7 +45,7 @@ export class BESSUnit {
       soc01: config.initialSoC01,
       currentPowerMW: 0,
       mode: null,
-      market: 'da',
+      market: 'auto',
       energyChargedMWh: 0,
       energyDischargedMWh: 0,
     }
@@ -163,7 +163,7 @@ export class BESSUnit {
       soc01: this.config.initialSoC01,
       currentPowerMW: 0,
       mode: null,
-      market: 'da',
+      market: 'auto',
       energyChargedMWh: 0,
       energyDischargedMWh: 0,
     }

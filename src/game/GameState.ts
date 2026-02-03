@@ -60,6 +60,7 @@ export interface BESSUIState {
   currentPowerMW: number
   mode: BESSMode | null
   market: BESSMarket
+  autoEffectiveMarket: 'da' | 'fcr' | 'inactive' | null
 }
 
 class GameState {
@@ -117,6 +118,7 @@ class GameState {
   private _lastDADeliveredMW = 0
   private _lastFCRRequiredMW = 0
   private _lastFCRDeliveredMW = 0
+  private _autoEffectiveMarkets: Map<string, 'da' | 'fcr' | 'inactive'> = new Map()
 
   // Reactive UI state - synced once per frame
   currentTime = 0
@@ -244,12 +246,34 @@ class GameState {
     const daBid = this.playerBids.daBids[currentHour]?.volumeMW ?? 0
     const fcrBid = this.playerBids.fcrBids[currentHour]?.volumeMW ?? 0
 
-    // Separate units by market
+    // Separate units by market (excluding auto for now)
     const daUnits = this._bessFleet.units.filter(u => u.market === 'da' && !u.mode)
     const fcrUnits = this._bessFleet.units.filter(u => u.market === 'fcr' && !u.mode)
+    const autoUnits = this._bessFleet.units.filter(u => u.market === 'auto' && !u.mode)
     
-    const daCapacity = daUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
-    const fcrCapacity = fcrUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
+    let daCapacity = daUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
+    let fcrCapacity = fcrUnits.reduce((sum, u) => sum + u.config.maxPowerMW, 0)
+
+    // Auto-allocate units: prioritize FCR if there's a bid, then DA
+    const autoDA: typeof autoUnits = []
+    const autoFCR: typeof autoUnits = []
+    const autoInactive: typeof autoUnits = []
+    
+    for (const unit of autoUnits) {
+      // Prioritize FCR if there's an FCR bid and we haven't met capacity
+      if (fcrBid > 0 && fcrCapacity < fcrBid) {
+        autoFCR.push(unit)
+        fcrCapacity += unit.config.maxPowerMW
+        this._autoEffectiveMarkets.set(unit.config.id, 'fcr')
+      } else if (daBid !== 0) {
+        autoDA.push(unit)
+        daCapacity += unit.config.maxPowerMW
+        this._autoEffectiveMarkets.set(unit.config.id, 'da')
+      } else {
+        autoInactive.push(unit)
+        this._autoEffectiveMarkets.set(unit.config.id, 'inactive')
+      }
+    }
 
     // Calculate DA target
     const remainingSecondsInHour = 3600 - secondInHour
@@ -274,15 +298,18 @@ class GameState {
     // Tick each unit
     for (const unit of this._bessFleet.units) {
       let targetMW = 0
+      const effectiveMarket = unit.market === 'auto' 
+        ? this._autoEffectiveMarkets.get(unit.config.id) ?? 'inactive'
+        : unit.market
       
       if (unit.mode === 'charge') {
         targetMW = -unit.config.maxPowerMW
       } else if (unit.mode === 'discharge') {
         targetMW = unit.config.maxPowerMW
-      } else if (unit.market === 'da') {
+      } else if (effectiveMarket === 'da') {
         const share = daCapacity > 0 ? unit.config.maxPowerMW / daCapacity : 0
         targetMW = daPower * share
-      } else if (unit.market === 'fcr') {
+      } else if (effectiveMarket === 'fcr') {
         const share = fcrCapacity > 0 ? unit.config.maxPowerMW / fcrCapacity : 0
         targetMW = fcrTargetMW * share
       }
@@ -297,9 +324,9 @@ class GameState {
         unit.mode = null
       }
       
-      if (unit.market === 'da' && !unit.mode) {
+      if (effectiveMarket === 'da' && !unit.mode) {
         totalDADelivered += result.actualPowerMW
-      } else if (unit.market === 'fcr' && !unit.mode) {
+      } else if (effectiveMarket === 'fcr' && !unit.mode) {
         totalFCRDelivered += result.actualPowerMW
       }
     }
@@ -353,6 +380,7 @@ class GameState {
       currentPowerMW: u.currentPowerMW,
       mode: u.mode,
       market: u.market,
+      autoEffectiveMarket: u.market === 'auto' ? (this._autoEffectiveMarkets.get(u.config.id) ?? 'inactive') : null,
     }))
     this.bessVersion++
   }
@@ -374,6 +402,8 @@ class GameState {
       if (unit.market === 'da') {
         unit.market = 'fcr'
       } else if (unit.market === 'fcr') {
+        unit.market = 'auto'
+      } else if (unit.market === 'auto') {
         unit.market = 'inactive'
       } else {
         unit.market = 'da'
