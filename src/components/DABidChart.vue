@@ -45,10 +45,10 @@ function buildData(): uPlot.AlignedData {
   return [times, bids, delivered]
 }
 
-function getOpts(): uPlot.Options {
+function getOpts(width: number, height: number): uPlot.Options {
   return {
-    width: 600,
-    height: 180,
+    width,
+    height,
     padding: [10, 10, 0, 0],
     cursor: { show: true },
     legend: { show: true },
@@ -102,8 +102,8 @@ function createChart() {
     chart = null
   }
   
-  const opts = getOpts()
-  opts.width = chartEl.value.clientWidth
+  const rect = chartEl.value.getBoundingClientRect()
+  const opts = getOpts(rect.width, rect.height)
   chart = new uPlot(opts, buildData(), chartEl.value)
 }
 
@@ -114,7 +114,8 @@ function updateChart() {
 
 const resizeObserver = new ResizeObserver(() => {
   if (chart && chartEl.value) {
-    chart.setSize({ width: chartEl.value.clientWidth, height: 180 })
+    const rect = chartEl.value.getBoundingClientRect()
+    chart.setSize({ width: rect.width, height: rect.height })
   }
 })
 

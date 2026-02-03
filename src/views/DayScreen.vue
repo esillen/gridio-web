@@ -16,37 +16,38 @@ const router = useRouter()
 
 const speeds: SimulationSpeed[] = [1, 10, 50, 1000, 2000, 3000]
 
-type SecondaryChart = 'weather' | 'consumption' | 'production' | 'frequency' | 'balancing'
-const chartOptions: SecondaryChart[] = ['weather', 'consumption', 'production', 'frequency', 'balancing']
-const chartLabels: Record<SecondaryChart, string> = {
-  weather: 'Weather',
-  consumption: 'Consumption Breakdown',
-  production: 'Production Breakdown',
+type TopChart = 'frequency' | 'da' | 'fcr'
+const topChartOptions: TopChart[] = ['frequency', 'da', 'fcr']
+const topChartLabels: Record<TopChart, string> = {
   frequency: 'System Frequency',
-  balancing: 'Balancing Services',
-}
-
-type MainChartView = 'grid' | 'da' | 'fcr'
-const mainChartOptions: MainChartView[] = ['grid', 'da', 'fcr']
-const mainChartLabels: Record<MainChartView, string> = {
-  grid: 'Power Grid',
   da: 'DA Bids',
   fcr: 'FCR Bids',
 }
 
-const activeChart = ref<SecondaryChart>('weather')
-const mainChartView = ref<MainChartView>('grid')
-
-function cycleChart() {
-  const currentIndex = chartOptions.indexOf(activeChart.value)
-  const nextIndex = (currentIndex + 1) % chartOptions.length
-  activeChart.value = chartOptions[nextIndex] as SecondaryChart
+type BottomChart = 'grid' | 'production' | 'consumption' | 'weather' | 'balancing'
+const bottomChartOptions: BottomChart[] = ['grid', 'production', 'consumption', 'weather', 'balancing']
+const bottomChartLabels: Record<BottomChart, string> = {
+  grid: 'Power Grid',
+  production: 'Production Breakdown',
+  consumption: 'Consumption Breakdown',
+  weather: 'Weather & Forecast',
+  balancing: 'Balancing Services',
 }
 
-function cycleMainChart() {
-  const currentIndex = mainChartOptions.indexOf(mainChartView.value)
-  const nextIndex = (currentIndex + 1) % mainChartOptions.length
-  mainChartView.value = mainChartOptions[nextIndex] as MainChartView
+const topChartView = ref<TopChart>('frequency')
+const bottomChartView = ref<BottomChart>('grid')
+const showAdvanced = ref(false)
+
+function cycleTopChart() {
+  const currentIndex = topChartOptions.indexOf(topChartView.value)
+  const nextIndex = (currentIndex + 1) % topChartOptions.length
+  topChartView.value = topChartOptions[nextIndex] as TopChart
+}
+
+function cycleBottomChart() {
+  const currentIndex = bottomChartOptions.indexOf(bottomChartView.value)
+  const nextIndex = (currentIndex + 1) % bottomChartOptions.length
+  bottomChartView.value = bottomChartOptions[nextIndex] as BottomChart
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -55,10 +56,10 @@ function handleKeydown(e: KeyboardEvent) {
     gameState.togglePause()
   } else if (e.key === 'Tab') {
     e.preventDefault()
-    cycleChart()
+    cycleTopChart()
   } else if (e.key === 'Enter') {
     e.preventDefault()
-    cycleMainChart()
+    cycleBottomChart()
   } else if (e.key >= '1' && e.key <= '6') {
     const speedIndex = parseInt(e.key) - 1
     const speed = speeds[speedIndex]
@@ -126,77 +127,87 @@ function formatTime(seconds: number): string {
       
       <div class="charts-column">
         <div class="section-header">
-          <div class="section-label">{{ mainChartLabels[mainChartView] }}</div>
+          <div class="section-label">{{ topChartLabels[topChartView] }}</div>
           <div class="chart-tabs">
             <button
-              v-for="chart in mainChartOptions"
+              v-for="chart in topChartOptions"
               :key="chart"
-              :class="{ active: mainChartView === chart }"
-              @click="mainChartView = chart"
+              :class="{ active: topChartView === chart }"
+              @click="topChartView = chart"
             >
-              {{ mainChartLabels[chart] }}
-            </button>
-            <span class="hotkey-hint">(Enter)</span>
-          </div>
-        </div>
-        <div class="chart-container">
-          <PowerChart 
-            v-if="mainChartView === 'grid'"
-            :history="gameState.gridHistory" 
-            :version="gameState.historyVersion" 
-          />
-          <DABidChart 
-            v-else-if="mainChartView === 'da'"
-            :version="gameState.bessVersion"
-          />
-          <FCRBidChart 
-            v-else-if="mainChartView === 'fcr'"
-            :version="gameState.bessVersion"
-          />
-        </div>
-
-        <div class="section-header">
-          <div class="section-label">{{ chartLabels[activeChart] }}</div>
-          <div class="chart-tabs">
-            <button
-              v-for="chart in chartOptions"
-              :key="chart"
-              :class="{ active: activeChart === chart }"
-              @click="activeChart = chart"
-            >
-              {{ chartLabels[chart] }}
+              {{ topChartLabels[chart] }}
             </button>
             <span class="hotkey-hint">(Tab)</span>
           </div>
         </div>
         <div class="chart-container">
-          <WeatherChart 
-            v-if="activeChart === 'weather'"
-            :history="gameState.weatherHistory" 
-            :forecastArrays="gameState.forecastArrays"
-            :currentTime="gameState.currentTime"
-            :version="gameState.weatherHistoryVersion" 
-          />
-          <ConsumptionChart
-            v-else-if="activeChart === 'consumption'"
-            :history="gameState.consumptionHistory"
-            :version="gameState.historyVersion"
-          />
-          <ProductionChart
-            v-else-if="activeChart === 'production'"
-            :history="gameState.productionHistory"
-            :version="gameState.historyVersion"
-          />
           <FrequencyChart
-            v-else-if="activeChart === 'frequency'"
+            v-if="topChartView === 'frequency'"
             :history="gameState.frequencyHistory"
             :version="gameState.historyVersion"
           />
-          <BalancingChart
-            v-else-if="activeChart === 'balancing'"
-            :history="gameState.balancingHistory"
-            :version="gameState.historyVersion"
+          <DABidChart 
+            v-else-if="topChartView === 'da'"
+            :version="gameState.bessVersion"
           />
+          <FCRBidChart 
+            v-else-if="topChartView === 'fcr'"
+            :version="gameState.bessVersion"
+          />
+        </div>
+
+        <div class="advanced-section">
+          <button class="advanced-header" @click="showAdvanced = !showAdvanced">
+            <span class="advanced-title">Advanced Charts</span>
+            <span class="chevron" :class="{ expanded: showAdvanced }">▼</span>
+          </button>
+          <Transition name="expand">
+            <div v-if="showAdvanced" class="advanced-content">
+              <div class="section-header">
+                <div class="section-label">{{ bottomChartLabels[bottomChartView] }}</div>
+                <div class="chart-tabs">
+                  <button
+                    v-for="chart in bottomChartOptions"
+                    :key="chart"
+                    :class="{ active: bottomChartView === chart }"
+                    @click="bottomChartView = chart"
+                  >
+                    {{ bottomChartLabels[chart] }}
+                  </button>
+                  <span class="hotkey-hint">(Enter)</span>
+                </div>
+              </div>
+              <div class="chart-container">
+                <PowerChart 
+                  v-if="bottomChartView === 'grid'"
+                  :history="gameState.gridHistory" 
+                  :version="gameState.historyVersion" 
+                />
+                <ProductionChart
+                  v-else-if="bottomChartView === 'production'"
+                  :history="gameState.productionHistory"
+                  :version="gameState.historyVersion"
+                />
+                <ConsumptionChart
+                  v-else-if="bottomChartView === 'consumption'"
+                  :history="gameState.consumptionHistory"
+                  :version="gameState.historyVersion"
+                />
+                <WeatherChart 
+                  v-else-if="bottomChartView === 'weather'"
+                  :history="gameState.weatherHistory" 
+                  :forecastArrays="gameState.forecastArrays"
+                  :currentTime="gameState.currentTime"
+                  :version="gameState.weatherHistoryVersion" 
+                />
+                <BalancingChart
+                  v-else-if="bottomChartView === 'balancing'"
+                  :history="gameState.balancingHistory"
+                  :version="gameState.historyVersion"
+                />
+              </div>
+            </div>
+          </Transition>
         </div>
       </div>
     </div>
@@ -422,5 +433,67 @@ h1 {
   margin-bottom: 1rem;
   height: 250px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.advanced-section {
+  margin-top: 2rem;
+}
+
+.advanced-header {
+  width: 100%;
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 0.5rem;
+}
+
+.advanced-header:hover {
+  background: var(--color-gray-100);
+  border-color: var(--gridio-sky-vivid);
+}
+
+.advanced-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-gray-600);
+}
+
+.chevron {
+  transition: transform 0.3s;
+  color: var(--color-gray-400);
+  font-size: 0.75rem;
+}
+
+.chevron.expanded {
+  transform: rotate(-180deg);
+}
+
+.advanced-content {
+  overflow: hidden;
+}
+
+.advanced-content .chart-container {
+  height: 500px;
+}
+
+.expand-enter-active,
+.expand-leave-active {
+  transition: all 0.3s ease;
+  max-height: 800px;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  opacity: 0;
+  max-height: 0;
+  margin-top: 0;
 }
 </style>

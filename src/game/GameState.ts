@@ -5,7 +5,7 @@ import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdo
 import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput } from '../system_model'
 import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
-export type GamePhase = 'start' | 'day' | 'end'
+export type GamePhase = 'start' | 'initializing' | 'day' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000
 export type { BESSMode, BESSMarket }
 
@@ -140,9 +140,26 @@ class GameState {
   private accumulatedTime = 0
   private _lastTickHour = -1
 
-  startDay(): void {
+  async startDay(): Promise<void> {
+    this.phase = 'initializing'
+    
+    // Small delay to allow UI to update
+    await new Promise(resolve => setTimeout(resolve, 50))
+    
     this._world = markRaw(new WorldSimulation(this.config))
     this._world.initialize()
+    
+    // Run 12-hour warm-up without storing history or running BESS
+    // This allows thermal inertia (2h tau) and control integrators to fully settle
+    const warmupSeconds = 12 * 3600
+    for (let i = 0; i < warmupSeconds; i++) {
+      this._world.tick()
+    }
+    
+    // Reset world time to 0 and clear all history
+    this._world.resetToStartOfDay()
+    
+    // Initialize BESS and settlement after warm-up
     this._bessFleet.reset()
     this._bessPerformance.reset()
     
@@ -211,7 +228,7 @@ class GameState {
   }
 
   private tickBESS(): void {
-    if (!this._world) return
+    if (!this._world || this._world.currentTime < 0) return // Skip BESS during warm-up
     
     const currentHour = Math.floor(this._world.currentTime / 3600)
     const secondInHour = this._world.currentTime % 3600
@@ -286,7 +303,7 @@ class GameState {
   }
 
   private tickImbalanceSettlement(): void {
-    if (!this._world) return
+    if (!this._world || this._world.currentTime < 0) return // Skip settlement during warm-up
 
     const currentUnixS = this._dayStartUnixS + this._world.currentTime
     const daBidsArray = this.playerBids.daBids.map(b => b.volumeMW)

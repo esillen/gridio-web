@@ -67,4 +67,9 @@ export class PowerGrid {
     this._currentTime = 0
     this._history = []
   }
+
+  resetTime(): void {
+    this._currentTime = 0
+    this._history = []
+  }
 }

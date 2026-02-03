@@ -208,7 +208,10 @@ export class WorldSimulation {
     this._grid.reset()
     this._weather.reset()
     this._forecast.reset()
-    this._heatingDemand.reset(this._weather.state.temperatureC)
+    
+    // Initialize heating demand with actual weather temperature for better warm-up
+    const initialTemp = this._weather.state.temperatureC
+    this._heatingDemand.reset(initialTemp)
     this._nonHeatingDemand.reset()
     this._servicesDemand.reset()
     this._transportDemand.reset()
@@ -228,7 +231,7 @@ export class WorldSimulation {
     this._afrrModel.reset()
     this._mfrrModel.reset()
     this._dispatcher.reset()
-    this._currentTime = 0
+    this._currentTime = -12 * 3600 // Start 12 hours before day 0 for better settling
     this._weatherHistory = []
     this._consumptionHistory = []
     this._productionHistory = []
@@ -253,6 +256,16 @@ export class WorldSimulation {
     this._grid.connect(this._transportDemand)
     this._grid.connect(this._industryDemand)
     this._grid.connect(this._gridLosses)
+  }
+
+  resetToStartOfDay(): void {
+    this._currentTime = 0
+    this._grid.resetTime()
+    this._weatherHistory = []
+    this._consumptionHistory = []
+    this._productionHistory = []
+    this._frequencyHistory = []
+    this._balancingHistory = []
   }
 
   tick(): void {
@@ -444,8 +457,8 @@ export class WorldSimulation {
     const interconnectorsMW = toggles.interconnectors ? this._interconnectors.netImportMW : 0
     const totalProductionMW = domesticProductionMW + interconnectorsMW
 
-    // Record history snapshots at sample interval (not every tick)
-    const shouldRecordHistory = this._currentTime % HISTORY_SAMPLE_INTERVAL_S === 0
+    // Record history snapshots at sample interval (not every tick) and only after warm-up
+    const shouldRecordHistory = this._currentTime >= 0 && this._currentTime % HISTORY_SAMPLE_INTERVAL_S === 0
 
     if (shouldRecordHistory) {
       this._weatherHistory.push({

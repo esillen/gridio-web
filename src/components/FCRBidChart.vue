@@ -45,10 +45,10 @@ function buildData(): uPlot.AlignedData {
   return [times, bids, failedImbalance]
 }
 
-function getOpts(): uPlot.Options {
+function getOpts(width: number, height: number): uPlot.Options {
   return {
-    width: 600,
-    height: 180,
+    width,
+    height,
     padding: [10, 10, 0, 0],
     cursor: { show: true },
     legend: { show: true },
@@ -102,8 +102,8 @@ function createChart() {
     chart = null
   }
   
-  const opts = getOpts()
-  opts.width = chartEl.value.clientWidth
+  const rect = chartEl.value.getBoundingClientRect()
+  const opts = getOpts(rect.width, rect.height)
   chart = new uPlot(opts, buildData(), chartEl.value)
 }
 
@@ -114,7 +114,8 @@ function updateChart() {
 
 const resizeObserver = new ResizeObserver(() => {
   if (chart && chartEl.value) {
-    chart.setSize({ width: chartEl.value.clientWidth, height: 180 })
+    const rect = chartEl.value.getBoundingClientRect()
+    chart.setSize({ width: rect.width, height: rect.height })
   }
 })
 
@@ -137,28 +138,12 @@ watch(() => props.version, updateChart)
 </script>
 
 <template>
-  <div class="chart-wrapper">
-    <div class="chart-title">FCR Capacity Bids & Response</div>
-    <div ref="chartEl" class="chart-container"></div>
-  </div>
+  <div ref="chartEl" class="chart"></div>
 </template>
 
 <style scoped>
-.chart-wrapper {
-  background: white;
-  border-radius: 12px;
-  padding: 0.75rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.chart-title {
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--color-gray-700);
-  margin-bottom: 0.5rem;
-}
-
-.chart-container {
+.chart {
   width: 100%;
+  height: 100%;
 }
 </style>

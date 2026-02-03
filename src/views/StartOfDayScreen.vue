@@ -59,9 +59,9 @@ onUnmounted(() => {
   window.removeEventListener('mouseup', stopDrag)
 })
 
-function startDay() {
-  gameState.startDay()
-  router.push('/day')
+async function startDay() {
+  router.push('/initializing')
+  await gameState.startDay()
 }
 
 function handleKeydown(e: KeyboardEvent) {
