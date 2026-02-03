@@ -82,3 +82,6 @@ export type { BESSConfig, BESSMode, BESSMarket, BESSState, BESSDispatchCommand, 
 
 export { ImbalanceSettlementModel } from './grid/ImbalanceSettlementModel'
 export type { ImbalanceSettlementInput, ImbalanceSettlementOutput, LastSettlement, SystemDirection, SettlementForecastOutput, SettlementSnapshot } from './grid/ImbalanceSettlementModel'
+
+export { GameplayCorrectionModel } from './grid/GameplayCorrectionModel'
+export type { GameplayCorrectionInput, GameplayCorrectionOutput } from './grid/GameplayCorrectionModel'

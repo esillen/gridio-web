@@ -1,0 +1,73 @@
+model_part: correction_for_gameplay
+version: 1.0.0
+tick_s: 1
+
+description: >
+  Hidden PID controller that corrects frequency and imbalance to maintain playable game conditions.
+  Not shown in any graphs or UI - purely a background stabilizer to prevent runaway scenarios.
+  Acts as an "infinite grid" or "super TSO" that absorbs residual errors from the simulation.
+
+units:
+  power: MW
+  frequency: Hz
+  time: s
+
+inputs:
+  frequencyHz: float           # Current system frequency
+  imbalanceMW: float           # Current power imbalance (gen - load)
+
+state:
+  freqIntegral: float          # Integral of frequency error
+  imbalanceIntegral: float     # Integral of imbalance
+
+constants:
+  # Target values
+  freqTargetHz: 50.0
+  imbalanceTargetMW: 0.0
+
+  # PID gains for frequency correction
+  freqKp: 2000.0               # Proportional: MW per Hz error
+  freqKi: 500.0                # Integral: MW per Hz*s error
+  freqKd: 100.0                # Derivative: MW per Hz/s
+
+  # PID gains for imbalance correction  
+  imbKp: 0.3                   # Proportional: fraction of imbalance to correct
+  imbKi: 0.05                  # Integral: builds up for persistent errors
+  
+  # Limits
+  maxCorrectionMW: 2000.0      # Maximum correction power
+  integralLimitHz: 1.0         # Anti-windup for frequency integral
+  integralLimitMW: 5000.0      # Anti-windup for imbalance integral
+  
+  # Smoothing
+  tauSmoothS: 5.0              # Output smoothing time constant
+
+init:
+  freqIntegral: 0.0
+  imbalanceIntegral: 0.0
+
+update_per_tick:
+  # Frequency error
+  - freqError: "= freqTargetHz - frequencyHz"
+  
+  # Update frequency integral (with anti-windup)
+  - state.freqIntegral: "= clamp(state.freqIntegral + freqError * tick_s, -integralLimitHz, integralLimitHz)"
+  
+  # Frequency PID output
+  - freqCorrectionMW: "= freqKp * freqError + freqKi * state.freqIntegral"
+  
+  # Imbalance correction (simple PI)
+  - state.imbalanceIntegral: "= clamp(state.imbalanceIntegral + imbalanceMW * tick_s, -integralLimitMW, integralLimitMW)"
+  - imbCorrectionMW: "= -imbKp * imbalanceMW - imbKi * state.imbalanceIntegral"
+  
+  # Combined correction
+  - totalCorrectionMW: "= clamp(freqCorrectionMW + imbCorrectionMW, -maxCorrectionMW, maxCorrectionMW)"
+
+outputs:
+  correctionMW: "= totalCorrectionMW"
+  
+  # Debug (not shown in UI)
+  debug:
+    freqError: "= freqError"
+    freqIntegral: "= state.freqIntegral"
+    imbalanceIntegral: "= state.imbalanceIntegral"

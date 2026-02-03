@@ -22,6 +22,7 @@ import {
   AFRRModel,
   MFRRModel,
   DispatcherModel,
+  GameplayCorrectionModel,
   type WeatherOutput, 
   type ForecastOutput, 
   type ForecastArrays,
@@ -151,6 +152,7 @@ export class WorldSimulation {
   private _afrrModel: AFRRModel
   private _mfrrModel: MFRRModel
   private _dispatcher: DispatcherModel
+  private _gameplayCorrection: GameplayCorrectionModel
   private _currentTime = 0
   private _weatherHistory: WeatherSnapshot[] = []
   private _consumptionHistory: ConsumptionSnapshot[] = []
@@ -202,6 +204,7 @@ export class WorldSimulation {
     this._afrrModel = new AFRRModel()
     this._mfrrModel = new MFRRModel()
     this._dispatcher = new DispatcherModel()
+    this._gameplayCorrection = new GameplayCorrectionModel()
   }
 
   initialize(): void {
@@ -231,6 +234,7 @@ export class WorldSimulation {
     this._afrrModel.reset()
     this._mfrrModel.reset()
     this._dispatcher.reset()
+    this._gameplayCorrection.reset()
     this._currentTime = -12 * 3600 // Start 12 hours before day 0 for better settling
     this._weatherHistory = []
     this._consumptionHistory = []
@@ -531,11 +535,17 @@ export class WorldSimulation {
     // Slower reserves injection (FCR is now handled internally by frequency model)
     const slowerReservesMW = afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
     
-    // Single frequency tick with internal FCR droop + external slower reserves
+    // Hidden gameplay correction (PID controller for stability)
+    const gameplayCorrection = this._gameplayCorrection.tick({
+      frequencyHz: currentFreqHz,
+      imbalanceMW: rawImbalanceMW,
+    })
+    
+    // Single frequency tick with internal FCR droop + external slower reserves + correction
     const finalFreqBreakdown = this._frequencyModel.tick({
       totalGenerationMW: totalProductionMW,
       totalConsumptionMW,
-      ffrMW: slowerReservesMW,  // aFRR + mFRR only (FCR is internal)
+      ffrMW: slowerReservesMW + gameplayCorrection.correctionMW,  // aFRR + mFRR + hidden correction
       fcrCapacityMW,            // FCR handled internally with droop
       inertia: {
         nuclearMW,
@@ -994,6 +1004,7 @@ export class WorldSimulation {
     this._afrrModel.reset()
     this._mfrrModel.reset()
     this._dispatcher.reset()
+    this._gameplayCorrection.reset()
     this._currentTime = 0
     this._weatherHistory = []
     this._consumptionHistory = []
