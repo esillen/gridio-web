@@ -2,10 +2,20 @@
 import { computed } from 'vue'
 import { gameState, type BESSMode, type BESSMarket } from '../game/GameState'
 
+const props = withDefaults(defineProps<{
+  chargeDischargeEnabled?: boolean
+  marketToggleEnabled?: boolean
+}>(), {
+  chargeDischargeEnabled: true,
+  marketToggleEnabled: true,
+})
+
 const bessUnits = computed(() => gameState.bessStates)
 const totalPower = computed(() => gameState.totalBessPowerMW)
 
 function toggleUnitMode(unitId: string, mode: BESSMode) {
+  if (!props.chargeDischargeEnabled) return
+  
   const unit = bessUnits.value.find(u => u.id === unitId)
   if (unit?.mode === mode) {
     gameState.setUnitMode(unitId, null)
@@ -15,6 +25,7 @@ function toggleUnitMode(unitId: string, mode: BESSMode) {
 }
 
 function cycleMarket(unitId: string) {
+  if (!props.marketToggleEnabled) return
   gameState.cycleUnitMarket(unitId)
 }
 
@@ -79,24 +90,27 @@ function formatPower(mw: number): string {
           {{ formatPower(unit.currentPowerMW) }} MW
         </div>
         <button 
-          :class="['market-toggle', `market-${unit.market}`, unit.market === 'auto' ? `auto-${unit.autoEffectiveMarket}` : '']"
+          :class="['market-toggle', `market-${unit.market}`, unit.market === 'auto' ? `auto-${unit.autoEffectiveMarket}` : '', { disabled: !marketToggleEnabled }]"
           @click="cycleMarket(unit.id)"
-          :title="`Click to cycle: DA → FCR → AUTO → Inactive`"
+          :disabled="!marketToggleEnabled"
+          :title="marketToggleEnabled ? 'Click to cycle: DA → FCR → AUTO → Inactive' : 'Market toggle disabled'"
         >
           {{ getMarketLabel(unit.market, unit.autoEffectiveMarket) }}
         </button>
         <div class="unit-controls">
           <button 
-            :class="['unit-ctrl-btn', { active: unit.mode === 'charge' }]"
+            :class="['unit-ctrl-btn', { active: unit.mode === 'charge', disabled: !chargeDischargeEnabled }]"
             @click="toggleUnitMode(unit.id, 'charge')"
-            title="Charge at max power (click again to stop)"
+            :disabled="!chargeDischargeEnabled"
+            :title="chargeDischargeEnabled ? 'Charge at max power (click again to stop)' : 'Charge disabled'"
           >
             Charge
           </button>
           <button 
-            :class="['unit-ctrl-btn', { active: unit.mode === 'discharge' }]"
+            :class="['unit-ctrl-btn', { active: unit.mode === 'discharge', disabled: !chargeDischargeEnabled }]"
             @click="toggleUnitMode(unit.id, 'discharge')"
-            title="Discharge at max power (click again to stop)"
+            :disabled="!chargeDischargeEnabled"
+            :title="chargeDischargeEnabled ? 'Discharge at max power (click again to stop)' : 'Discharge disabled'"
           >
             Discharge
           </button>
@@ -327,5 +341,17 @@ function formatPower(mw: number): string {
   border-color: #3b82f6;
   color: white;
   font-weight: 600;
+}
+
+.unit-ctrl-btn.disabled,
+.market-toggle.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.unit-ctrl-btn.disabled:hover,
+.market-toggle.disabled:hover {
+  background: inherit;
+  border-color: inherit;
 }
 </style>

@@ -1,13 +1,21 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState } from '../game/GameState'
+import { tutorialController } from '../game/TutorialController'
 import DABidChart from '../components/DABidChart.vue'
 import FCRBidChart from '../components/FCRBidChart.vue'
 
 const router = useRouter()
 const showImbalanceBreakdown = ref(false)
 const showImbalanceHelp = ref(false)
+const tutorialMessage = ref<string | null>(null)
+
+// Tutorial state
+const isTutorial = computed(() => tutorialController.active)
+const tutorialDay = computed(() => tutorialController.currentDay)
+const tutorialConfig = computed(() => tutorialController.config)
+const goalMet = computed(() => isTutorial.value ? tutorialController.goalMet() : true)
 
 const daPerformance = computed(() => gameState.bessPerformance.daPerformance)
 const fcrPerformance = computed(() => gameState.bessPerformance.fcrPerformance)
@@ -58,9 +66,60 @@ const fcrStats = computed(() => {
   return { totalAllocated, totalRequired, totalDelivered, reliability }
 })
 
+onMounted(() => {
+  // Show tutorial tips based on performance
+  if (isTutorial.value) {
+    showTutorialTips()
+  }
+})
+
+function showTutorialTips() {
+  const day = tutorialDay.value
+  const earnings = revenueBreakdown.value.totalRevenue
+  const goal = tutorialConfig.value.earningsGoal
+  
+  if (day === 2 && !goalMet.value) {
+    if (earnings <= 0) {
+      tutorialMessage.value = 'Tip: Never trade more than your batteries can store! Imbalance penalties are expensive. Also, batteries start at 50% SOC.'
+    } else {
+      tutorialMessage.value = 'Tip: Trading has a small fee. Plan to earn more than just €' + goal + ' to cover fees!'
+    }
+  } else if (day === 3 && earnings < 0) {
+    tutorialMessage.value = 'Tip: Play it safe - bid small amounts spread through the day and charge manually when needed!'
+  } else if (day === 4 && goalMet.value) {
+    tutorialMessage.value = 'CONGRATULATIONS! You completed the tutorial! Now try the sandbox and see how much you can earn!'
+  }
+}
+
 function restart() {
   gameState.restart()
   router.push('/game')
+}
+
+function handleContinue() {
+  if (isTutorial.value) {
+    if (goalMet.value || tutorialConfig.value.earningsGoal === 0) {
+      // Advance to next day
+      if (tutorialController.nextDay()) {
+        router.push('/game')
+      } else {
+        // Tutorial complete
+        tutorialController.stop()
+        router.push('/')
+      }
+    } else {
+      // Retry the day
+      tutorialController.retryDay()
+      router.push('/game')
+    }
+  } else {
+    restart()
+  }
+}
+
+function exitTutorial() {
+  tutorialController.stop()
+  router.push('/')
 }
 
 function formatEur(value: number): string {
@@ -70,13 +129,27 @@ function formatEur(value: number): string {
 
 <template>
   <div class="end-screen">
-    <h1>End of Day Report</h1>
+    <!-- Tutorial indicator -->
+    <div v-if="isTutorial" class="tutorial-indicator">
+      <span class="tutorial-day">Tutorial Day {{ tutorialDay }}/4</span>
+    </div>
+
+    <h1>{{ isTutorial ? 'Day ' + tutorialDay + ' Results' : 'End of Day Report' }}</h1>
     
     <div class="revenue-summary">
       <h2>Total Revenue</h2>
       <div class="total-revenue" :class="{ negative: revenueBreakdown.totalRevenue < 0 }">
         €{{ formatEur(revenueBreakdown.totalRevenue) }}
       </div>
+      <!-- Tutorial goal status -->
+      <div v-if="isTutorial && tutorialConfig.earningsGoal > 0" class="goal-status" :class="{ met: goalMet, failed: !goalMet }">
+        Goal: €{{ tutorialConfig.earningsGoal }} - {{ goalMet ? 'ACHIEVED!' : 'Not met' }}
+      </div>
+    </div>
+
+    <!-- Tutorial tips -->
+    <div v-if="tutorialMessage" class="tutorial-tip">
+      {{ tutorialMessage }}
     </div>
 
     <div class="charts-section">
@@ -221,7 +294,20 @@ function formatEur(value: number): string {
       </div>
     </div>
 
-    <button class="restart-btn" @click="restart">Start New Day</button>
+    <div class="action-buttons">
+      <button class="restart-btn primary" @click="handleContinue">
+        <template v-if="isTutorial">
+          <template v-if="goalMet || tutorialConfig.earningsGoal === 0">
+            {{ tutorialDay === 4 ? 'Finish Tutorial' : 'Continue to Day ' + (tutorialDay + 1) }}
+          </template>
+          <template v-else>Retry Day {{ tutorialDay }}</template>
+        </template>
+        <template v-else>Start New Day</template>
+      </button>
+      <button v-if="isTutorial" class="restart-btn secondary" @click="exitTutorial">
+        Exit Tutorial
+      </button>
+    </div>
   </div>
 </template>
 
@@ -567,9 +653,16 @@ h3 {
   line-height: 1.5;
 }
 
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
 .restart-btn {
   display: block;
-  margin: 0 auto;
   background: var(--gridio-sky-vivid);
   color: white;
   border: none;
@@ -583,8 +676,71 @@ h3 {
 }
 
 .restart-btn:hover {
-  background: #3355e0;
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.restart-btn.primary:hover {
+  background: #3355e0;
+}
+
+.restart-btn.secondary {
+  background: var(--color-gray-100);
+  color: var(--color-gray-600);
+  box-shadow: none;
+}
+
+.restart-btn.secondary:hover {
+  background: var(--color-gray-200);
+}
+
+/* Tutorial styles */
+.tutorial-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1rem;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.tutorial-day {
+  font-weight: 600;
+  color: var(--gridio-sky-vivid);
+}
+
+.goal-status {
+  margin-top: 1rem;
+  padding: 0.5rem 1.5rem;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.goal-status.met {
+  background: #D1FAE5;
+  color: #047857;
+}
+
+.goal-status.failed {
+  background: #FEE2E2;
+  color: #B91C1C;
+}
+
+.tutorial-tip {
+  background: #FEF3C7;
+  border: 1px solid #F59E0B;
+  color: #92400E;
+  padding: 1rem 1.5rem;
+  border-radius: 12px;
+  margin: 1rem 0;
+  text-align: center;
+  line-height: 1.5;
 }
 </style>

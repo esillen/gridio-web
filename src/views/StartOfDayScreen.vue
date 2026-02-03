@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
+import { tutorialController } from '../game/TutorialController'
 import { useRouter } from 'vue-router'
 import InfoModal from '../components/info/InfoModal.vue'
 import NuclearInfo from '../components/info/NuclearInfo.vue'
@@ -20,6 +21,13 @@ const isDragging = ref(false)
 const showSandbox = ref(false)
 const showInfoModal = ref(false)
 const currentInfoType = ref<EnergyType | null>(null)
+const noBidWarning = ref(false)
+
+// Tutorial state
+const isTutorial = computed(() => tutorialController.active)
+const tutorialDay = computed(() => tutorialController.currentDay)
+const tutorialConfig = computed(() => tutorialController.config)
+const tutorialMessage = computed(() => tutorialController.currentMessage)
 
 type EnergyType = 'nuclear' | 'hydroReservoir' | 'hydroRoR' | 'wind' | 'solar' | 'chp' | 'peakers' | 'interconnectors' | 'demandResponse'
 
@@ -48,8 +56,27 @@ const currentIndex = computed(() => {
 const canGoLeft = computed(() => currentIndex.value >= 0)
 const canGoRight = computed(() => currentIndex.value >= 0)
 
+// Tutorial-aware market availability
+const daEnabled = computed(() => !isTutorial.value || tutorialConfig.value.daEnabled)
+const fcrEnabled = computed(() => !isTutorial.value || tutorialConfig.value.fcrEnabled)
+
 onMounted(() => {
-  gameState.generateMarketPrices(Date.now())
+  // Only generate random prices if not in tutorial mode
+  if (!isTutorial.value) {
+    gameState.generateMarketPrices(Date.now())
+  }
+  
+  // Set initial chart based on what's enabled
+  if (isTutorial.value) {
+    if (tutorialConfig.value.daEnabled) {
+      activeChart.value = 'da'
+    } else if (tutorialConfig.value.fcrEnabled) {
+      activeChart.value = 'fcr'
+    }
+    // Queue initial tutorial messages for bidding phase
+    queueBiddingMessages()
+  }
+  
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('mouseup', stopDrag)
 })
@@ -59,18 +86,70 @@ onUnmounted(() => {
   window.removeEventListener('mouseup', stopDrag)
 })
 
+function queueBiddingMessages() {
+  if (!isTutorial.value) return
+  
+  const day = tutorialDay.value
+  if (day === 1) {
+    tutorialController.queueMessages([
+      { id: 'd1_welcome', text: 'Welcome to the Grid.io Tutorial! Over 4 days, you\'ll learn to trade batteries on energy markets.' },
+      { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy, drag down to buy.', highlight: 'da-chart' },
+      { id: 'd1_prices', text: 'The numbers show prices in €/MWh. Larger, redder numbers = higher prices. Sell high, buy low!', highlight: 'prices' },
+      { id: 'd1_capacity', text: 'Your batteries have limited capacity. Don\'t bid more than you can deliver! Place at least one bid to start.' },
+    ])
+  } else if (day === 2) {
+    tutorialController.queueMessages([
+      { id: 'd2_goal', text: 'Day 2: Earn at least €600 to advance! Plan your bids carefully.' },
+      { id: 'd2_tips', text: 'Remember: Batteries start at 50% SOC. Trade wisely to hit your goal!' },
+    ])
+  } else if (day === 3) {
+    tutorialController.queueMessages([
+      { id: 'd3_fcr_intro', text: 'Day 3: Today you trade on the FCR market - crucial for grid stability!' },
+      { id: 'd3_fcr_explain', text: 'In FCR, you bid how much power your batteries CAN provide if the grid needs it. You get paid for availability!' },
+      { id: 'd3_goal', text: 'Earn €400 to advance. But if the grid needs power and you can\'t deliver, you\'ll face penalties!' },
+    ])
+  } else if (day === 4) {
+    tutorialController.queueMessages([
+      { id: 'd4_intro', text: 'Day 4: Final tutorial day! You now bid on BOTH DA and FCR markets with full control.' },
+      { id: 'd4_goal', text: 'Earn €1000 to complete the tutorial! Use Tab to switch between DA and FCR views.' },
+    ])
+  }
+}
+
 async function startDay() {
+  // In tutorial mode, require at least one bid
+  if (isTutorial.value && !tutorialController.hasBids()) {
+    noBidWarning.value = true
+    return
+  }
+  noBidWarning.value = false
+  
   router.push('/initializing')
   await gameState.startDay()
+  
+  // In tutorial mode, force battery markets after day starts
+  if (isTutorial.value) {
+    tutorialController.forceBatteryMarkets()
+  }
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // Handle tutorial message advancement
+  if (tutorialMessage.value && e.code === 'Space') {
+    e.preventDefault()
+    tutorialController.advanceMessage()
+    return
+  }
+  
   if (e.code === 'Space') {
     e.preventDefault()
     startDay()
   } else if (e.code === 'Tab') {
     e.preventDefault()
-    activeChart.value = activeChart.value === 'da' ? 'fcr' : 'da'
+    // Only allow switching if both markets are enabled
+    if (daEnabled.value && fcrEnabled.value) {
+      activeChart.value = activeChart.value === 'da' ? 'fcr' : 'da'
+    }
   }
 }
 
@@ -254,8 +333,14 @@ function goRight() {
 
 <template>
   <div class="start-screen">
+    <!-- Tutorial day indicator -->
+    <div v-if="isTutorial" class="tutorial-indicator">
+      <span class="tutorial-day">Tutorial Day {{ tutorialDay }}/4</span>
+      <span v-if="tutorialConfig.earningsGoal > 0" class="tutorial-goal">Goal: €{{ tutorialConfig.earningsGoal }}</span>
+    </div>
+
     <header class="header">
-      <h1>Day-Ahead Bidding</h1>
+      <h1>{{ isTutorial ? (tutorialConfig.fcrEnabled && !tutorialConfig.daEnabled ? 'FCR Bidding' : 'Day-Ahead Bidding') : 'Day-Ahead Bidding' }}</h1>
       <div class="bess-info">
         <span class="bess-stat">Fleet: {{ gameState.totalBessCapacityMWh }} MWh</span>
         <span class="bess-stat">{{ gameState.totalBessMaxPowerMW }} MW</span>
@@ -264,6 +349,7 @@ function goRight() {
 
     <div class="market-tabs">
       <button 
+        v-if="daEnabled"
         :class="['tab', { active: activeChart === 'da' }]" 
         @click="activeChart = 'da'"
       >
@@ -273,6 +359,7 @@ function goRight() {
         </span>
       </button>
       <button 
+        v-if="fcrEnabled"
         :class="['tab', { active: activeChart === 'fcr' }]" 
         @click="activeChart = 'fcr'"
       >
@@ -363,7 +450,7 @@ function goRight() {
       </div>
     </div>
 
-    <div class="sandbox-section">
+    <div v-if="!isTutorial" class="sandbox-section">
       <button class="sandbox-header" @click="showSandbox = !showSandbox">
         <span class="sandbox-title">Sandbox <span class="sandbox-subtitle">(what if this was not part of the system...)</span></span>
         <span class="chevron" :class="{ expanded: showSandbox }">▼</span>
@@ -450,10 +537,29 @@ function goRight() {
       <component :is="currentInfoComponent" v-if="currentInfoComponent" />
     </InfoModal>
 
+    <!-- No bid warning for tutorial -->
+    <div v-if="noBidWarning" class="no-bid-warning">
+      You didn't place any bids! 
+      <span v-if="tutorialConfig.earningsGoal > 0">You need to earn €{{ tutorialConfig.earningsGoal }} to advance.</span>
+      <span v-else>Place at least one bid to continue.</span>
+    </div>
+
     <button class="start-btn" @click="startDay">
       Start Day
       <span class="hint">(Space)</span>
     </button>
+
+    <!-- Tutorial message overlay -->
+    <Transition name="fade">
+      <div v-if="tutorialMessage" class="tutorial-overlay" @click="tutorialController.advanceMessage()">
+        <div class="tutorial-message" @click.stop>
+          <p>{{ tutorialMessage.text }}</p>
+          <div class="message-footer">
+            <span class="hint">Press Space to continue</span>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -834,5 +940,82 @@ h1 {
 .hint {
   font-size: 0.75rem;
   opacity: 0.7;
+}
+
+/* Tutorial styles */
+.tutorial-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 0.5rem;
+}
+
+.tutorial-day {
+  font-weight: 600;
+  color: var(--gridio-sky-vivid);
+}
+
+.tutorial-goal {
+  color: var(--color-gray-600);
+  font-size: 0.875rem;
+}
+
+.no-bid-warning {
+  background: #FEF3C7;
+  border: 1px solid #F59E0B;
+  color: #92400E;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.tutorial-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.tutorial-message {
+  background: white;
+  max-width: 500px;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.tutorial-message p {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--color-gray-700);
+  margin: 0 0 1rem;
+}
+
+.message-footer {
+  text-align: center;
+  color: var(--color-gray-500);
+  font-size: 0.875rem;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

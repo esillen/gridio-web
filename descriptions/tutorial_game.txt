@@ -1,0 +1,87 @@
+The tutorial game is played in four days.
+In all tutorial days, you should not be able to change any sandbox settings.
+In all tutorial days, random processes have a set seed where seed=day_number. 
+That random seed should most of all make DA and FCR prices predictable. Other consistencies are a byproduct.
+
+On the first day, you trade only on DA.
+The player must make at least one bid to be able to start the day.
+During this day, the player has no control over the batteries and everything happens automatically.
+DA deliveries happen automatically and you cannot change that.
+Before gameplay starts, the charts and controls are explained. 
+Press space to go to the next explainer unless otherwise stated in [] in this file. 
+During an explainer the gameplay is paused, then it becomes resumed:
+- This is the control room where you have access to everything you need during a day.
+- These are your batteries. Their state of charge (SOC) is displayed along with their power (MW - how much can it charge and discharge at any given moment) and energy (MWh - how much total energy can it store).
+- You currently do not have any control over your batteries, they will respond automatically to the market selected (which currently is DA). However, if your batteries don't have energy left, they will be unable to deliver so be careful during bidding!
+- This graph shows the current frequency and imbalance of the entire energy grid. Frequency deviations and imbalances are the reason we need balancing services - which is your role!. 
+- But for now this is unecessary information. Press tab to change this chart to show your DA bids. [continue when the player toggles to the DA bids chart]
+- This graph now shows your DA bids along with how well you managed to deliver. Press space to unpause the game.
+
+[let 5 seconds pass]
+
+[the next tutorial slide will be removed when 4 in game hours have passed]
+- This is an awfully slow pace! Let's speed it up by pressing number keys 1-7. Remember that you can pause any time by pressing space.
+
+[at 12:00 or more in game time]
+- In the advanced tab you can see detailed information about the power grid such as weather forecast, consumption and production breakdown and more! If you really want to optimize trading you need to pay attention to all of this but for now it is just a curiosity.
+
+[When the day is finished]
+- The day has come to an end! On the next screen you will see a breakdown of how the day went!
+
+
+DAY 2
+On the second day, you also only trade on DA but you have to earn at least 600€
+
+[At the start of day 2]
+- Today you have to meet an earnings goal! Earn 600€ to continue to the next day.
+- These numbers represent how much 1MWh costs to buy or sell.
+
+[Stop the players from placing no bids]
+- You didn't place any bids! You need to make 400€ in order to advance to the next day.
+
+[At the daily breakdown - if you fail show some tips]
+- Tip: Never trade more than your batteries can store! Imbalance is expensive compared to what you earn on selling energy.
+- Tip: Your batteries start at 50% state of charge (SOC), use that knowledge wisely.
+
+[If you manage to get >0€ but <600€]
+- Tip: trading has a small fee that you can see in the breakdown. Make sure to plan for earning more than 600€ to advance.
+
+
+Day 3
+On the third day, you will only be able to trade on FCR
+- Today we trade only on the FCR market - which is exiting since this market is crucial in balancing the real energy grid!
+- Just like before, you place your bets here. However this time you say how much power that can be maximally be used if the grid needs it.
+- This market is a simplification of the real FCR-D up/down and FCR-N markets. In this game your batteries activate if there is a frequency deviation in the grid no matter what.
+- On this market you get paid no matter what even if there was no delivery. Just keep in mind that placing lots of bids here means that you will have to deliver if there is a grid need.
+- To move on from this day you need to earn 400€.
+
+[Stop the players from placing no bids]
+- You didn't place any bids! You need to make 400€ in order to advance to the next day.
+
+[Start of day]
+- Note that your batteries have a new pre-selected market which is FCR. You cannot change it.
+- Also note that you now have access to two new buttons: charge and discharge. Use these to top up or discharge batteries - only keep in mind that when you charge/discharge your batteries will not participate on FCR which might lead to failed deliveries!
+- Toggle to the FCR bids chart by pressing tab twice [close this when the player toggles to the FCR bids chart.]
+- This chart shows what FCR bids you placed earlier. If the grid needs the power you placed - you must deliver!
+
+[If you made <0 € at end of day]
+- Tip: play it safe. bid small amounts spread out during the day and make sure to charge manually if needed so you have the capacity!
+
+
+Day 4:
+On the fourth day, you bid on both FCR and DA
+- Today is the end of the tutorial! You now bid on both DA and FCR and you will have full control over your batteries.
+- Make 1000€ to finish the tutorial!
+
+[When the day starts]
+- You are now able to toggle what market the battery should be active on: DA, FCR or AUTO which automatically chooses an allocation of your battery portfolio. You can also choose to deactivate your battery.
+
+[After 4 in game hours]
+- There is a fourth important chart: the imbalance price prediction chart. It predicts how expensive imbalances will be. Use this to manually charge/discharge batteries at tactical moments. Or not. It's up to you!
+- Don't forget the advanced charts for super-detailed optimization!
+
+[If you win]
+- CONGRATULATIONS! You beat the tutorial! Now try the sandbox and see how much money you can make by being an optimizer!
+
+
+After the fourth day, you go back to the index and can choose to do whatever next.

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
+import { tutorialController } from '../game/TutorialController'
 import PowerChart from '../components/PowerChart.vue'
 import WeatherChart from '../components/WeatherChart.vue'
 import ConsumptionChart from '../components/ConsumptionChart.vue'
@@ -40,10 +41,36 @@ const topChartView = ref<TopChart>('frequency')
 const bottomChartView = ref<BottomChart>('grid')
 const showAdvanced = ref(false)
 
+// Tutorial state
+const isTutorial = computed(() => tutorialController.active)
+const tutorialDay = computed(() => tutorialController.currentDay)
+const tutorialConfig = computed(() => tutorialController.config)
+const tutorialMessage = computed(() => tutorialController.currentMessage)
+
+// Track tutorial-triggered messages to avoid duplicates
+const shownSpeedMsg = ref(false)
+const shownNoonMsg = ref(false)
+const shownMidgameMsg = ref(false)
+
+// Filter chart options based on tutorial config
+const availableTopCharts = computed(() => {
+  if (!isTutorial.value) return topChartOptions
+  return topChartOptions.filter(opt => {
+    if (opt === 'da' && !tutorialConfig.value.daEnabled) return false
+    if (opt === 'fcr' && !tutorialConfig.value.fcrEnabled) return false
+    return true
+  })
+})
+
 function cycleTopChart() {
-  const currentIndex = topChartOptions.indexOf(topChartView.value)
-  const nextIndex = (currentIndex + 1) % topChartOptions.length
-  topChartView.value = topChartOptions[nextIndex] as TopChart
+  const opts = availableTopCharts.value
+  const currentIndex = opts.indexOf(topChartView.value)
+  const nextIndex = (currentIndex + 1) % opts.length
+  const nextChart = opts[nextIndex]
+  if (nextChart) {
+    topChartView.value = nextChart
+    tutorialController.onChartChanged(nextChart)
+  }
 }
 
 function cycleBottomChart() {
@@ -53,6 +80,18 @@ function cycleBottomChart() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  // Handle tutorial messages first
+  if (tutorialMessage.value && e.key === ' ') {
+    e.preventDefault()
+    const advanced = tutorialController.advanceMessage()
+    if (advanced && !tutorialMessage.value) {
+      // No more messages, auto-resume
+      gameState.paused = false
+      gameState.startSimulation()
+    }
+    return
+  }
+
   if (e.key === ' ') {
     e.preventDefault()
     gameState.togglePause()
@@ -79,6 +118,9 @@ function proceedToEnd() {
 }
 
 function handleDayCompleteKeydown(e: KeyboardEvent) {
+  // Only handle if we're actually in day_complete phase
+  if (!isDayComplete.value) return
+  if (tutorialMessage.value) return // Don't proceed if tutorial message is showing
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault()
     proceedToEnd()
@@ -91,6 +133,15 @@ onMounted(() => {
   
   if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
     router.push('/game')
+  }
+  
+  // Queue gameplay tutorial messages
+  if (isTutorial.value) {
+    shownSpeedMsg.value = false
+    shownNoonMsg.value = false
+    shownMidgameMsg.value = false
+    queueGameplayMessages()
+    gameState.paused = true
   }
 })
 
@@ -107,12 +158,87 @@ function formatTime(seconds: number): string {
   const secs = seconds % 60
   return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
+
+function queueGameplayMessages() {
+  const day = tutorialDay.value
+  
+  if (day === 1) {
+    tutorialController.queueMessages([
+      { id: 'd1_control', text: 'This is the control room where you monitor and control everything during a trading day.' },
+      { id: 'd1_batteries', text: 'These are your batteries. Their state of charge (SOC), power (MW), and capacity (MWh) are displayed.', highlight: 'bess' },
+      { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids. If they run out of energy, they can\'t deliver!' },
+      { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance - why we need balancing services (your role!)', highlight: 'frequency' },
+      { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your delivery.', waitFor: 'tab_to_da' },
+      { id: 'd1_da_chart', text: 'This shows your DA bids and how well you\'re delivering. Press Space to unpause!' },
+    ])
+  } else if (day === 3) {
+    tutorialController.queueMessages([
+      { id: 'd3_market', text: 'Your batteries are now set to FCR market. They\'ll respond to grid frequency changes.', highlight: 'bess' },
+      { id: 'd3_charge', text: 'You now have Charge/Discharge buttons! But while using them, batteries won\'t respond to FCR - risking failed delivery!', highlight: 'bess' },
+      { id: 'd3_tab', text: 'Press Tab to view the FCR bids chart.', waitFor: 'tab_to_fcr' },
+      { id: 'd3_chart', text: 'This shows your FCR bids and delivery. If the grid needs power, you must deliver!' },
+    ])
+  } else if (day === 4) {
+    tutorialController.queueMessages([
+      { id: 'd4_toggle', text: 'You can now toggle each battery\'s market: DA, FCR, AUTO (automatic), or Inactive.', highlight: 'bess' },
+    ])
+  }
+}
+
+// Watch for time-based tutorial triggers
+watch(currentTime, (time) => {
+  if (!isTutorial.value) return
+  
+  tutorialController.checkGameTime(time)
+  
+  const day = tutorialDay.value
+  
+  // Day 1: Speed message after a few seconds
+  if (day === 1 && !shownSpeedMsg.value && time >= 5) {
+    shownSpeedMsg.value = true
+    tutorialController.queueMessages([
+      { id: 'd1_speed', text: 'This pace is slow! Press number keys 1-7 to change speed. Press Space to pause anytime.' }
+    ])
+    gameState.paused = true
+  }
+  
+  // Day 1: Noon message
+  if (day === 1 && !shownNoonMsg.value && time >= 12 * 3600) {
+    shownNoonMsg.value = true
+    tutorialController.queueMessages([
+      { id: 'd1_advanced', text: 'In the Advanced section below you can see detailed weather, production, consumption, and balancing info!' }
+    ])
+    gameState.paused = true
+  }
+  
+  // Day 4: Midgame message
+  if (day === 4 && !shownMidgameMsg.value && time >= 4 * 3600) {
+    shownMidgameMsg.value = true
+    tutorialController.queueMessages([
+      { id: 'd4_imbalance', text: 'Check the Imbalance Settlement chart (press Tab) - it predicts imbalance costs for tactical charging!' }
+    ])
+    gameState.paused = true
+  }
+})
+
+// Pause game when tutorial message appears
+watch(tutorialMessage, (msg) => {
+  if (msg && gameState.phase === 'day') {
+    gameState.paused = true
+  }
+})
 </script>
 
 <template>
   <div class="day-screen">
+    <!-- Tutorial indicator -->
+    <div v-if="isTutorial" class="tutorial-indicator">
+      <span class="tutorial-day">Tutorial Day {{ tutorialDay }}/4</span>
+      <span v-if="tutorialConfig.earningsGoal > 0" class="tutorial-goal">Goal: €{{ tutorialConfig.earningsGoal }}</span>
+    </div>
+
     <header class="header">
-      <h1>Day Simulation</h1>
+      <h1>{{ isTutorial ? 'Day ' + tutorialDay : 'Day Simulation' }}</h1>
       <div class="header-stats">
         <div class="frequency-display" :class="gameState.currentFrequencyBand">
           {{ gameState.currentFrequencyHz.toFixed(3) }} Hz
@@ -141,17 +267,20 @@ function formatTime(seconds: number): string {
     </div>
 
     <div class="main-content">
-      <BESSPanel />
+      <BESSPanel 
+        :charge-discharge-enabled="!isTutorial || tutorialConfig.chargeDischargeEnabled"
+        :market-toggle-enabled="!isTutorial || tutorialConfig.marketToggleEnabled"
+      />
       
       <div class="charts-column">
         <div class="section-header">
           <div class="section-label">{{ topChartLabels[topChartView] }}</div>
           <div class="chart-tabs">
             <button
-              v-for="chart in topChartOptions"
+              v-for="chart in availableTopCharts"
               :key="chart"
               :class="{ active: topChartView === chart }"
-              @click="topChartView = chart"
+              @click="topChartView = chart; tutorialController.onChartChanged(chart)"
             >
               {{ topChartLabels[chart] }}
             </button>
@@ -237,8 +366,22 @@ function formatTime(seconds: number): string {
       </div>
     </div>
 
+    <!-- Tutorial message overlay -->
+    <Transition name="fade">
+      <div v-if="tutorialMessage" class="tutorial-overlay" @click="tutorialController.advanceMessage()">
+        <div class="tutorial-message" @click.stop>
+          <p>{{ tutorialMessage.text }}</p>
+          <div class="message-footer">
+            <span v-if="tutorialMessage.waitFor === 'tab_to_da'" class="hint">Press Tab to switch to DA chart</span>
+            <span v-else-if="tutorialMessage.waitFor === 'tab_to_fcr'" class="hint">Press Tab to switch to FCR chart</span>
+            <span v-else class="hint">Press Space to continue</span>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
     <!-- Day Complete Overlay -->
-    <div v-if="isDayComplete" class="day-complete-overlay" @click="proceedToEnd">
+    <div v-if="isDayComplete && !tutorialMessage" class="day-complete-overlay" @click="proceedToEnd">
       <div class="day-complete-content">
         <h2>Day Complete!</h2>
         <p>Press <kbd>Space</kbd> to continue to end of day breakdown</p>
@@ -585,5 +728,78 @@ h1 {
   font-family: inherit;
   font-size: 1rem;
   font-weight: 600;
+}
+
+/* Tutorial styles */
+.tutorial-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-bottom: 0.5rem;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.tutorial-day {
+  font-weight: 600;
+  color: var(--gridio-sky-vivid);
+}
+
+.tutorial-goal {
+  color: var(--color-gray-600);
+  font-size: 0.875rem;
+}
+
+.tutorial-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.tutorial-message {
+  background: white;
+  max-width: 500px;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.tutorial-message p {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--color-gray-700);
+  margin: 0 0 1rem;
+}
+
+.message-footer {
+  text-align: center;
+}
+
+.message-footer .hint {
+  color: var(--color-gray-500);
+  font-size: 0.875rem;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

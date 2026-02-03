@@ -195,7 +195,7 @@ class GameState {
     this.startSimulation()
   }
 
-  private startSimulation(): void {
+  startSimulation(): void {
     this.stopSimulation()
     this.lastFrameTime = performance.now()
     this.animationFrameId = requestAnimationFrame(this.simulationFrame.bind(this))
@@ -415,6 +415,24 @@ class GameState {
     }
   }
 
+  setUnitMarket(unitId: string, market: BESSMarket): void {
+    const unit = this._bessFleet.units.find(u => u.config.id === unitId)
+    if (unit) {
+      unit.market = market
+      if (market !== 'inactive') {
+        unit.mode = null
+      }
+      this.syncBESSState()
+    }
+  }
+
+  clearBids(): void {
+    this.playerBids = {
+      daBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
+      fcrBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
+    }
+  }
+
   get bessPerformance(): BESSPerformanceTracker {
     return this._bessPerformance
   }
@@ -485,7 +503,7 @@ class GameState {
     return this._world?.forecastArrays ?? null
   }
 
-  private stopSimulation(): void {
+  stopSimulation(): void {
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId)
       this.animationFrameId = null
