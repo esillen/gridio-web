@@ -19,23 +19,30 @@ export interface WindBreakdown {
 
 const CONSTANTS = {
   installedCapacityMW: 16820.0,
+
+  // Availability & technical losses
   availability: 0.97,
   wakeLoss: 0.08,
   electricalLoss: 0.02,
   otherLoss: 0.01,
 
+  // Fleet power curve
   vCutInMps: 3.0,
   vRatedMps: 12.0,
   vCutOutMps: 25.0,
   belowRatedExponent: 3.0,
 
+  // Smoothing (spatial diversity)
   tauWindSmoothS: 120.0,
   tauPowerSmoothS: 30.0,
+  tauPowerSmooth2S: 15.0,  // Additional mild smoothing
 
+  // Gust shutdown with hysteresis
   gustTripMps: 28.0,
   gustRestartMps: 22.0,
   shutdownMinDurationS: 600.0,
 
+  // Icing / cold climate derate
   icingDerateMax: 0.35,
   icingTempCenterC: -1.0,
   icingTempWidthC: 6.0,
@@ -68,9 +75,10 @@ export class WindFleetModel implements Actor {
 
   private windSmoothMps = 8.0
   private powerFracSmooth = 0.3
+  private powerFracSmooth2 = 0.3
   private shutdownActive = false
   private shutdownTimerS = 0
-  private lastProductionMW = 0
+  private _productionMW = 0
   private lastBreakdown: WindBreakdown | null = null
 
   constructor(id: string = 'wind-fleet', name: string = 'Swedish Wind Fleet') {
@@ -82,10 +90,10 @@ export class WindFleetModel implements Actor {
     const C = CONSTANTS
     const dt = 1.0
 
-    // Smooth wind speed
+    // 1) Smooth wind speed
     this.windSmoothMps += (input.windSpeed100mMps - this.windSmoothMps) * (dt / C.tauWindSmoothS)
 
-    // Gust shutdown logic
+    // 2) Gust shutdown logic (uses raw gust, not smoothed wind)
     if (!this.shutdownActive && input.windGustMps >= C.gustTripMps) {
       this.shutdownActive = true
       this.shutdownTimerS = C.shutdownMinDurationS
@@ -98,34 +106,36 @@ export class WindFleetModel implements Actor {
       }
     }
 
-    // Base power fraction
+    // 3) Base power fraction from smoothed wind (or 0 if shutdown)
     const basePowerFrac = this.shutdownActive ? 0 : fleetPowerCurveFrac(this.windSmoothMps)
 
-    // Icing derate
+    // 4) Icing derate factor
     const tempWeight = Math.exp(-Math.pow((input.temperatureC - C.icingTempCenterC) / C.icingTempWidthC, 2))
     const icingFactor = clamp01(1.0 - input.icingRisk01 * C.icingDerateMax * tempWeight)
 
-    // Curtailment
+    // 5) Curtailment factor
     const curtailFactor = clamp01(1.0 - (input.curtailmentFrac01 ?? 0))
 
-    // Combine factors
+    // 6) Combine factors into instantaneous power fraction
     const powerFracInstant = clamp01(
       basePowerFrac * C.availability * NET_LOSS_FACTOR * icingFactor * curtailFactor
     )
 
-    // Smooth power fraction
+    // 7) Smooth power fraction (first stage)
     this.powerFracSmooth += (powerFracInstant - this.powerFracSmooth) * (dt / C.tauPowerSmoothS)
 
-    // Output MW
-    const productionMW = C.installedCapacityMW * this.powerFracSmooth
+    // 7b) Additional mild smoothing (second stage)
+    this.powerFracSmooth2 += (this.powerFracSmooth - this.powerFracSmooth2) * (dt / C.tauPowerSmooth2S)
+
+    // 8) Output MW (use smooth2)
+    this._productionMW = C.installedCapacityMW * this.powerFracSmooth2
     const availableMW = C.installedCapacityMW * C.availability * NET_LOSS_FACTOR * icingFactor
 
-    this.lastProductionMW = productionMW
     this.lastBreakdown = {
-      productionMW,
+      productionMW: this._productionMW,
       availableMW,
       capacityMW: C.installedCapacityMW,
-      powerFrac01: this.powerFracSmooth,
+      powerFrac01: this.powerFracSmooth2,
       shutdownActive: this.shutdownActive,
       windSmoothMps: this.windSmoothMps,
     }
@@ -135,7 +145,7 @@ export class WindFleetModel implements Actor {
 
   getUpdate(): PowerUpdate {
     return {
-      production: this.lastProductionMW,
+      production: this._productionMW,
       consumption: 0,
     }
   }
@@ -145,7 +155,7 @@ export class WindFleetModel implements Actor {
   }
 
   get productionMW(): number {
-    return this.lastProductionMW
+    return this._productionMW
   }
 
   get totalCapacityMW(): number {
@@ -155,9 +165,10 @@ export class WindFleetModel implements Actor {
   reset(): void {
     this.windSmoothMps = 8.0
     this.powerFracSmooth = 0.3
+    this.powerFracSmooth2 = 0.3
     this.shutdownActive = false
     this.shutdownTimerS = 0
-    this.lastProductionMW = 0
+    this._productionMW = 0
     this.lastBreakdown = null
   }
 }

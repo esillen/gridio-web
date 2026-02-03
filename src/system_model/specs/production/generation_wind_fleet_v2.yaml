@@ -1,0 +1,190 @@
+model_part: generation_wind_fleet_v2
+version: 1.0.1
+tick_s: 1
+
+description: >
+  Swedish wind fleet generation (MW) driven by hub-height wind speed.
+  Variable renewable: production follows a fleet-level power curve + smoothing + cold-climate derates.
+  Includes: cut-in/rated/cut-out behavior, gust-triggered shutdown with hysteresis, icing derate,
+  wake/electrical losses, and a 24h forecast computed from weather_forecast_24h wind.
+  Update v1.0.1: adds a small additional smoothing stage (very mild) to reduce spikiness
+  without materially changing the level/shape of the previous model.
+
+units:
+  power: MW
+  wind_speed: m/s
+  time: s
+
+inputs:
+  time_now:
+    unix_s: int
+    local_hour_0_23: int
+    local_minute_0_59: int
+    local_second_0_59: int
+
+  weather_now_sweden:
+    wind_speed_100m_mps: float
+    wind_gust_mps: float
+    temperature_C: float
+    icing_risk_0_1: float
+
+  weather_forecast_24h:
+    step_s: int
+    forecast_wind_speed_100m_mps: [float]   # length = 86400/step_s, index 0 = now
+    forecast_temperature_C: [float]         # optional; for icing forecast if desired
+    forecast_icing_risk_0_1: [float]        # optional
+
+  curtailment:
+    # Grid/market curtailment (per second). 0=no curtailment, 1=full curtailment.
+    curtailment_frac_0_1: float
+
+state:
+  # Smoothed wind speed proxy (spatial smoothing across Sweden + turbine inertia)
+  wind_smooth_mps: float
+
+  # Smoothed power fraction to avoid visual jitter
+  power_frac_smooth_0_1: float
+
+  # Additional *very mild* smoothing stage (requested change)
+  power_frac_smooth2_0_1: float
+
+  # Gust shutdown state
+  shutdown_active: bool
+  shutdown_timer_s: float
+
+constants:
+  # --- Real-world scale (Sweden, end of 2024) ---
+  installed_capacity_MW: 16820.0
+
+  # --- Availability & technical losses (fleet-level) ---
+  availability_0_1: 0.97
+  wake_loss_0_1: 0.08
+  electrical_loss_0_1: 0.02
+  other_loss_0_1: 0.01
+  net_loss_factor_0_1: "= (1 - wake_loss_0_1) * (1 - electrical_loss_0_1) * (1 - other_loss_0_1)"
+
+  # --- Fleet power curve (aggregate approximation) ---
+  v_cut_in_mps: 3.0
+  v_rated_mps: 12.0
+  v_cut_out_mps: 25.0
+  below_rated_exponent: 3.0
+
+  # --- Smoothing (spatial diversity) ---
+  tau_wind_smooth_s: 120.0
+  tau_power_smooth_s: 30.0
+
+  # v1.0.1 small extra smoothing on the *already smoothed* power fraction.
+  # Keep this gentle so it doesn't "deviate too much".
+  # 10–25s is enough to reduce 1 Hz jaggies while preserving ramps.
+  tau_power_smooth2_s: 15.0
+
+  # --- Gust shutdown with hysteresis (to avoid flicker) ---
+  gust_trip_mps: 28.0
+  gust_restart_mps: 22.0
+  shutdown_min_duration_s: 600.0
+
+  # --- Icing / cold climate derate ---
+  icing_derate_max_0_1: 0.35
+  icing_temp_center_C: -1.0
+  icing_temp_width_C: 6.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+  fleet_power_curve_frac: >
+    func(v):
+      if v < v_cut_in_mps: return 0
+      if v < v_rated_mps:
+        x = (v - v_cut_in_mps) / (v_rated_mps - v_cut_in_mps)
+        return pow(x, below_rated_exponent)
+      if v < v_cut_out_mps: return 1
+      return 0
+
+update_per_tick:
+  # 1) Smooth wind speed
+  - state.wind_smooth_mps: >
+      state.wind_smooth_mps
+      + (weather_now_sweden.wind_speed_100m_mps - state.wind_smooth_mps) * (tick_s / tau_wind_smooth_s)
+
+  # 2) Gust shutdown logic (uses raw gust, not smoothed wind)
+  - if state.shutdown_active == false and weather_now_sweden.wind_gust_mps >= gust_trip_mps:
+      - state.shutdown_active: true
+      - state.shutdown_timer_s: "= shutdown_min_duration_s"
+
+  - if state.shutdown_active == true:
+      - state.shutdown_timer_s: "= max(0, state.shutdown_timer_s - tick_s)"
+      - if state.shutdown_timer_s == 0 and weather_now_sweden.wind_gust_mps <= gust_restart_mps:
+          - state.shutdown_active: false
+
+  # 3) Base power fraction from smoothed wind (or 0 if shutdown)
+  - base_power_frac_0_1: >
+      if state.shutdown_active:
+        0.0
+      else:
+        fleet_power_curve_frac(state.wind_smooth_mps)
+
+  # 4) Icing derate factor
+  - temp_weight_0_1: >
+      exp(-pow((weather_now_sweden.temperature_C - icing_temp_center_C) / icing_temp_width_C, 2))
+  - icing_factor_0_1: >
+      clamp01(1.0 - weather_now_sweden.icing_risk_0_1 * icing_derate_max_0_1 * temp_weight_0_1)
+
+  # 5) Curtailment factor
+  - curtail_factor_0_1: "= clamp01(1.0 - curtailment.curtailment_frac_0_1)"
+
+  # 6) Combine factors into an instantaneous power fraction
+  - power_frac_instant_0_1: >
+      clamp01(
+        base_power_frac_0_1
+        * availability_0_1
+        * net_loss_factor_0_1
+        * icing_factor_0_1
+        * curtail_factor_0_1
+      )
+
+  # 7) Smooth power fraction (existing)
+  - state.power_frac_smooth_0_1: >
+      state.power_frac_smooth_0_1
+      + (power_frac_instant_0_1 - state.power_frac_smooth_0_1) * (tick_s / tau_power_smooth_s)
+
+  # 7b) Additional mild smoothing (new, small effect)
+  - state.power_frac_smooth2_0_1: >
+      state.power_frac_smooth2_0_1
+      + (state.power_frac_smooth_0_1 - state.power_frac_smooth2_0_1) * (tick_s / tau_power_smooth2_s)
+
+  # 8) Output MW (use smooth2)
+  - production_MW_now: "= installed_capacity_MW * state.power_frac_smooth2_0_1"
+  - available_MW_now: "= installed_capacity_MW * availability_0_1 * net_loss_factor_0_1 * icing_factor_0_1"
+
+outputs:
+  production_MW: "= production_MW_now"
+  consumption_MW: 0.0
+  available_MW: "= available_MW_now"
+  capacity_MW: "= installed_capacity_MW"
+  power_frac_0_1: "= state.power_frac_smooth2_0_1"
+  shutdown_active: "= state.shutdown_active"
+  wind_smooth_mps: "= state.wind_smooth_mps"
+
+  debug:
+    power_frac_instant_0_1: "= power_frac_instant_0_1"
+    power_frac_smooth_0_1: "= state.power_frac_smooth_0_1"
+    power_frac_smooth2_0_1: "= state.power_frac_smooth2_0_1"
+
+  forecast_24h:
+    step_s: "= weather_forecast_24h.step_s"
+    production_MW: >
+      let step = weather_forecast_24h.step_s;
+      let N = len(weather_forecast_24h.forecast_wind_speed_100m_mps);
+      let out = [];
+      for i in 0..N-1:
+        v = weather_forecast_24h.forecast_wind_speed_100m_mps[i]
+        base = fleet_power_curve_frac(v)
+        icing = if exists(weather_forecast_24h.forecast_icing_risk_0_1):
+                  clamp01(1.0 - weather_forecast_24h.forecast_icing_risk_0_1[i] * icing_derate_max_0_1)
+                else:
+                  icing_factor_0_1
+        curtail = clamp01(1.0 - curtailment.curtailment_frac_0_1)
+        frac = clamp01(base * availability_0_1 * net_loss_factor_0_1 * icing * curtail)
+        out[i] = installed_capacity_MW * frac
+      return out
