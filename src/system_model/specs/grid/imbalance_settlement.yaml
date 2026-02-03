@@ -1,5 +1,5 @@
 model_part: imbalance_settlement
-version: 1.0
+version: 1.1
 tick_s: 1
 
 description: >
@@ -8,8 +8,11 @@ description: >
     - If the system is "up-regulating" (system short), both positive and negative deviations settle at the UP price.
     - If the system is "down-regulating" (system long), both deviations settle at the DOWN price.
     - If no material regulation, settle at Day-Ahead (DA) price for that hour.
-  Computes deviation vs the player's DA schedule and produces cashflow + eSett-like per-volume fees.
-  Horizon: real-time settlement; optional price curves provided by market_prices_known_ahead.
+  Computes deviation vs the player's DA schedule and produces cashflow + optional BRP-like fees.
+  Adds a 4-hour ahead forecast output (16 x 15-min) for:
+    - scheduled energy
+    - expected actual energy (if provided)
+    - expected deviation and expected settlement price (based on known-ahead prices + expected regulating direction).
 
 units:
   power: MW
@@ -22,47 +25,47 @@ inputs:
   time_now:
     unix_s: int
 
-  # Player's committed day-ahead schedule (injection to grid).
-  # +MW = discharge/sell to grid, -MW = charge/buy from grid.
-  # Anchored to schedule_anchor_unix_s, step_s=3600, length 24.
   player_day_ahead_schedule:
     schedule_anchor_unix_s: int
     step_s: 3600
     schedule_MW_24: [float]
 
-  # Actual measured portfolio exchange (BESS net power at PCC).
-  # +MW = injection to grid, -MW = offtake from grid.
   metering:
     actual_net_power_MW: float
 
-  # System state used to determine regulating direction (up/down/none).
-  # imbalance_MW sign convention: positive = system surplus (long), negative = system deficit (short).
+  # Optional: if you have a controller that can provide expected net power for the next 4 hours,
+  # pass it here; otherwise forecast deviation will be "unknown" and reported as null.
+  metering_forecast_4h:
+    step_s: int            # recommended 900
+    expected_net_power_MW: [float]   # length = 4h/step_s, optional (can be null)
+
   system_frequency_and_imbalance:
     frequency_Hz: float
     imbalance_MW: float
 
-  # Prices "known ahead" (your game shortcut).
-  # imbalance prices are per 15-min MTU, anchored to prices_anchor_unix_s.
-  prices_known_ahead:
-    prices_anchor_unix_s: int          # unix time corresponding to index 0 of arrays below
-    da_step_s: 3600
-    da_price_EUR_per_MWh_24: [float]   # length 24
-    imb_step_s: 900
-    imb_price_up_EUR_per_MWh_96: [float]    # length 96
-    imb_price_down_EUR_per_MWh_96: [float]  # length 96
+  # Optional: expected system imbalance for the next 4 hours (from your grid forecast),
+  # used to forecast regulating direction. If not provided, the model assumes "no_regulation" in forecast.
+  system_imbalance_forecast_4h:
+    step_s: int            # recommended 900
+    expected_imbalance_MW: [float]   # length = 4h/step_s, optional (can be null)
 
-  # Optional: toggle fees (BRP-style fees) on/off for gameplay.
+  prices_known_ahead:
+    prices_anchor_unix_s: int
+    da_step_s: 3600
+    da_price_EUR_per_MWh_24: [float]
+    imb_step_s: 900
+    imb_price_up_EUR_per_MWh_96: [float]
+    imb_price_down_EUR_per_MWh_96: [float]
+
   fees:
     enabled: bool
 
 state:
-  # Current ISP accumulator (15-min)
   current_isp_start_unix_s: int
   acc_actual_MWh: float
   acc_scheduled_MWh: float
   acc_system_imbalance_MWh: float
 
-  # Last settled interval outputs (for UI/debug)
   last_settlement:
     isp_start_unix_s: int
     isp_end_unix_s: int
@@ -75,35 +78,30 @@ state:
     fee_weekly_alloc_EUR: float
     net_cashflow_EUR: float
 
-  # Running totals
   totals:
     cumulative_deviation_MWh: float
     cumulative_net_cash_EUR: float
 
 constants:
-  # ISP (Nordics commonly use 15 min)
   isp_step_s: 900
 
-  # Threshold for deciding "no regulation" (deadband around 0 system imbalance).
-  # Game-stable: avoids flipping direction on tiny noise.
   system_regulation_deadband_MW: 150.0
-
-  # If you want frequency to influence direction as well (optional):
   freq_nom_Hz: 50.0
   freq_deadband_Hz: 0.01
 
-  # eSett-like fees (Sweden, Appendix 1 fees 1.9.2025)
-  # Applied here as game costs. In reality these apply to BRPs; use enabled=false if you don’t want them.
-  esett_volume_fee_EUR_per_MWh: 2.000     # applied to absolute metered volume (production+consumption)
-  esett_imbalance_fee_EUR_per_MWh: 1.150  # applied to absolute imbalance volume
-  esett_weekly_fee_EUR: 30.0              # allocated evenly over the week
+  # Fees (eSett-like)
+  esett_volume_fee_EUR_per_MWh: 2.000
+  esett_imbalance_fee_EUR_per_MWh: 1.150
+  esett_weekly_fee_EUR: 30.0
+
+  # Forecast horizon
+  forecast_horizon_s: 14400   # 4 hours
+  forecast_step_s_default: 900
 
 helpers:
   clamp: "clamp(x,a,b)=min(max(x,a),b)"
-  clamp01: "clamp(x,0,1)"
   s_to_h: "s_to_h(s)=s/3600.0"
 
-  # Index helpers (clamp to available horizon)
   idx_hour: >
     func(anchor_unix_s, t_unix_s):
       return clamp(floor((t_unix_s - anchor_unix_s)/3600), 0, 23)
@@ -111,6 +109,12 @@ helpers:
   idx_qh: >
     func(anchor_unix_s, t_unix_s):
       return clamp(floor((t_unix_s - anchor_unix_s)/900), 0, 95)
+
+  direction_from_expected_imbalance: >
+    func(exp_imbalance_MW, deadband_MW):
+      if exp_imbalance_MW <= -deadband_MW: return "up_regulating"
+      if exp_imbalance_MW >=  deadband_MW: return "down_regulating"
+      return "no_regulation"
 
 init:
   current_isp_start_unix_s: "= floor(time_now.unix_s / isp_step_s) * isp_step_s"
@@ -120,33 +124,18 @@ init:
   totals:
     cumulative_deviation_MWh: 0.0
     cumulative_net_cash_EUR: 0.0
-  last_settlement:
-    isp_start_unix_s: 0
-    isp_end_unix_s: 0
-    system_direction: "no_regulation"
-    settlement_price_EUR_per_MWh: 0.0
-    deviation_MWh: 0.0
-    imbalance_cashflow_EUR: 0.0
-    fee_volume_EUR: 0.0
-    fee_imbalance_EUR: 0.0
-    fee_weekly_alloc_EUR: 0.0
-    net_cashflow_EUR: 0.0
 
 update_per_tick:
-  # 1) Determine current ISP boundaries
   - isp_start_now: "= floor(time_now.unix_s / isp_step_s) * isp_step_s"
   - isp_changed: "= (isp_start_now != state.current_isp_start_unix_s)"
 
-  # 2) If ISP changed, settle the previous ISP using accumulated MWh
   - if isp_changed:
       - isp_start: "= state.current_isp_start_unix_s"
       - isp_end: "= isp_start + isp_step_s"
 
-      # Average system imbalance over ISP (MW)
       - avg_sys_imbalance_MW: "= state.acc_system_imbalance_MWh * (3600.0 / isp_step_s)"
       - df_Hz: "= freq_nom_Hz - system_frequency_and_imbalance.frequency_Hz"
 
-      # Determine regulation direction (one-price scheme driver)
       - system_direction: >
           if avg_sys_imbalance_MW <= -system_regulation_deadband_MW or df_Hz > freq_deadband_Hz:
             "up_regulating"
@@ -155,7 +144,6 @@ update_per_tick:
           else:
             "no_regulation"
 
-      # Look up prices for this ISP
       - k_price: "= idx_qh(prices_known_ahead.prices_anchor_unix_s, isp_start)"
       - h_price: "= idx_hour(prices_known_ahead.prices_anchor_unix_s, isp_start)"
 
@@ -171,23 +159,11 @@ update_per_tick:
           else:
             da_ref_price
 
-      # Deviation vs DA schedule
       - deviation_MWh: "= state.acc_actual_MWh - state.acc_scheduled_MWh"
-
-      # One-price cashflow: +deviation => revenue, -deviation => cost (same price)
       - imbalance_cashflow_EUR: "= deviation_MWh * settlement_price"
 
-      # Fees (optional)
-      - fee_volume_EUR: >
-          fees.enabled
-          ? (abs(state.acc_actual_MWh) * esett_volume_fee_EUR_per_MWh)
-          : 0.0
-
-      - fee_imbalance_EUR: >
-          fees.enabled
-          ? (abs(deviation_MWh) * esett_imbalance_fee_EUR_per_MWh)
-          : 0.0
-
+      - fee_volume_EUR: "= fees.enabled ? (abs(state.acc_actual_MWh) * esett_volume_fee_EUR_per_MWh) : 0.0"
+      - fee_imbalance_EUR: "= fees.enabled ? (abs(deviation_MWh) * esett_imbalance_fee_EUR_per_MWh) : 0.0"
       - fee_weekly_alloc_EUR: >
           fees.enabled
           ? (esett_weekly_fee_EUR / (7.0 * 24.0 * (3600.0/isp_step_s)))
@@ -195,7 +171,6 @@ update_per_tick:
 
       - net_cashflow_EUR: "= imbalance_cashflow_EUR - fee_volume_EUR - fee_imbalance_EUR - fee_weekly_alloc_EUR"
 
-      # Store last settlement
       - state.last_settlement.isp_start_unix_s: "= isp_start"
       - state.last_settlement.isp_end_unix_s: "= isp_end"
       - state.last_settlement.system_direction: "= system_direction"
@@ -207,20 +182,16 @@ update_per_tick:
       - state.last_settlement.fee_weekly_alloc_EUR: "= fee_weekly_alloc_EUR"
       - state.last_settlement.net_cashflow_EUR: "= net_cashflow_EUR"
 
-      # Update totals
       - state.totals.cumulative_deviation_MWh: "= state.totals.cumulative_deviation_MWh + deviation_MWh"
       - state.totals.cumulative_net_cash_EUR: "= state.totals.cumulative_net_cash_EUR + net_cashflow_EUR"
 
-      # Reset accumulators and advance to new ISP
       - state.current_isp_start_unix_s: "= isp_start_now"
       - state.acc_actual_MWh: 0.0
       - state.acc_scheduled_MWh: 0.0
       - state.acc_system_imbalance_MWh: 0.0
 
-  # 3) Accumulate within the current ISP (performed every tick)
+  # Accumulate current ISP
   - dt_h: "= s_to_h(tick_s)"
-
-  # Scheduled MW for this second comes from the DA hour covering current time
   - h_sched: "= idx_hour(player_day_ahead_schedule.schedule_anchor_unix_s, time_now.unix_s)"
   - scheduled_MW_now: "= player_day_ahead_schedule.schedule_MW_24[h_sched]"
 
@@ -241,5 +212,102 @@ outputs:
     deviation_MWh_so_far: "= state.acc_actual_MWh - state.acc_scheduled_MWh"
 
   last_settlement: "= state.last_settlement"
-
   totals: "= state.totals"
+
+  forecast_4h:
+    # 16 x 15-min by default, aligned to next ISP boundary
+    step_s: "= forecast_step_s_default"
+    start_unix_s: "= floor(time_now.unix_s / isp_step_s) * isp_step_s"
+    scheduled_MWh: >
+      let step = forecast_step_s_default;
+      let N = forecast_horizon_s / step;
+      let out = [];
+      for i in 0..N-1:
+        t_i = start_unix_s + i*step
+        h = idx_hour(player_day_ahead_schedule.schedule_anchor_unix_s, t_i)
+        sched_MW = player_day_ahead_schedule.schedule_MW_24[h]
+        out[i] = sched_MW * (step/3600.0)
+      return out
+
+    expected_actual_MWh: >
+      if metering_forecast_4h.expected_net_power_MW == null:
+        return null
+      let step = metering_forecast_4h.step_s
+      let N = forecast_horizon_s / step
+      let out = []
+      for i in 0..N-1:
+        out[i] = metering_forecast_4h.expected_net_power_MW[i] * (step/3600.0)
+      return out
+
+    expected_deviation_MWh: >
+      if metering_forecast_4h.expected_net_power_MW == null:
+        return null
+      let step = metering_forecast_4h.step_s
+      let N = forecast_horizon_s / step
+      let out = []
+      for i in 0..N-1:
+        t_i = start_unix_s + i*step
+        h = idx_hour(player_day_ahead_schedule.schedule_anchor_unix_s, t_i)
+        sched_MWh = player_day_ahead_schedule.schedule_MW_24[h] * (step/3600.0)
+        act_MWh = metering_forecast_4h.expected_net_power_MW[i] * (step/3600.0)
+        out[i] = act_MWh - sched_MWh
+      return out
+
+    expected_system_direction: >
+      if system_imbalance_forecast_4h.expected_imbalance_MW == null:
+        # assume no regulation if unknown
+        let step = forecast_step_s_default
+        let N = forecast_horizon_s / step
+        let out = []
+        for i in 0..N-1:
+          out[i] = "no_regulation"
+        return out
+      let step = system_imbalance_forecast_4h.step_s
+      let N = forecast_horizon_s / step
+      let out = []
+      for i in 0..N-1:
+        out[i] = direction_from_expected_imbalance(system_imbalance_forecast_4h.expected_imbalance_MW[i], system_regulation_deadband_MW)
+      return out
+
+    expected_settlement_price_EUR_per_MWh: >
+      # price forecast doesn't require expected actual; it's based on known-ahead price arrays + expected direction.
+      let step = forecast_step_s_default
+      let N = forecast_horizon_s / step
+      let out = []
+      for i in 0..N-1:
+        t_i = start_unix_s + i*step
+        k = idx_qh(prices_known_ahead.prices_anchor_unix_s, t_i)
+        h = idx_hour(prices_known_ahead.prices_anchor_unix_s, t_i)
+        da_ref = prices_known_ahead.da_price_EUR_per_MWh_24[h]
+        up_p = prices_known_ahead.imb_price_up_EUR_per_MWh_96[k]
+        down_p = prices_known_ahead.imb_price_down_EUR_per_MWh_96[k]
+        dir =
+          (system_imbalance_forecast_4h.expected_imbalance_MW != null)
+          ? direction_from_expected_imbalance(system_imbalance_forecast_4h.expected_imbalance_MW[i], system_regulation_deadband_MW)
+          : "no_regulation"
+        out[i] = (dir=="up_regulating") ? up_p : (dir=="down_regulating") ? down_p : da_ref
+      return out
+
+    expected_cashflow_EUR: >
+      if metering_forecast_4h.expected_net_power_MW == null:
+        return null
+      # deviation_MWh * expected_settlement_price per step
+      let step = metering_forecast_4h.step_s
+      let N = forecast_horizon_s / step
+      let out = []
+      for i in 0..N-1:
+        t_i = start_unix_s + i*step
+        k = idx_qh(prices_known_ahead.prices_anchor_unix_s, t_i)
+        h = idx_hour(prices_known_ahead.prices_anchor_unix_s, t_i)
+        da_ref = prices_known_ahead.da_price_EUR_per_MWh_24[h]
+        up_p = prices_known_ahead.imb_price_up_EUR_per_MWh_96[k]
+        down_p = prices_known_ahead.imb_price_down_EUR_per_MWh_96[k]
+        dir =
+          (system_imbalance_forecast_4h.expected_imbalance_MW != null)
+          ? direction_from_expected_imbalance(system_imbalance_forecast_4h.expected_imbalance_MW[i], system_regulation_deadband_MW)
+          : "no_regulation"
+        price = (dir=="up_regulating") ? up_p : (dir=="down_regulating") ? down_p : da_ref
+        sched_h = idx_hour(player_day_ahead_schedule.schedule_anchor_unix_s, t_i)
+        dev_MWh = (metering_forecast_4h.expected_net_power_MW[i] - player_day_ahead_schedule.schedule_MW_24[sched_h]) * (step/3600.0)
+        out[i] = dev_MWh * price
+      return out

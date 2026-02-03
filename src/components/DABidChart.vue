@@ -138,28 +138,30 @@ watch(() => props.version, updateChart)
 </script>
 
 <template>
-  <div class="chart-wrapper">
-    <div class="chart-title">Day-Ahead Bids & Delivery</div>
-    <div ref="chartEl" class="chart-container"></div>
-  </div>
+  <div ref="chartEl" class="chart"></div>
 </template>
 
 <style scoped>
-.chart-wrapper {
-  background: white;
-  border-radius: 12px;
-  padding: 0.75rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.chart-title {
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--color-gray-700);
-  margin-bottom: 0.5rem;
-}
-
-.chart-container {
+.chart {
   width: 100%;
+  height: 100%;
+}
+
+.chart :deep(.u-legend) {
+  text-align: left;
+  padding: 8px;
+  font-size: 12px;
+}
+
+.chart :deep(.u-legend .u-series) {
+  padding: 2px 8px;
+}
+
+.chart :deep(.u-legend .u-label) {
+  color: #374151;
+}
+
+.chart :deep(.u-legend .u-value) {
+  color: #6b7280;
 }
 </style>

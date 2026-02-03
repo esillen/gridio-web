@@ -10,18 +10,20 @@ import FrequencyChart from '../components/FrequencyChart.vue'
 import BalancingChart from '../components/BalancingChart.vue'
 import DABidChart from '../components/DABidChart.vue'
 import FCRBidChart from '../components/FCRBidChart.vue'
+import ImbalanceSettlementChart from '../components/ImbalanceSettlementChart.vue'
 import BESSPanel from '../components/BESSPanel.vue'
 
 const router = useRouter()
 
 const speeds: SimulationSpeed[] = [1, 10, 50, 1000, 2000, 3000]
 
-type TopChart = 'frequency' | 'da' | 'fcr'
-const topChartOptions: TopChart[] = ['frequency', 'da', 'fcr']
+type TopChart = 'frequency' | 'da' | 'fcr' | 'imbalance'
+const topChartOptions: TopChart[] = ['frequency', 'da', 'fcr', 'imbalance']
 const topChartLabels: Record<TopChart, string> = {
   frequency: 'System Frequency',
   da: 'DA Bids',
   fcr: 'FCR Bids',
+  imbalance: 'Imbalance Settlement',
 }
 
 type BottomChart = 'grid' | 'production' | 'consumption' | 'weather' | 'balancing'
@@ -153,6 +155,13 @@ function formatTime(seconds: number): string {
           <FCRBidChart 
             v-else-if="topChartView === 'fcr'"
             :version="gameState.bessVersion"
+          />
+          <ImbalanceSettlementChart
+            v-else-if="topChartView === 'imbalance'"
+            :history="gameState.imbalanceSettlementHistory"
+            :forecast="gameState.imbalanceSettlement?.forecast4h || null"
+            :currentTime="gameState.currentTime"
+            :version="gameState.imbalanceSettlementVersion"
           />
         </div>
 

@@ -27,6 +27,12 @@ export interface LastSettlement {
   netCashflowEur: number
 }
 
+export interface SettlementForecastOutput {
+  startUnixS: number
+  stepS: number
+  expectedSettlementPriceEurPerMWh: number[]
+}
+
 export interface ImbalanceSettlementOutput {
   currentIspStartUnixS: number
   currentIspEndUnixS: number
@@ -37,6 +43,12 @@ export interface ImbalanceSettlementOutput {
   lastSettlement: LastSettlement
   cumulativeDeviationMWh: number
   cumulativeNetCashEur: number
+  forecast4h: SettlementForecastOutput
+}
+
+export interface SettlementSnapshot {
+  time: number
+  settlementPriceEurPerMWh: number
 }
 
 export class ImbalanceSettlementModel {
@@ -47,6 +59,9 @@ export class ImbalanceSettlementModel {
   private readonly ESETT_VOLUME_FEE_EUR_PER_MWH = 2.0
   private readonly ESETT_IMBALANCE_FEE_EUR_PER_MWH = 1.15
   private readonly ESETT_WEEKLY_FEE_EUR = 30.0
+  private readonly FORECAST_HORIZON_S = 14400 // 4 hours
+  private readonly FORECAST_STEP_S = 900 // 15 minutes
+  private readonly HISTORY_SAMPLE_INTERVAL_S = 10
 
   private currentIspStartUnixS = 0
   private accActualMWh = 0
@@ -68,6 +83,11 @@ export class ImbalanceSettlementModel {
 
   private cumulativeDeviationMWh = 0
   private cumulativeNetCashEur = 0
+  private _history: SettlementSnapshot[] = []
+
+  get history(): SettlementSnapshot[] {
+    return this._history
+  }
 
   reset(startUnixS: number): void {
     this.currentIspStartUnixS = Math.floor(startUnixS / this.ISP_STEP_S) * this.ISP_STEP_S
@@ -76,6 +96,7 @@ export class ImbalanceSettlementModel {
     this.accSystemImbalanceMWh = 0
     this.cumulativeDeviationMWh = 0
     this.cumulativeNetCashEur = 0
+    this._history = []
     this.lastSettlement = {
       ispStartUnixS: 0,
       ispEndUnixS: 0,
@@ -179,6 +200,36 @@ export class ImbalanceSettlementModel {
     this.accActualMWh += input.actualNetPowerMW * dtH
     this.accSystemImbalanceMWh += input.systemImbalanceMW * dtH
 
+    // Update current time and record history
+    const relativeTimeS = input.timeNowUnixS - input.scheduleAnchorUnixS
+    if (relativeTimeS >= 0 && relativeTimeS % this.HISTORY_SAMPLE_INTERVAL_S === 0) {
+      // Calculate current expected settlement price based on system state
+      const kPrice = this.idxQh(input.pricesAnchorUnixS, input.timeNowUnixS)
+      const hPrice = this.idxHour(input.pricesAnchorUnixS, input.timeNowUnixS)
+      
+      const daRefPrice = input.daPriceEurPerMWh24[hPrice] ?? 0
+      const upPrice = input.imbPriceUpEurPerMWh96[kPrice] ?? 0
+      const downPrice = input.imbPriceDownEurPerMWh96[kPrice] ?? 0
+      
+      // Determine current system direction
+      const dfHz = this.FREQ_NOM_HZ - input.systemFrequencyHz
+      let currentPrice = daRefPrice
+      
+      if (input.systemImbalanceMW <= -this.SYSTEM_REGULATION_DEADBAND_MW || dfHz > this.FREQ_DEADBAND_HZ) {
+        currentPrice = upPrice
+      } else if (input.systemImbalanceMW >= this.SYSTEM_REGULATION_DEADBAND_MW || dfHz < -this.FREQ_DEADBAND_HZ) {
+        currentPrice = downPrice
+      }
+      
+      this._history.push({
+        time: relativeTimeS,
+        settlementPriceEurPerMWh: currentPrice,
+      })
+    }
+
+    // Generate forecast
+    const forecast4h = this.generateForecast(input)
+
     return {
       currentIspStartUnixS: this.currentIspStartUnixS,
       currentIspEndUnixS: this.currentIspStartUnixS + this.ISP_STEP_S,
@@ -189,6 +240,29 @@ export class ImbalanceSettlementModel {
       lastSettlement: { ...this.lastSettlement },
       cumulativeDeviationMWh: this.cumulativeDeviationMWh,
       cumulativeNetCashEur: this.cumulativeNetCashEur,
+      forecast4h,
+    }
+  }
+
+  private generateForecast(input: ImbalanceSettlementInput): SettlementForecastOutput {
+    const startUnixS = Math.floor(input.timeNowUnixS / this.ISP_STEP_S) * this.ISP_STEP_S
+    const N = this.FORECAST_HORIZON_S / this.FORECAST_STEP_S
+    const expectedPrices: number[] = []
+
+    for (let i = 0; i < N; i++) {
+      const tI = startUnixS + i * this.FORECAST_STEP_S
+      const h = this.idxHour(input.pricesAnchorUnixS, tI)
+
+      const daRef = input.daPriceEurPerMWh24[h] ?? 0
+
+      // For forecast, assume no regulation (could be enhanced with system forecast)
+      expectedPrices.push(daRef)
+    }
+
+    return {
+      startUnixS,
+      stepS: this.FORECAST_STEP_S,
+      expectedSettlementPriceEurPerMWh: expectedPrices,
     }
   }
 

@@ -2,7 +2,7 @@ import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot, type BalancingSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
 import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
-import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput } from '../system_model'
+import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput, type SettlementSnapshot } from '../system_model'
 import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
 export type GamePhase = 'start' | 'initializing' | 'day' | 'end'
@@ -134,6 +134,7 @@ class GameState {
   historyVersion = 0
   weatherHistoryVersion = 0
   bessVersion = 0
+  imbalanceSettlementVersion = 0
 
   private animationFrameId: number | null = null
   private lastFrameTime: number | null = null
@@ -393,6 +394,7 @@ class GameState {
     this.currentFrequencyBand = this._world.currentFrequencyBand
     this.historyVersion++
     this.weatherHistoryVersion++
+    this.imbalanceSettlementVersion++
   }
 
   get gridHistory(): GridSnapshot[] {
@@ -417,6 +419,10 @@ class GameState {
 
   get balancingHistory(): BalancingSnapshot[] {
     return this._world?.balancingHistory ?? []
+  }
+
+  get imbalanceSettlementHistory(): SettlementSnapshot[] {
+    return this._imbalanceSettlement.history
   }
 
   get forecastArrays(): ForecastArrays | null {
