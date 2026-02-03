@@ -34,31 +34,25 @@ function buildData(): uPlot.AlignedData {
   const settlement: number[] = []
   const forecast: number[] = []
 
-  // Historical data from history array
+  // Historical data from history array (each point is at HH:00)
   for (const s of props.history) {
     times.push(s.time / 3600)
     settlement.push(s.settlementPriceEurPerMWh)
     forecast.push(NaN)
   }
 
-  // Add forecast data starting from current time
+  // Add forecast data at hour boundaries
+  // Forecast shows expected settlement prices - settlement for hour H happens at H+1
   if (props.forecast && props.forecast.expectedSettlementPriceEurPerMWh.length > 0) {
-    const lastHistoricalPrice = props.history.length > 0 
-      ? (props.history[props.history.length - 1]?.settlementPriceEurPerMWh ?? 0)
-      : props.forecast.expectedSettlementPriceEurPerMWh[0] ?? 0
-
-    // Add connecting point at current time
-    times.push(props.currentTime / 3600)
-    settlement.push(NaN)
-    forecast.push(lastHistoricalPrice)
-
-    // Add forecast points
+    const currentHour = Math.floor(props.currentTime / 3600)
+    
+    // Add forecast points at settlement times (hour + 1)
     for (let i = 0; i < props.forecast.expectedSettlementPriceEurPerMWh.length; i++) {
-      const forecastTimeS = props.currentTime + i * props.forecast.stepS
-      const forecastTimeHours = forecastTimeS / 3600
+      const forecastHour = currentHour + i
+      const settlementHour = forecastHour + 1 // Settlement happens at end of hour
       
-      if (forecastTimeHours <= 24) {
-        times.push(forecastTimeHours)
+      if (settlementHour <= 24) {
+        times.push(settlementHour)
         settlement.push(NaN)
         forecast.push(props.forecast.expectedSettlementPriceEurPerMWh[i] ?? 0)
       }
@@ -135,21 +129,31 @@ function getOpts(width: number, height: number): uPlot.Options {
         label: 'Settlement Price',
         stroke: COLORS.settlement,
         width: 2,
-        value: (_, v) => v != null ? `${v.toFixed(1)} €/MWh` : '--',
+        points: { show: true, size: 6, fill: COLORS.settlement },
+        value: (_, v) => v != null && !isNaN(v) ? `${v.toFixed(1)} €/MWh` : '--',
       },
       {
         label: 'Forecast',
         stroke: COLORS.forecast,
         width: 2,
         dash: [5, 5],
-        value: (_, v) => v != null ? `${v.toFixed(1)} €/MWh` : '--',
+        points: { show: true, size: 6, fill: COLORS.forecast },
+        value: (_, v) => v != null && !isNaN(v) ? `${v.toFixed(1)} €/MWh` : '--',
       },
     ],
     legend: {
       show: true,
+      live: true,
     },
     cursor: {
       show: true,
+      points: {
+        show: true,
+        size: 8,
+        fill: '#fff',
+        stroke: COLORS.settlement,
+        width: 2,
+      },
     },
   }
 }

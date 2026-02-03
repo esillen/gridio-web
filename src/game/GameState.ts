@@ -98,8 +98,8 @@ class GameState {
   }
 
   imbalancePrices = {
-    upEurPerMWh96: new Array(96).fill(60),
-    downEurPerMWh96: new Array(96).fill(30),
+    upEurPerMWh24: new Array(24).fill(60),
+    downEurPerMWh24: new Array(24).fill(30),
   }
 
   imbalanceSettlement: ImbalanceSettlementOutput | null = null
@@ -114,6 +114,9 @@ class GameState {
 
   bessStates: BESSUIState[] = []
   totalBessPowerMW = 0
+  private _lastDADeliveredMW = 0
+  private _lastFCRRequiredMW = 0
+  private _lastFCRDeliveredMW = 0
 
   // Reactive UI state - synced once per frame
   currentTime = 0
@@ -295,6 +298,9 @@ class GameState {
     }
 
     this.totalBessPowerMW = totalActualPower
+    this._lastDADeliveredMW = totalDADelivered
+    this._lastFCRRequiredMW = fcrRequiredMW
+    this._lastFCRDeliveredMW = totalFCRDelivered
 
     // Track performance
     this._bessPerformance.tickDA(currentHour, totalDADelivered, 1)
@@ -308,18 +314,22 @@ class GameState {
 
     const currentUnixS = this._dayStartUnixS + this._world.currentTime
     const daBidsArray = this.playerBids.daBids.map(b => b.volumeMW)
+    const fcrBidsArray = this.playerBids.fcrBids.map(b => b.volumeMW)
     const systemImbalanceMW = this._world.frequencyBreakdown?.imbalanceRawMW ?? 0
 
     this.imbalanceSettlement = this._imbalanceSettlement.tick({
       timeNowUnixS: currentUnixS,
       playerDAScheduleMW24: daBidsArray,
+      playerFCRScheduleMW24: fcrBidsArray,
       scheduleAnchorUnixS: this._dayStartUnixS,
-      actualNetPowerMW: this.totalBessPowerMW,
+      actualDADeliveredMW: this._lastDADeliveredMW,
+      fcrRequiredMW: this._lastFCRRequiredMW,
+      fcrDeliveredMW: this._lastFCRDeliveredMW,
       systemFrequencyHz: this._world.currentFrequencyHz,
       systemImbalanceMW,
       daPriceEurPerMWh24: this.marketPrices.daEurPerMWh,
-      imbPriceUpEurPerMWh96: this.imbalancePrices.upEurPerMWh96,
-      imbPriceDownEurPerMWh96: this.imbalancePrices.downEurPerMWh96,
+      imbPriceUpEurPerMWh24: this.imbalancePrices.upEurPerMWh24,
+      imbPriceDownEurPerMWh24: this.imbalancePrices.downEurPerMWh24,
       pricesAnchorUnixS: this._dayStartUnixS,
       feesEnabled: true,
     }, 1)
@@ -518,18 +528,17 @@ class GameState {
       this.marketPrices.fcrEurPerMWPerH[h] = Math.round(baseFcrPrice * fcrSeasonMult + fcrNoise)
     }
 
-    // Generate 96 15-minute imbalance prices (up-regulation and down-regulation)
-    for (let q = 0; q < 96; q++) {
-      const h = Math.floor(q / 4)
+    // Generate 24 hourly imbalance prices (up-regulation and down-regulation)
+    for (let h = 0; h < 24; h++) {
       const daPrice = this.marketPrices.daEurPerMWh[h] ?? basePrice
       
-      const x3 = ((seed ^ (q * 2654435761)) >>> 0)
+      const x3 = ((seed ^ (h * 2654435761)) >>> 0)
       const upNoise = ((1664525 * x3 + 1013904223) >>> 0) / 4294967296 * 30 - 15
-      this.imbalancePrices.upEurPerMWh96[q] = Math.round(daPrice * 1.5 + upNoise) // ~50% premium for up-regulation
+      this.imbalancePrices.upEurPerMWh24[h] = Math.round(daPrice * 1.5 + upNoise) // ~50% premium for up-regulation
       
-      const x4 = ((seed ^ ((q + 200) * 2654435761)) >>> 0)
+      const x4 = ((seed ^ ((h + 200) * 2654435761)) >>> 0)
       const downNoise = ((1664525 * x4 + 1013904223) >>> 0) / 4294967296 * 20 - 10
-      this.imbalancePrices.downEurPerMWh96[q] = Math.round(daPrice * 0.8 + downNoise) // ~20% discount for down-regulation
+      this.imbalancePrices.downEurPerMWh24[h] = Math.round(daPrice * 0.8 + downNoise) // ~20% discount for down-regulation
     }
   }
 
