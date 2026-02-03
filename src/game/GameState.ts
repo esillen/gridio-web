@@ -304,7 +304,8 @@ class GameState {
 
     // Track performance
     this._bessPerformance.tickDA(currentHour, totalDADelivered, 1)
-    if (fcrUnits.length > 0) {
+    // Always track FCR when there's a bid - the commitment exists regardless of unit allocation
+    if (fcrBid > 0) {
       this._bessPerformance.tickFCR(currentHour, fcrRequiredMW, totalFCRDelivered, 1)
     }
   }
