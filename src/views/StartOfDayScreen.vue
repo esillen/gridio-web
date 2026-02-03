@@ -126,6 +126,33 @@ function getFCRBarStyle(hour: number) {
   return { bottom: '0', height: `${pct}%` }
 }
 
+function getFCRShadowStyle(hour: number) {
+  const bid = gameState.playerBids.fcrBids.find(b => b.hour === hour)
+  const volume = bid?.volumeMW ?? 0
+  if (volume <= 0) return { display: 'none' }
+  const pct = volume / maxPower.value * 50
+  return { bottom: '50%', height: `${pct}%` }
+}
+
+function getDAShadowStyle(hour: number) {
+  const bid = gameState.playerBids.daBids.find(b => b.hour === hour)
+  const volume = bid?.volumeMW ?? 0
+  if (volume === 0) return { style: { display: 'none' }, type: 'none' }
+  const pct = Math.abs(volume) / maxPower.value * 100
+  return { 
+    style: { bottom: '0', height: `${pct}%` },
+    type: volume > 0 ? 'sell' : 'buy'
+  }
+}
+
+function hasBothBids(hour: number): boolean {
+  const daBid = gameState.playerBids.daBids.find(b => b.hour === hour)
+  const fcrBid = gameState.playerBids.fcrBids.find(b => b.hour === hour)
+  const daVolume = daBid?.volumeMW ?? 0
+  const fcrVolume = fcrBid?.volumeMW ?? 0
+  return daVolume !== 0 && fcrVolume > 0
+}
+
 function formatPrice(price: number): string {
   return price.toFixed(0)
 }
@@ -270,9 +297,19 @@ function goRight() {
         >
           <div class="price-label" :style="getDAPriceStyle(h - 1)">{{ formatPrice(gameState.marketPrices.daEurPerMWh[h - 1] ?? 0) }}</div>
           <div class="bar-area">
+            <!-- FCR bids from other market -->
+            <div 
+              class="bar fcr-shadow" 
+              :class="{ 'split-left': hasBothBids(h - 1) }"
+              :style="getFCRShadowStyle(h - 1)"
+            ></div>
             <div 
               class="bar" 
-              :class="{ sell: (gameState.playerBids.daBids.find(b => b.hour === h - 1)?.volumeMW ?? 0) > 0, buy: (gameState.playerBids.daBids.find(b => b.hour === h - 1)?.volumeMW ?? 0) < 0 }"
+              :class="{ 
+                sell: (gameState.playerBids.daBids.find(b => b.hour === h - 1)?.volumeMW ?? 0) > 0, 
+                buy: (gameState.playerBids.daBids.find(b => b.hour === h - 1)?.volumeMW ?? 0) < 0,
+                'split-right': hasBothBids(h - 1)
+              }"
               :style="getDABarStyle(h - 1)"
             ></div>
           </div>
@@ -301,8 +338,19 @@ function goRight() {
         >
           <div class="price-label" :style="getFCRPriceStyle(h - 1)">{{ formatPrice(gameState.marketPrices.fcrEurPerMWPerH[h - 1] ?? 0) }}</div>
           <div class="bar-area">
+            <!-- DA bids from other market -->
+            <div 
+              class="bar" 
+              :class="{ 
+                'da-shadow-sell': getDAShadowStyle(h - 1).type === 'sell', 
+                'da-shadow-buy': getDAShadowStyle(h - 1).type === 'buy',
+                'split-left': hasBothBids(h - 1)
+              }"
+              :style="getDAShadowStyle(h - 1).style"
+            ></div>
             <div 
               class="bar fcr" 
+              :class="{ 'split-right': hasBothBids(h - 1) }"
               :style="getFCRBarStyle(h - 1)"
             ></div>
           </div>
@@ -572,6 +620,35 @@ h1 {
 
 .bar.fcr {
   background: #f59e0b;
+}
+
+.bar.shadow {
+  opacity: 0.2;
+  z-index: 0;
+}
+
+.bar.fcr-shadow {
+  background: #f59e0b;
+}
+
+.bar.da-shadow-sell {
+  background: #10b981;
+}
+
+.bar.da-shadow-buy {
+  background: #3b82f6;
+}
+
+.bar.split-left {
+  left: 2px;
+  right: 50%;
+  margin-right: 1px;
+}
+
+.bar.split-right {
+  left: 50%;
+  right: 2px;
+  margin-left: 1px;
 }
 
 .hour-label {

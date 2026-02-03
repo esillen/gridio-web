@@ -170,8 +170,8 @@ export function generateIntroData(): HourlyData[] {
     
     const totalConsumption = heating + nonHeating + services + transport + industry + losses
     
-    // Nuclear (baseload, nearly constant)
-    const nuclear = 6800 * (1 + gaussian(0, 0.005))
+    // Nuclear (baseload, nearly constant) - ~half capacity for intro example
+    const nuclear = 3400 * (1 + gaussian(0, 0.005))
     
     // Hydro reservoir (dispatchable, follows demand)
     const hydroNeed = Math.max(0, totalConsumption - nuclear - 2000) // rough target

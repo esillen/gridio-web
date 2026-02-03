@@ -3,14 +3,15 @@ import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import type { HourlyData } from '../introSimulation'
 
 export interface ChartSeries {
-  key: keyof HourlyData
+  key: string
   label: string
   color: string
   type: 'area' | 'line'
+  dash?: number[]
 }
 
 const props = defineProps<{
-  data: HourlyData[]
+  data: Record<string, number>[]
   series: ChartSeries[]
   maxY?: number
 }>()
@@ -29,7 +30,7 @@ const computedMaxY = computed(() => {
     let areaTotal = 0
     for (const s of props.series) {
       if (s.type === 'area') {
-        areaTotal += (d[s.key] as number) || 0
+        areaTotal += d[s.key] ?? 0
       }
     }
     max = Math.max(max, areaTotal)
@@ -37,7 +38,7 @@ const computedMaxY = computed(() => {
     // Also check line values
     for (const s of props.series) {
       if (s.type === 'line') {
-        max = Math.max(max, (d[s.key] as number) || 0)
+        max = Math.max(max, d[s.key] ?? 0)
       }
     }
   }
@@ -126,7 +127,7 @@ function draw() {
     let cumulative = 0
     const values: number[] = []
     for (const series of areaSeries) {
-      cumulative += (d[series.key] as number) || 0
+      cumulative += d[series.key] ?? 0
       values.push(cumulative)
     }
     cumulativeValues.push(values)
@@ -178,6 +179,7 @@ function draw() {
     ctx.lineWidth = 3
     ctx.lineJoin = 'round'
     ctx.lineCap = 'round'
+    ctx.setLineDash(series.dash ?? [])
     ctx.beginPath()
     
     let started = false
@@ -185,7 +187,7 @@ function draw() {
       const d = props.data[hour]
       if (!d) continue
       
-      const value = (d[series.key] as number) || 0
+      const value = d[series.key] ?? 0
       const x = getX(hour)
       const y = baseY - (value / maxY) * chartHeight
       
@@ -197,6 +199,7 @@ function draw() {
       }
     }
     ctx.stroke()
+    ctx.setLineDash([])
   }
 }
 

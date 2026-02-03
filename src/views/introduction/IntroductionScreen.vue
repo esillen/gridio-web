@@ -5,6 +5,7 @@ import { generateIntroData, type HourlyData } from './introSimulation'
 import ConsumptionSlide from './slides/ConsumptionSlide.vue'
 import ProductionSlide from './slides/ProductionSlide.vue'
 import BalanceSlide from './slides/BalanceSlide.vue'
+import CurtailmentSlide from './slides/CurtailmentSlide.vue'
 import BalancingServicesSlide from './slides/BalancingServicesSlide.vue'
 import PlayerRoleSlide from './slides/PlayerRoleSlide.vue'
 
@@ -18,7 +19,7 @@ onMounted(() => {
 })
 
 // Slide management
-type SlideType = 'consumption' | 'production' | 'balance' | 'balancing' | 'player'
+type SlideType = 'consumption' | 'production' | 'balance' | 'curtailment' | 'balancing' | 'player'
 
 interface SlideInfo {
   type: SlideType
@@ -29,6 +30,7 @@ const slides: SlideInfo[] = [
   { type: 'consumption', maxSteps: 7 }, // 0 (empty) + 6 demand categories
   { type: 'production', maxSteps: 7 }, // 0 (consumption only) + 6 production categories
   { type: 'balance', maxSteps: 1 },
+  { type: 'curtailment', maxSteps: 2 }, // 0: animate curtailment, 1: explain balancing services
   { type: 'balancing', maxSteps: 1 },
   { type: 'player', maxSteps: 1 },
 ]
@@ -66,7 +68,7 @@ function advance() {
     currentSlideIndex.value++
     currentStep.value = 0
   } else {
-    router.push('/game')
+    router.push('/after-introduction')
   }
 }
 
@@ -120,6 +122,11 @@ onUnmounted(() => {
       <BalanceSlide 
         v-else-if="currentSlide.type === 'balance'"
         :data="introData"
+      />
+      <CurtailmentSlide 
+        v-else-if="currentSlide.type === 'curtailment'"
+        :data="introData"
+        :step="currentStep"
       />
       <BalancingServicesSlide 
         v-else-if="currentSlide.type === 'balancing'"

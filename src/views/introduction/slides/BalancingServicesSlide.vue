@@ -3,28 +3,32 @@
 
 <template>
   <div class="slide">
-    <div class="icon">⚖️</div>
-    <h2 class="slide-title">Balancing Services</h2>
+    <div class="icon">💰</div>
+    <h2 class="slide-title">Getting Paid to Balance</h2>
     
     <div class="content">
-      <div class="card">
-        <h3>FCR — Frequency Containment Reserve</h3>
-        <p>Automatic response within seconds. Stabilizes frequency immediately when imbalance occurs.</p>
-      </div>
+      <p class="intro-text">
+        Grid operators pay market participants to provide balancing capacity. 
+        The faster you can respond, the more valuable your service.
+      </p>
       
-      <div class="card">
-        <h3>aFRR — Automatic Frequency Restoration</h3>
-        <p>Activates within 30 seconds to minutes. Restores frequency back to 50 Hz and relieves FCR.</p>
-      </div>
-      
-      <div class="card">
-        <h3>mFRR — Manual Frequency Restoration</h3>
-        <p>Activated within 15 minutes for larger, persistent imbalances. Relieves aFRR for sustained events.</p>
+      <div class="markets">
+        <div class="market-card fcr">
+          <div class="market-icon">⚡</div>
+          <h3>FCR Market</h3>
+          <p>Get paid for <strong>capacity</strong> — your ability to respond within seconds when frequency deviates.</p>
+        </div>
+        
+        <div class="market-card da">
+          <div class="market-icon">📊</div>
+          <h3>Day-Ahead Market</h3>
+          <p>Get paid for <strong>energy</strong> — commit to deliver or consume a specific amount each hour.</p>
+        </div>
       </div>
     </div>
     
     <p class="explanation">
-      These reserves work together automatically to keep the grid stable, but they have limited capacity.
+      Actors who can quickly adjust their power output or consumption are essential for grid stability.
     </p>
     
     <div class="hint">
@@ -51,44 +55,78 @@
   font-size: 1.5rem;
   font-weight: 600;
   color: var(--gridio-sky-vivid);
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   text-align: center;
 }
 
 .content {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.5rem;
   width: 100%;
   max-width: 500px;
 }
 
-.card {
+.intro-text {
+  text-align: center;
+  font-size: 1.05rem;
+  color: var(--color-gray-700);
+  line-height: 1.6;
+}
+
+.markets {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.market-card {
   background: white;
   border-radius: 12px;
-  padding: 1rem 1.25rem;
+  padding: 1.25rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  border-left: 4px solid;
 }
 
-.card h3 {
-  font-size: 0.925rem;
+.market-card.fcr {
+  border-color: #F59E0B;
+}
+
+.market-card.da {
+  border-color: #3b82f6;
+}
+
+.market-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.market-card h3 {
+  font-size: 1rem;
   font-weight: 600;
   color: var(--color-gray-800);
-  margin-bottom: 0.375rem;
+  margin-bottom: 0.25rem;
 }
 
-.card p {
-  font-size: 0.875rem;
+.market-card p {
+  font-size: 0.9rem;
   color: var(--color-gray-600);
   line-height: 1.5;
 }
 
+.market-card p strong {
+  color: var(--gridio-sky-vivid);
+}
+
 .explanation {
   text-align: center;
-  color: var(--color-gray-600);
-  font-size: 0.925rem;
+  color: var(--color-gray-500);
+  font-size: 0.9rem;
   line-height: 1.6;
-  margin-top: 1.5rem;
+  margin-top: 1rem;
   padding: 0 1rem;
   max-width: 450px;
 }

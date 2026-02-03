@@ -1,5 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import LandingPage from '../views/LandingPage.vue'
 import IntroductionScreen from '../views/introduction/IntroductionScreen.vue'
+import AfterIntroductionScreen from '../views/AfterIntroductionScreen.vue'
+import TutorialScreen from '../views/TutorialScreen.vue'
 import StartOfDayScreen from '../views/StartOfDayScreen.vue'
 import InitializingScreen from '../views/InitializingScreen.vue'
 import DayScreen from '../views/DayScreen.vue'
@@ -11,11 +14,19 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      redirect: '/game'
+      component: LandingPage
     },
     {
       path: '/introduction',
       component: IntroductionScreen
+    },
+    {
+      path: '/after-introduction',
+      component: AfterIntroductionScreen
+    },
+    {
+      path: '/tutorial',
+      component: TutorialScreen
     },
     {
       path: '/game',
