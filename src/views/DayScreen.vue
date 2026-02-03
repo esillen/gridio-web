@@ -15,7 +15,7 @@ import BESSPanel from '../components/BESSPanel.vue'
 
 const router = useRouter()
 
-const speeds: SimulationSpeed[] = [1, 10, 50, 1000, 2000, 3000]
+const speeds: SimulationSpeed[] = [1, 10, 50, 1000, 2000, 3000, 10000]
 
 type TopChart = 'frequency' | 'da' | 'fcr' | 'imbalance'
 const topChartOptions: TopChart[] = ['frequency', 'da', 'fcr', 'imbalance']

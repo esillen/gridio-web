@@ -317,6 +317,7 @@ onUnmounted(() => {
           <button>10x</button>
           <button>50x</button>
           <button>1000x</button>
+          <button>10000x</button>
         </div>
         <button class="mock-pause-btn">Pause (Space)</button>
       </div>

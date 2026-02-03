@@ -6,7 +6,7 @@ import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, Imbalanc
 import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
 export type GamePhase = 'start' | 'initializing' | 'day' | 'end'
-export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000
+export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000 | 10000
 export type { BESSMode, BESSMarket }
 
 export const DAY_DURATION_SECONDS = 86400 // 24 hours
