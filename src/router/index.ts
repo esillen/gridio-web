@@ -45,7 +45,7 @@ const router = createRouter({
       path: '/day',
       component: DayScreen,
       beforeEnter: () => {
-        if (gameState.phase !== 'day') {
+        if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
           return '/game'
         }
       }

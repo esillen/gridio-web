@@ -71,16 +71,32 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+const isDayComplete = computed(() => gameState.phase === 'day_complete')
+
+function proceedToEnd() {
+  gameState.proceedToEndScreen()
+  router.push('/end')
+}
+
+function handleDayCompleteKeydown(e: KeyboardEvent) {
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault()
+    proceedToEnd()
+  }
+}
+
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('keydown', handleDayCompleteKeydown)
   
-  if (gameState.phase !== 'day') {
+  if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
     router.push('/game')
   }
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('keydown', handleDayCompleteKeydown)
 })
 
 const currentTime = computed(() => gameState.currentTime)
@@ -218,6 +234,14 @@ function formatTime(seconds: number): string {
             </div>
           </Transition>
         </div>
+      </div>
+    </div>
+
+    <!-- Day Complete Overlay -->
+    <div v-if="isDayComplete" class="day-complete-overlay" @click="proceedToEnd">
+      <div class="day-complete-content">
+        <h2>Day Complete!</h2>
+        <p>Press <kbd>Space</kbd> to continue to end of day breakdown</p>
       </div>
     </div>
   </div>
@@ -504,5 +528,62 @@ h1 {
   opacity: 0;
   max-height: 0;
   margin-top: 0;
+}
+
+.day-complete-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  cursor: pointer;
+}
+
+.day-complete-content {
+  background: white;
+  padding: 3rem 4rem;
+  border-radius: 16px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  animation: fadeInUp 0.3s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.day-complete-content h2 {
+  color: var(--gridio-sky-vivid);
+  font-size: 2rem;
+  margin: 0 0 1rem 0;
+}
+
+.day-complete-content p {
+  color: var(--color-gray-600);
+  font-size: 1.125rem;
+  margin: 0;
+}
+
+.day-complete-content kbd {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  background: var(--color-gray-100);
+  border: 1px solid var(--color-gray-300);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 600;
 }
 </style>

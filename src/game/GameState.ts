@@ -5,7 +5,7 @@ import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdo
 import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput, type SettlementSnapshot } from '../system_model'
 import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
-export type GamePhase = 'start' | 'initializing' | 'day' | 'end'
+export type GamePhase = 'start' | 'initializing' | 'day' | 'day_complete' | 'end'
 export type SimulationSpeed = 1 | 10 | 50 | 1000 | 2000 | 3000 | 10000
 export type { BESSMode, BESSMarket }
 
@@ -510,7 +510,13 @@ class GameState {
 
   endDay(): void {
     this.stopSimulation()
-    this.phase = 'end'
+    this.phase = 'day_complete'
+  }
+
+  proceedToEndScreen(): void {
+    if (this.phase === 'day_complete') {
+      this.phase = 'end'
+    }
   }
 
   restart(): void {
