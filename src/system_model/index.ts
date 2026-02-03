@@ -79,3 +79,6 @@ export type { BiddingZone, MarketPricesInput, MarketPricesOutput } from './grid/
 
 export { BESSUnit, BESSFleet, DEFAULT_BESS_FLEET } from './storage/BESSModel'
 export type { BESSConfig, BESSMode, BESSMarket, BESSState, BESSDispatchCommand, BESSTickResult } from './storage/BESSModel'
+
+export { ImbalanceSettlementModel } from './grid/ImbalanceSettlementModel'
+export type { ImbalanceSettlementInput, ImbalanceSettlementOutput, LastSettlement, SystemDirection } from './grid/ImbalanceSettlementModel'

@@ -11,6 +11,8 @@ const daPerformance = computed(() => gameState.bessPerformance.daPerformance)
 const fcrPerformance = computed(() => gameState.bessPerformance.fcrPerformance)
 const marketPrices = computed(() => gameState.marketPrices)
 
+const imbalanceData = computed(() => gameState.imbalanceSettlement)
+
 const revenueBreakdown = computed(() => {
   const daRevenue = daPerformance.value.reduce((sum, hour) => {
     const price = marketPrices.value.daEurPerMWh[hour.hour] ?? 0
@@ -25,13 +27,16 @@ const revenueBreakdown = computed(() => {
   const totalFailed = fcrPerformance.value.reduce((sum, hour) => sum + hour.failedMWh, 0)
   const fcrPenalty = totalFailed * 50
 
-  const totalRevenue = daRevenue + fcrRevenue - fcrPenalty
+  const imbalanceCost = imbalanceData.value?.cumulativeNetCashEur ?? 0
+
+  const totalRevenue = daRevenue + fcrRevenue - fcrPenalty + imbalanceCost
 
   return {
     daRevenue,
     fcrRevenue,
     fcrPenalty,
     totalFailed,
+    imbalanceCost,
     totalRevenue
   }
 })
@@ -129,6 +134,17 @@ function formatEur(value: number): string {
       <div class="breakdown-item penalty">
         <span class="breakdown-label">FCR Delivery Penalties</span>
         <span class="breakdown-value negative">-€{{ formatEur(revenueBreakdown.fcrPenalty) }}</span>
+      </div>
+      <div class="breakdown-item" :class="{ penalty: revenueBreakdown.imbalanceCost < 0 }">
+        <span class="breakdown-label">
+          Imbalance Settlement
+          <span v-if="imbalanceData" class="breakdown-detail">
+            ({{ imbalanceData.cumulativeDeviationMWh.toFixed(1) }} MWh deviation)
+          </span>
+        </span>
+        <span class="breakdown-value" :class="{ positive: revenueBreakdown.imbalanceCost >= 0, negative: revenueBreakdown.imbalanceCost < 0 }">
+          {{ revenueBreakdown.imbalanceCost >= 0 ? '+' : '' }}€{{ formatEur(revenueBreakdown.imbalanceCost) }}
+        </span>
       </div>
       <div class="breakdown-total">
         <span class="breakdown-label">Net Revenue</span>
@@ -283,6 +299,12 @@ h3 {
 .breakdown-label {
   color: var(--color-gray-700);
   font-weight: 500;
+}
+
+.breakdown-detail {
+  font-size: 0.8rem;
+  color: var(--color-gray-500);
+  font-weight: 400;
 }
 
 .breakdown-value {

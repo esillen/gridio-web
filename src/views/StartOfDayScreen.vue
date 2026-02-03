@@ -17,7 +17,7 @@ import DemandResponseInfo from '../components/info/DemandResponseInfo.vue'
 const router = useRouter()
 const activeChart = ref<'da' | 'fcr'>('da')
 const isDragging = ref(false)
-const showSandbox = ref(true)
+const showSandbox = ref(false)
 const showInfoModal = ref(false)
 const currentInfoType = ref<EnergyType | null>(null)
 

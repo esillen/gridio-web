@@ -56,21 +56,15 @@ function buildData(): uPlot.AlignedData {
     const fc = props.forecastArrays
     const currentTimeHours = props.currentTime / 3600
     const resolutionS = 60
-    const maxForecastHours = 6 // Show 6 hours of forecast
+    const maxForecastHours = 24 - currentTimeHours // Show forecast until end of day
 
     // Sample every 5 minutes for display (every 5th point)
     for (let i = 0; i < fc.TMeanC.length; i += 5) {
       const deltaS = i * resolutionS
       const forecastTimeHours = currentTimeHours + deltaS / 3600
-      
       if (forecastTimeHours > 24 || deltaS > maxForecastHours * 3600) break
       if (forecastTimeHours <= currentTimeHours) continue
-
-      const lastHistory = props.history[props.history.length - 1]
       times.push(forecastTimeHours)
-      temp.push(lastHistory?.current.temperatureC ?? 0)
-      wind.push(lastHistory?.current.windSpeed100mMps ?? 0)
-      solar.push((lastHistory?.current.solarIrradianceWm2 ?? 0) / 10)
       tempFc.push(fc.TMeanC[i] ?? null)
       windFc.push(fc.windMps[i] ?? null)
       solarFc.push((fc.solarWm2[i] ?? 0) / 10)
