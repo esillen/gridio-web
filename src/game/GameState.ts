@@ -389,9 +389,7 @@ class GameState {
     const unit = this._bessFleet.units.find(u => u.config.id === unitId)
     if (unit) {
       unit.mode = mode
-      if (mode !== null) {
-        unit.market = 'inactive'
-      }
+      // Don't change market - preserve the market allocation while charging/discharging
       this.syncBESSState()
     }
   }
@@ -431,6 +429,11 @@ class GameState {
       daBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
       fcrBids: Array.from({ length: 24 }, (_, h) => ({ hour: h, volumeMW: 0 })),
     }
+  }
+
+  resetBESS(): void {
+    this._bessFleet.reset()
+    this.syncBESSState()
   }
 
   get bessPerformance(): BESSPerformanceTracker {

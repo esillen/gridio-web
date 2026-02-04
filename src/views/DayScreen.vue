@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
 import { tutorialController } from '../game/TutorialController'
@@ -13,6 +13,68 @@ import DABidChart from '../components/DABidChart.vue'
 import FCRBidChart from '../components/FCRBidChart.vue'
 import ImbalanceSettlementChart from '../components/ImbalanceSettlementChart.vue'
 import BESSPanel from '../components/BESSPanel.vue'
+
+// Refs for highlightable elements
+const bessRef = ref<HTMLElement | null>(null)
+const topChartRef = ref<HTMLElement | null>(null)
+
+// Spotlight and message positioning (using absolute positioning relative to document)
+const spotlightRect = ref<{ top: number; left: number; width: number; height: number } | null>(null)
+const messagePosition = ref<{ top: string; left: string; transform: string }>({ top: '50vh', left: '50%', transform: 'translate(-50%, -50%)' })
+
+function updateSpotlight() {
+  const highlight = tutorialMessage.value?.highlight
+  if (!highlight) {
+    spotlightRect.value = null
+    // Center in viewport when no highlight
+    const scrollY = window.scrollY
+    messagePosition.value = { top: `${scrollY + window.innerHeight / 2}px`, left: '50%', transform: 'translate(-50%, -50%)' }
+    return
+  }
+
+  let element: HTMLElement | null = null
+  
+  if (highlight === 'bess' && bessRef.value) {
+    element = bessRef.value
+  } else if (highlight === 'frequency' && topChartRef.value) {
+    element = topChartRef.value
+  }
+
+  if (element) {
+    const rect = element.getBoundingClientRect()
+    const scrollY = window.scrollY
+    const scrollX = window.scrollX
+    const padding = 8
+    
+    // Convert viewport coords to document coords
+    spotlightRect.value = {
+      top: rect.top + scrollY - padding,
+      left: rect.left + scrollX - padding,
+      width: rect.width + padding * 2,
+      height: rect.height + padding * 2,
+    }
+
+    // Position message to the right of BESS panel, or below charts
+    if (highlight === 'bess') {
+      messagePosition.value = {
+        top: `${rect.top + scrollY + 20}px`,
+        left: `${rect.right + scrollX + 20}px`,
+        transform: 'none',
+      }
+    } else {
+      // Below the chart
+      messagePosition.value = {
+        top: `${rect.bottom + scrollY + 20}px`,
+        left: `${rect.left + scrollX + rect.width / 2}px`,
+        transform: 'translateX(-50%)',
+      }
+    }
+  } else {
+    spotlightRect.value = null
+    const scrollY = window.scrollY
+    messagePosition.value = { top: `${scrollY + window.innerHeight / 2}px`, left: '50%', transform: 'translate(-50%, -50%)' }
+  }
+}
 
 const router = useRouter()
 
@@ -46,6 +108,12 @@ const isTutorial = computed(() => tutorialController.active)
 const tutorialDay = computed(() => tutorialController.currentDay)
 const tutorialConfig = computed(() => tutorialController.config)
 const tutorialMessage = computed(() => tutorialController.currentMessage)
+
+// Watch for message changes to update spotlight
+watch(tutorialMessage, async () => {
+  await nextTick()
+  updateSpotlight()
+}, { immediate: true })
 
 // Track tutorial-triggered messages to avoid duplicates
 const shownSpeedMsg = ref(false)
@@ -267,10 +335,12 @@ watch(tutorialMessage, (msg) => {
     </div>
 
     <div class="main-content">
-      <BESSPanel 
-        :charge-discharge-enabled="!isTutorial || tutorialConfig.chargeDischargeEnabled"
-        :market-toggle-enabled="!isTutorial || tutorialConfig.marketToggleEnabled"
-      />
+      <div ref="bessRef" class="bess-wrapper" :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'bess' }">
+        <BESSPanel 
+          :charge-discharge-enabled="!isTutorial || tutorialConfig.chargeDischargeEnabled"
+          :market-toggle-enabled="!isTutorial || tutorialConfig.marketToggleEnabled"
+        />
+      </div>
       
       <div class="charts-column">
         <div class="section-header">
@@ -287,7 +357,7 @@ watch(tutorialMessage, (msg) => {
             <span class="hotkey-hint">(Tab)</span>
           </div>
         </div>
-        <div class="chart-container">
+        <div ref="topChartRef" class="chart-container" :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'frequency' }">
           <FrequencyChart
             v-if="topChartView === 'frequency'"
             :history="gameState.frequencyHistory"
@@ -369,7 +439,24 @@ watch(tutorialMessage, (msg) => {
     <!-- Tutorial message overlay -->
     <Transition name="fade">
       <div v-if="tutorialMessage" class="tutorial-overlay" @click="tutorialController.advanceMessage()">
-        <div class="tutorial-message" @click.stop>
+        <!-- Spotlight cutout using CSS mask -->
+        <div class="tutorial-backdrop" :class="{ 'has-spotlight': spotlightRect }">
+          <div 
+            v-if="spotlightRect" 
+            class="spotlight-hole"
+            :style="{
+              top: spotlightRect.top + 'px',
+              left: spotlightRect.left + 'px',
+              width: spotlightRect.width + 'px',
+              height: spotlightRect.height + 'px',
+            }"
+          ></div>
+        </div>
+        <div 
+          class="tutorial-message" 
+          :style="messagePosition"
+          @click.stop
+        >
           <p>{{ tutorialMessage.text }}</p>
           <div class="message-footer">
             <span v-if="tutorialMessage.waitFor === 'tab_to_da'" class="hint">Press Tab to switch to DA chart</span>
@@ -757,28 +844,61 @@ h1 {
 }
 
 .tutorial-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 100%;
+  z-index: 2000;
+  pointer-events: auto;
+}
+
+.tutorial-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
+}
+
+.tutorial-backdrop.has-spotlight {
+  background: transparent;
+}
+
+.spotlight-hole {
+  position: absolute;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.tutorial-highlight {
+  position: relative;
+  z-index: 2001;
+}
+
+.bess-wrapper {
+  display: contents;
+}
+
+.bess-wrapper.tutorial-highlight > * {
+  position: relative;
+  z-index: 2001;
 }
 
 .tutorial-message {
+  position: absolute;
   background: white;
-  max-width: 500px;
-  padding: 2rem;
-  border-radius: 16px;
+  max-width: 400px;
+  padding: 1.5rem;
+  border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 2002;
 }
 
 .tutorial-message p {
-  font-size: 1.125rem;
+  font-size: 1rem;
   line-height: 1.6;
   color: var(--color-gray-700);
   margin: 0 0 1rem;

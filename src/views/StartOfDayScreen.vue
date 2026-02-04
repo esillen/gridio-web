@@ -1,9 +1,65 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../game/TutorialController'
 import { useRouter } from 'vue-router'
+import BESSPanel from '../components/BESSPanel.vue'
+
+// Refs for highlightable elements
+const chartSectionRef = ref<HTMLElement | null>(null)
+
+// Spotlight positioning (using absolute positioning relative to document)
+const spotlightRect = ref<{ top: number; left: number; width: number; height: number } | null>(null)
+const messagePosition = ref<{ top: string; left: string; transform: string }>({ top: '50vh', left: '50%', transform: 'translate(-50%, -50%)' })
+
+function updateSpotlight() {
+  const highlight = tutorialMessage.value?.highlight
+  if (!highlight) {
+    spotlightRect.value = null
+    // Center in viewport when no highlight
+    const scrollY = window.scrollY
+    messagePosition.value = { top: `${scrollY + window.innerHeight / 2}px`, left: '50%', transform: 'translate(-50%, -50%)' }
+    return
+  }
+
+  let element: HTMLElement | null = null
+  
+  if ((highlight === 'da-chart' || highlight === 'prices') && chartSectionRef.value) {
+    element = chartSectionRef.value
+  }
+
+  if (element) {
+    const rect = element.getBoundingClientRect()
+    const scrollY = window.scrollY
+    const scrollX = window.scrollX
+    const padding = 8
+    
+    // Convert viewport coords to document coords
+    spotlightRect.value = {
+      top: rect.top + scrollY - padding,
+      left: rect.left + scrollX - padding,
+      width: rect.width + padding * 2,
+      height: rect.height + padding * 2,
+    }
+
+    // Position message below the chart
+    messagePosition.value = {
+      top: `${rect.bottom + scrollY + 20}px`,
+      left: `${rect.left + scrollX + rect.width / 2}px`,
+      transform: 'translateX(-50%)',
+    }
+  } else {
+    spotlightRect.value = null
+    const scrollY = window.scrollY
+    messagePosition.value = { top: `${scrollY + window.innerHeight / 2}px`, left: '50%', transform: 'translate(-50%, -50%)' }
+  }
+}
+
+watch(() => tutorialController.currentMessage, async () => {
+  await nextTick()
+  updateSpotlight()
+}, { immediate: true })
 import InfoModal from '../components/info/InfoModal.vue'
 import NuclearInfo from '../components/info/NuclearInfo.vue'
 import HydroReservoirInfo from '../components/info/HydroReservoirInfo.vue'
@@ -61,6 +117,9 @@ const daEnabled = computed(() => !isTutorial.value || tutorialConfig.value.daEna
 const fcrEnabled = computed(() => !isTutorial.value || tutorialConfig.value.fcrEnabled)
 
 onMounted(() => {
+  // Reset BESS to 50% for visual display (will be reset again when day starts)
+  gameState.resetBESS()
+  
   // Only generate random prices if not in tutorial mode
   if (!isTutorial.value) {
     gameState.generateMarketPrices(Date.now())
@@ -92,15 +151,15 @@ function queueBiddingMessages() {
   const day = tutorialDay.value
   if (day === 1) {
     tutorialController.queueMessages([
-      { id: 'd1_welcome', text: 'Welcome to the Grid.io Tutorial! Over 4 days, you\'ll learn to trade batteries on energy markets.' },
-      { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy, drag down to buy.', highlight: 'da-chart' },
+      { id: 'd1_welcome', text: 'Welcome to the Tutorial! Over 4 in-game days, you\'ll gradually learn to trade and control batteries on energy markets.' },
+      { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy volumes, drag down to buy.', highlight: 'da-chart' },
       { id: 'd1_prices', text: 'The numbers show prices in €/MWh. Larger, redder numbers = higher prices. Sell high, buy low!', highlight: 'prices' },
       { id: 'd1_capacity', text: 'Your batteries have limited capacity. Don\'t bid more than you can deliver! Place at least one bid to start.' },
     ])
   } else if (day === 2) {
     tutorialController.queueMessages([
       { id: 'd2_goal', text: 'Day 2: Earn at least €600 to advance! Plan your bids carefully.' },
-      { id: 'd2_tips', text: 'Remember: Batteries start at 50% SOC. Trade wisely to hit your goal!' },
+      { id: 'd2_tips', text: 'For the sake of the game, your batteries are reset to 50% state-of-charge (SOC) every day. Trade wisely to hit your goal!' },
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([
@@ -341,13 +400,16 @@ function goRight() {
 
     <header class="header">
       <h1>{{ isTutorial ? (tutorialConfig.fcrEnabled && !tutorialConfig.daEnabled ? 'FCR Bidding' : 'Day-Ahead Bidding') : 'Day-Ahead Bidding' }}</h1>
-      <div class="bess-info">
-        <span class="bess-stat">Fleet: {{ gameState.totalBessCapacityMWh }} MWh</span>
-        <span class="bess-stat">{{ gameState.totalBessMaxPowerMW }} MW</span>
-      </div>
     </header>
 
-    <div class="market-tabs">
+    <div class="main-content">
+      <!-- BESS Panel (visual only) -->
+      <div class="bess-wrapper">
+        <BESSPanel :hide-controls="true" />
+      </div>
+
+      <div class="bidding-content">
+        <div class="market-tabs">
       <button 
         v-if="daEnabled"
         :class="['tab', { active: activeChart === 'da' }]" 
@@ -368,7 +430,12 @@ function goRight() {
       </button>
     </div>
 
-    <div v-if="activeChart === 'da'" class="chart-section">
+    <div 
+      v-if="activeChart === 'da'" 
+      ref="chartSectionRef"
+      class="chart-section"
+      :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'da-chart' || tutorialMessage?.highlight === 'prices' }"
+    >
       <div class="chart-header">
         <span class="chart-title">Day-Ahead Energy (EUR/MWh)</span>
         <span class="chart-hint">Click/drag to bid. Up = sell, Down = buy</span>
@@ -537,22 +604,40 @@ function goRight() {
       <component :is="currentInfoComponent" v-if="currentInfoComponent" />
     </InfoModal>
 
-    <!-- No bid warning for tutorial -->
-    <div v-if="noBidWarning" class="no-bid-warning">
-      You didn't place any bids! 
-      <span v-if="tutorialConfig.earningsGoal > 0">You need to earn €{{ tutorialConfig.earningsGoal }} to advance.</span>
-      <span v-else>Place at least one bid to continue.</span>
-    </div>
+        <!-- No bid warning for tutorial -->
+        <div v-if="noBidWarning" class="no-bid-warning">
+          You didn't place any bids! 
+          <span v-if="tutorialConfig.earningsGoal > 0">You need to earn €{{ tutorialConfig.earningsGoal }} to advance.</span>
+          <span v-else>Place at least one bid to continue.</span>
+        </div>
 
-    <button class="start-btn" @click="startDay">
-      Start Day
-      <span class="hint">(Space)</span>
-    </button>
+        <button class="start-btn" @click="startDay">
+          Start Day
+          <span class="hint">(Space)</span>
+        </button>
+      </div><!-- end bidding-content -->
+    </div><!-- end main-content -->
 
     <!-- Tutorial message overlay -->
     <Transition name="fade">
       <div v-if="tutorialMessage" class="tutorial-overlay" @click="tutorialController.advanceMessage()">
-        <div class="tutorial-message" @click.stop>
+        <div class="tutorial-backdrop" :class="{ 'has-spotlight': spotlightRect }">
+          <div 
+            v-if="spotlightRect" 
+            class="spotlight-hole"
+            :style="{
+              top: spotlightRect.top + 'px',
+              left: spotlightRect.left + 'px',
+              width: spotlightRect.width + 'px',
+              height: spotlightRect.height + 'px',
+            }"
+          ></div>
+        </div>
+        <div 
+          class="tutorial-message" 
+          :style="messagePosition"
+          @click.stop
+        >
           <p>{{ tutorialMessage.text }}</p>
           <div class="message-footer">
             <span class="hint">Press Space to continue</span>
@@ -565,7 +650,7 @@ function goRight() {
 
 <style scoped>
 .start-screen {
-  max-width: 900px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 1.5rem;
   display: flex;
@@ -586,17 +671,22 @@ h1 {
   margin: 0;
 }
 
-.bess-info {
+.main-content {
   display: flex;
   gap: 1rem;
+  align-items: flex-start;
 }
 
-.bess-stat {
-  font-size: 0.8rem;
-  color: var(--color-gray-600);
-  background: var(--color-gray-100);
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
+.bess-wrapper {
+  flex-shrink: 0;
+}
+
+.bidding-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .market-tabs {
@@ -976,28 +1066,52 @@ h1 {
 }
 
 .tutorial-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 100%;
+  z-index: 2000;
+  pointer-events: auto;
+}
+
+.tutorial-backdrop {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
+}
+
+.tutorial-backdrop.has-spotlight {
+  background: transparent;
+}
+
+.spotlight-hole {
+  position: absolute;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.tutorial-highlight {
+  position: relative;
+  z-index: 2001;
 }
 
 .tutorial-message {
+  position: absolute;
   background: white;
-  max-width: 500px;
-  padding: 2rem;
-  border-radius: 16px;
+  max-width: 400px;
+  padding: 1.5rem;
+  border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 2002;
 }
 
 .tutorial-message p {
-  font-size: 1.125rem;
+  font-size: 1rem;
   line-height: 1.6;
   color: var(--color-gray-700);
   margin: 0 0 1rem;

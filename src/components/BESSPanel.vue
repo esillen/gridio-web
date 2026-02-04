@@ -5,9 +5,11 @@ import { gameState, type BESSMode, type BESSMarket } from '../game/GameState'
 const props = withDefaults(defineProps<{
   chargeDischargeEnabled?: boolean
   marketToggleEnabled?: boolean
+  hideControls?: boolean
 }>(), {
   chargeDischargeEnabled: true,
   marketToggleEnabled: true,
+  hideControls: false,
 })
 
 const bessUnits = computed(() => gameState.bessStates)
@@ -24,12 +26,27 @@ function toggleUnitMode(unitId: string, mode: BESSMode) {
   }
 }
 
-function cycleMarket(unitId: string) {
-  if (!props.marketToggleEnabled) return
-  gameState.cycleUnitMarket(unitId)
+function handleMarketClick(unitId: string) {
+  const unit = bessUnits.value.find(u => u.id === unitId)
+  if (!unit) return
+  
+  // If currently charging/discharging, clicking market button clears the mode
+  if (unit.mode !== null) {
+    gameState.setUnitMode(unitId, null)
+    return
+  }
+  
+  // Otherwise cycle market (if enabled)
+  if (props.marketToggleEnabled) {
+    gameState.cycleUnitMarket(unitId)
+  }
 }
 
-function getMarketLabel(market: BESSMarket, autoEffective: 'da' | 'fcr' | 'inactive' | null): string {
+function getMarketLabel(market: BESSMarket, autoEffective: 'da' | 'fcr' | 'inactive' | null, mode: BESSMode | null): string {
+  // Show charging/discharging state on the market button
+  if (mode === 'charge') return 'Charging...'
+  if (mode === 'discharge') return 'Discharging...'
+  
   if (market === 'da') return 'DA'
   if (market === 'fcr') return 'FCR'
   if (market === 'auto') {
@@ -90,14 +107,20 @@ function formatPower(mw: number): string {
           {{ formatPower(unit.currentPowerMW) }} MW
         </div>
         <button 
-          :class="['market-toggle', `market-${unit.market}`, unit.market === 'auto' ? `auto-${unit.autoEffectiveMarket}` : '', { disabled: !marketToggleEnabled }]"
-          @click="cycleMarket(unit.id)"
-          :disabled="!marketToggleEnabled"
-          :title="marketToggleEnabled ? 'Click to cycle: DA → FCR → AUTO → Inactive' : 'Market toggle disabled'"
+          v-if="!hideControls"
+          :class="[
+            'market-toggle', 
+            unit.mode ? 'mode-active' : `market-${unit.market}`, 
+            unit.market === 'auto' && !unit.mode ? `auto-${unit.autoEffectiveMarket}` : '',
+            { disabled: !marketToggleEnabled && unit.mode === null }
+          ]"
+          @click="handleMarketClick(unit.id)"
+          :disabled="!marketToggleEnabled && unit.mode === null"
+          :title="unit.mode ? 'Click to stop and return to market' : (marketToggleEnabled ? 'Click to cycle: DA → FCR → AUTO → Inactive' : 'Market toggle disabled')"
         >
-          {{ getMarketLabel(unit.market, unit.autoEffectiveMarket) }}
+          {{ getMarketLabel(unit.market, unit.autoEffectiveMarket, unit.mode) }}
         </button>
-        <div class="unit-controls">
+        <div v-if="!hideControls" class="unit-controls">
           <button 
             :class="['unit-ctrl-btn', { active: unit.mode === 'charge', disabled: !chargeDischargeEnabled }]"
             @click="toggleUnitMode(unit.id, 'charge')"
@@ -310,6 +333,23 @@ function formatPower(mw: number): string {
 
 .market-toggle.market-inactive:hover {
   background: var(--color-gray-200);
+}
+
+.market-toggle.mode-active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.market-toggle.mode-active:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
 }
 
 .unit-controls {
