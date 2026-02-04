@@ -97,10 +97,10 @@ const router = useRouter()
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.5rem;
-  padding: 1.5rem 2rem;
+  gap: 0.4rem;
+  padding: 1.1rem 1.5rem;
   border: 2px solid transparent;
-  border-radius: 16px;
+  border-radius: 12px;
   background: white;
   cursor: pointer;
   transition: all 0.2s;
@@ -108,7 +108,7 @@ const router = useRouter()
 }
 
 .option-btn:hover {
-  transform: translateY(-2px);
+  transform: scale(1.05);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
 
@@ -122,6 +122,20 @@ const router = useRouter()
 
 .option-btn.tutorial {
   border-color: #F59E0B;
+  padding: 2rem 2.5rem;
+  margin: 1rem -1rem;
+}
+
+.option-btn.tutorial .option-icon {
+  font-size: 2.5rem;
+}
+
+.option-btn.tutorial .option-title {
+  font-size: 1.5rem;
+}
+
+.option-btn.tutorial .option-desc {
+  font-size: 1rem;
 }
 
 .option-btn.tutorial:hover {
@@ -144,17 +158,17 @@ const router = useRouter()
 }
 
 .option-icon {
-  font-size: 2rem;
+  font-size: 1.5rem;
 }
 
 .option-title {
-  font-size: 1.25rem;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--color-gray-800);
 }
 
 .option-desc {
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   color: var(--color-gray-500);
 }
 
