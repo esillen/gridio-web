@@ -171,10 +171,10 @@ function queueBiddingMessages() {
   const day = tutorialDay.value
   if (day === 1) {
     tutorialController.queueMessages([
-      { id: 'd1_welcome', text: 'Welcome to the Tutorial! Over 4 in-game days, you\'ll gradually learn to trade and control batteries on energy markets.' },
+      { id: 'd1_welcome', text: 'Welcome to the Tutorial! Over 4 in-game days, you\'ll gradually learn to trade successfully on energy markets.' },
       { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy volumes, drag down to buy.', highlight: 'da-chart' },
       { id: 'd1_prices', text: 'The numbers show prices in €/MWh. Larger, redder numbers = higher prices. Sell high, buy low!', highlight: 'prices' },
-      { id: 'd1_batteries', text: 'These are your batteries! Batteries have power (MW) and energy (MWh). The MW rating means how much power they can deliver at most at any one instant. The MWh rating means how much energy they can maximally store.', highlight: 'batteries' },
+      { id: 'd1_batteries', text: 'This is your battery fleet! Batteries have power (MW) and energy (MWh). The MW rating means how much power they can deliver at most at any one instant. The MWh rating means how much energy they can maximally store.', highlight: 'batteries' },
       { id: 'd1_place_bid', text: 'Place at least one bid to start.', highlight: 'da-chart' },
     ])
   } else if (day === 2) {

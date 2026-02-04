@@ -19,6 +19,8 @@ import BESSPanel from '../components/BESSPanel.vue'
 // Refs for highlightable elements
 const bessRef = ref<HTMLElement | null>(null)
 const topChartRef = ref<HTMLElement | null>(null)
+const chartTabsRef = ref<HTMLElement | null>(null)
+const advancedToggleRef = ref<HTMLElement | null>(null)
 
 // Spotlight and message positioning (using absolute positioning relative to document)
 const spotlightRect = ref<{ top: number; left: number; width: number; height: number } | null>(null)
@@ -38,8 +40,12 @@ function updateSpotlight() {
   
   if (highlight === 'bess' && bessRef.value) {
     element = bessRef.value
-  } else if (highlight === 'frequency' && topChartRef.value) {
+  } else if ((highlight === 'frequency' || highlight === 'chart') && topChartRef.value) {
     element = topChartRef.value
+  } else if (highlight === 'chart-tabs' && chartTabsRef.value) {
+    element = chartTabsRef.value
+  } else if (highlight === 'advanced' && advancedToggleRef.value) {
+    element = advancedToggleRef.value
   }
 
   if (element) {
@@ -248,9 +254,9 @@ function queueGameplayMessages() {
       { id: 'd1_control', text: 'This is the control room where you monitor and control everything during a trading day.' },
       { id: 'd1_batteries', text: 'These are your batteries. Their state of charge (SOC), power (MW), and capacity (MWh) are displayed.', highlight: 'bess' },
       { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids (DA is the selected mode and you can\'t change it for now).', highlight: 'bess' },
-      { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance. Your services help balance the grid! However, this information is irrelevant when only trading on DA as we do not', highlight: 'frequency' },
-      { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your bids and delivery.', waitFor: 'tab_to_da' },
-      { id: 'd1_da_chart', text: 'This shows your DA commitments and how well you\'re delivering. Press Space to unpause!', highlight: 'frequency' },
+      { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance. Your services help balance the grid! However, this information is irrelevant when only trading on DA.', highlight: 'chart' },
+      { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your bids and delivery.', highlight: 'chart-tabs', waitFor: 'tab_to_da' },
+      { id: 'd1_da_chart', text: 'This shows your DA commitments and how well you\'re delivering. Press Space to unpause!', highlight: 'chart' },
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([
@@ -287,7 +293,7 @@ watch(currentTime, (time) => {
   if (day === 1 && !shownNoonMsg.value && time >= 12 * 3600) {
     shownNoonMsg.value = true
     tutorialController.queueMessages([
-      { id: 'd1_advanced', text: 'In the Advanced section below you can see detailed weather, production, consumption, and balancing info!' }
+      { id: 'd1_advanced', text: 'In the Advanced section below you can see detailed weather, production, consumption, and balancing info! Useful for optimal control but unnecessarily complex for now.', highlight: 'advanced' }
     ])
     gameState.paused = true
   }
@@ -358,7 +364,7 @@ watch(tutorialMessage, (msg) => {
       <div class="charts-column">
         <div class="section-header">
           <div class="section-label">{{ topChartLabels[topChartView] }}</div>
-          <div class="chart-tabs">
+          <div ref="chartTabsRef" class="chart-tabs" :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'chart-tabs' }">
             <button
               v-for="chart in availableTopCharts"
               :key="chart"
@@ -370,7 +376,7 @@ watch(tutorialMessage, (msg) => {
             <span class="hotkey-hint">(Tab)</span>
           </div>
         </div>
-        <div ref="topChartRef" class="chart-container" :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'frequency' }">
+        <div ref="topChartRef" class="chart-container" :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'frequency' || tutorialMessage?.highlight === 'chart' }">
           <FrequencyChart
             v-if="topChartView === 'frequency'"
             :history="gameState.frequencyHistory"
@@ -394,7 +400,7 @@ watch(tutorialMessage, (msg) => {
         </div>
 
         <div class="advanced-section">
-          <button class="advanced-header" @click="showAdvanced = !showAdvanced">
+          <button ref="advancedToggleRef" class="advanced-header" :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'advanced' }" @click="showAdvanced = !showAdvanced">
             <span class="advanced-title">Advanced Charts</span>
             <span class="chevron" :class="{ expanded: showAdvanced }">▼</span>
           </button>

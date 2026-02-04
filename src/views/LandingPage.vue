@@ -10,7 +10,7 @@ const router = useRouter()
     <div class="overlay"></div>
     <div class="hero">
       <h1 class="logo">Grid.io</h1>
-      <p class="tagline">Master the balance of the power grid</p>
+      <p class="tagline">Make money by balancing the power grid</p>
     </div>
 
     <div class="options">
@@ -23,13 +23,13 @@ const router = useRouter()
       <button class="option-btn tutorial" @click="router.push('/tutorial')">
         <span class="option-icon">🎓</span>
         <span class="option-title">Tutorial</span>
-        <span class="option-desc">Learn by playing - 4 guided days</span>
+        <span class="option-desc">Learn by playing through 4 guided trading days</span>
       </button>
 
       <button class="option-btn play" @click="router.push('/game')">
         <span class="option-icon">⚡</span>
-        <span class="option-title">Play Game</span>
-        <span class="option-desc">Jump right into trading</span>
+        <span class="option-title">Play + Sandbox mode</span>
+        <span class="option-desc">Make as much money as you can! Or modify the grid and see how it behaves.</span>
       </button>
     </div>
 
