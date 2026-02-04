@@ -82,11 +82,31 @@ class TutorialController {
   }
 
   start(): void {
+    this.startAtDay(1)
+  }
+
+  startAtDay(day: TutorialDay): void {
     this.active = true
-    this.currentDay = 1
+    this.currentDay = day
     this.phase = 'bidding'
     this.shownMessages.clear()
     this.setupDay()
+  }
+
+  restoreFromUrl(day: number): void {
+    // Only restore if not already active at the right day
+    if (this.active && this.currentDay === day) return
+    
+    const validDay = (day >= 1 && day <= 4 ? day : 1) as TutorialDay
+    this.active = true
+    this.currentDay = validDay
+    // Don't call setupDay() - just restore the active state
+    // The game state should already be in progress
+  }
+
+  getUrlParams(): string {
+    if (!this.active) return ''
+    return `tutorial=1&day=${this.currentDay}`
   }
 
   stop(): void {

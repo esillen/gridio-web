@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
 import DABidChart from '../components/DABidChart.vue'
 import FCRBidChart from '../components/FCRBidChart.vue'
 
+const route = useRoute()
 const router = useRouter()
 const showImbalanceBreakdown = ref(false)
 const showImbalanceHelp = ref(false)
@@ -67,6 +68,11 @@ const fcrStats = computed(() => {
 })
 
 onMounted(() => {
+  // Restore tutorial state from URL params if needed
+  if (route.query.tutorial === '1' && route.query.day) {
+    tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  }
+  
   // Show tutorial tips based on performance
   if (isTutorial.value) {
     showTutorialTips()
@@ -101,16 +107,17 @@ function handleContinue() {
     if (goalMet.value || tutorialConfig.value.earningsGoal === 0) {
       // Advance to next day
       if (tutorialController.nextDay()) {
-        router.push('/game')
+        // Navigate to game with updated day
+        router.push(`/game?tutorial=1&day=${tutorialController.currentDay}`)
       } else {
-        // Tutorial complete
+        // Tutorial complete - exit to home
         tutorialController.stop()
         router.push('/')
       }
     } else {
       // Retry the day
       tutorialController.retryDay()
-      router.push('/game')
+      router.push(`/game?tutorial=1&day=${tutorialController.currentDay}`)
     }
   } else {
     restart()

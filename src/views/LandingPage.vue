@@ -21,13 +21,7 @@ const router = useRouter()
       <button class="option-btn tutorial" @click="router.push('/tutorial')">
         <span class="option-icon">🎓</span>
         <span class="option-title">Tutorial</span>
-        <span class="option-desc">Interactive walkthrough of the game</span>
-      </button>
-
-      <button class="option-btn tutorial-new" @click="router.push('/tutorial_new')">
-        <span class="option-icon">🎮</span>
-        <span class="option-title">Tutorial (New)</span>
-        <span class="option-desc">Learn by playing - 4 guided tutorial days</span>
+        <span class="option-desc">Learn by playing - 4 guided days</span>
       </button>
 
       <button class="option-btn play" @click="router.push('/game')">
@@ -114,14 +108,6 @@ const router = useRouter()
 
 .option-btn.tutorial:hover {
   background: #fffbeb;
-}
-
-.option-btn.tutorial-new {
-  border-color: #10B981;
-}
-
-.option-btn.tutorial-new:hover {
-  background: #ecfdf5;
 }
 
 .option-btn.play {

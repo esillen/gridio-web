@@ -3,8 +3,10 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import BESSPanel from '../components/BESSPanel.vue'
+
+const route = useRoute()
 
 // Refs for highlightable elements
 const chartSectionRef = ref<HTMLElement | null>(null)
@@ -128,6 +130,11 @@ const daEnabled = computed(() => !isTutorial.value || tutorialConfig.value.daEna
 const fcrEnabled = computed(() => !isTutorial.value || tutorialConfig.value.fcrEnabled)
 
 onMounted(() => {
+  // Restore tutorial state from URL params if needed
+  if (route.query.tutorial === '1' && route.query.day) {
+    tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  }
+  
   // Reset BESS to 50% for visual display (will be reset again when day starts)
   gameState.resetBESS()
   
@@ -199,7 +206,10 @@ async function startDay() {
   }
   noBidWarning.value = false
   
-  router.push('/initializing')
+  // Navigate with tutorial params if in tutorial mode
+  const params = tutorialController.getUrlParams()
+  router.push(params ? `/initializing?${params}` : '/initializing')
+  
   await gameState.startDay()
   
   // In tutorial mode, force battery markets after day starts

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
 import { tutorialController } from '../tutorial'
+
+const route = useRoute()
 import PowerChart from '../components/PowerChart.vue'
 import WeatherChart from '../components/WeatherChart.vue'
 import ConsumptionChart from '../components/ConsumptionChart.vue'
@@ -182,7 +184,9 @@ const isDayComplete = computed(() => gameState.phase === 'day_complete')
 
 function proceedToEnd() {
   gameState.proceedToEndScreen()
-  router.push('/end')
+  // Navigate with tutorial params if in tutorial mode
+  const params = tutorialController.getUrlParams()
+  router.push(params ? `/end?${params}` : '/end')
 }
 
 function handleDayCompleteKeydown(e: KeyboardEvent) {
@@ -196,12 +200,19 @@ function handleDayCompleteKeydown(e: KeyboardEvent) {
 }
 
 onMounted(() => {
+  // Restore tutorial state from URL params if needed
+  if (route.query.tutorial === '1' && route.query.day) {
+    tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  }
+  
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('keydown', handleDayCompleteKeydown)
   window.addEventListener('scroll', updateSpotlight)
   
+  // Redirect to /game if not in correct phase
   if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
-    router.push('/game')
+    const params = tutorialController.getUrlParams()
+    router.push(params ? `/game?${params}` : '/game')
   }
   
   // Queue gameplay tutorial messages
@@ -239,7 +250,7 @@ function queueGameplayMessages() {
       { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids. If they run out of energy, they can\'t deliver!' },
       { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance - why we need balancing services (your role!)', highlight: 'frequency' },
       { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your delivery.', waitFor: 'tab_to_da' },
-      { id: 'd1_da_chart', text: 'This shows your DA bids and how well you\'re delivering. Press Space to unpause!' },
+      { id: 'd1_da_chart', text: 'This shows your DA bids and how well you\'re delivering. Press Space to unpause!', highlight: 'frequency' },
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([

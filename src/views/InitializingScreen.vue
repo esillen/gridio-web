@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { gameState } from '../game/GameState'
+import { tutorialController } from '../tutorial'
 
+const route = useRoute()
 const router = useRouter()
 
 onMounted(() => {
+  // Restore tutorial state from URL params if needed
+  if (route.query.tutorial === '1' && route.query.day) {
+    tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  }
+  
   // Watch for phase change to 'day'
   const checkPhase = setInterval(() => {
     if (gameState.phase === 'day') {
       clearInterval(checkPhase)
-      router.push('/day')
+      // Navigate with tutorial params if in tutorial mode
+      const params = tutorialController.getUrlParams()
+      router.push(params ? `/day?${params}` : '/day')
     }
   }, 100)
 })
