@@ -8,6 +8,15 @@ const router = useRouter()
 <template>
   <div class="landing-page" :style="{ backgroundImage: `url(${backgroundImage})` }">
     <div class="overlay"></div>
+    
+    <div class="desktop-warning">
+      <div class="warning-overlay"></div>
+      <div class="warning-content">
+        <span class="warning-icon">🖥️</span>
+        <p class="warning-text">Grid.io is designed for desktop browsers. Please visit on a larger screen for the best experience.</p>
+      </div>
+    </div>
+
     <div class="hero">
       <h1 class="logo">Grid.io</h1>
       <p class="tagline">Make money by balancing the power grid</p>
@@ -58,6 +67,55 @@ const router = useRouter()
   inset: 0;
   background: rgba(15, 23, 42, 0.7);
   z-index: 0;
+}
+
+.desktop-warning {
+  display: none;
+}
+
+.warning-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 999;
+}
+
+.warning-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  text-align: center;
+  background: linear-gradient(135deg, #F59E0B, #EF4444);
+  padding: 2rem 1.5rem;
+  border-radius: 16px;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  max-width: 90%;
+}
+
+.warning-icon {
+  font-size: 3rem;
+  flex-shrink: 0;
+}
+
+.warning-text {
+  color: white;
+  font-size: 1rem;
+  font-weight: 500;
+  margin: 0;
+  line-height: 1.5;
+}
+
+@media (max-width: 1024px) {
+  .desktop-warning {
+    display: block;
+  }
 }
 
 .hero, .options, .footer {
