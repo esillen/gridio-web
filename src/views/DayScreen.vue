@@ -256,7 +256,7 @@ function queueGameplayMessages() {
       { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids (DA is the selected mode and you can\'t change it for now).', highlight: 'bess' },
       { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance. Your services help balance the grid! However, this information is irrelevant when only trading on DA.', highlight: 'chart' },
       { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your bids and delivery.', highlight: 'chart-tabs', waitFor: 'tab_to_da' },
-      { id: 'd1_da_chart', text: 'This shows your DA commitments and how well you\'re delivering. Press Space to unpause!', highlight: 'chart' },
+      { id: 'd1_da_chart', text: 'This shows your DA commitments (in blue) and how well you\'re delivering (in gold). Press Space to unpause!', highlight: 'chart' },
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([
@@ -284,7 +284,7 @@ watch(currentTime, (time) => {
   if (day === 1 && !shownSpeedMsg.value && time >= 5) {
     shownSpeedMsg.value = true
     tutorialController.queueMessages([
-      { id: 'd1_speed', text: 'This pace is slow! Press number keys 1-7 to change speed. Press Space to pause anytime.' }
+      { id: 'd1_speed', text: 'Press number keys 1-7 to change speed. Press Space to pause anytime.' }
     ])
     gameState.paused = true
   }
@@ -293,7 +293,7 @@ watch(currentTime, (time) => {
   if (day === 1 && !shownNoonMsg.value && time >= 12 * 3600) {
     shownNoonMsg.value = true
     tutorialController.queueMessages([
-      { id: 'd1_advanced', text: 'In the Advanced section below you can see detailed weather, production, consumption, and balancing info! Useful for optimal control but unnecessarily complex for now.', highlight: 'advanced' }
+      { id: 'd1_advanced', text: 'In the Advanced section below you can see detailed weather, production, consumption, and balancing info! Interesting and useful for optimal control but unnecessarily complex for now.', highlight: 'advanced' }
     ])
     gameState.paused = true
   }

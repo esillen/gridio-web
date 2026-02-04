@@ -175,13 +175,13 @@ function queueBiddingMessages() {
       { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy volumes, drag down to buy.', highlight: 'da-chart' },
       { id: 'd1_prices', text: 'The numbers show prices in €/MWh. Larger, redder numbers = higher prices. Sell high, buy low!', highlight: 'prices' },
       { id: 'd1_batteries', text: 'This is your battery fleet! Batteries have power (MW) and energy (MWh). The MW rating means how much power they can deliver at most at any one instant. The MWh rating means how much energy they can maximally store.', highlight: 'batteries' },
-      { id: 'd1_place_bid', text: 'Place at least one bid to start.', highlight: 'da-chart' },
+      { id: 'd1_place_bid', text: 'Place at least one bid and then start the day!', highlight: 'da-chart' },
     ])
   } else if (day === 2) {
     tutorialController.queueMessages([
       { id: 'd2_goal', text: 'Day 2: Earn at least €600 to advance! Plan your bids carefully.' },
       { id: 'd2_capacity', text: 'The maximum bid you can make (up or down) is constrained by the power rating of your batteries. Other than that, the game (and the real world market) will not stop you from making bids that are impossible to fulfill . Don\'t bid more than you can deliver as you need to pay penalties for failed deliveries!', highlight: 'da-chart' },
-      { id: 'd2_battery_capacity', text: 'Check your batteries\' energy capacity. The energy capacity will limit how much power you will be able to deliver throughout the day. Charge batteries when the price is low, discharge when price is high.', highlight: 'batteries' },
+      { id: 'd2_battery_capacity', text: 'Check your batteries\' energy capacity. The energy capacity will limit how much power you will be able to deliver throughout the day. Buy (charge) when the price is low, sell (discharge) when price is high.', highlight: 'batteries' },
       { id: 'd2_tips', text: 'For the sake of the game, your batteries are reset to 50% state-of-charge (SOC) every day. Trade wisely to hit your goal!' },
     ])
   } else if (day === 3) {
