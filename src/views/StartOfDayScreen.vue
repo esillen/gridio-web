@@ -2,12 +2,13 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
-import { tutorialController } from '../game/TutorialController'
+import { tutorialController } from '../tutorial'
 import { useRouter } from 'vue-router'
 import BESSPanel from '../components/BESSPanel.vue'
 
 // Refs for highlightable elements
 const chartSectionRef = ref<HTMLElement | null>(null)
+const bessWrapperRef = ref<HTMLElement | null>(null)
 
 // Spotlight positioning (using absolute positioning relative to document)
 const spotlightRect = ref<{ top: number; left: number; width: number; height: number } | null>(null)
@@ -27,6 +28,8 @@ function updateSpotlight() {
   
   if ((highlight === 'da-chart' || highlight === 'prices') && chartSectionRef.value) {
     element = chartSectionRef.value
+  } else if (highlight === 'batteries' && bessWrapperRef.value) {
+    element = bessWrapperRef.value
   }
 
   if (element) {
@@ -35,19 +38,27 @@ function updateSpotlight() {
     const scrollX = window.scrollX
     const padding = 8
     
-    // Convert viewport coords to document coords
+    // Spotlight uses viewport coords (parent is position: fixed)
     spotlightRect.value = {
-      top: rect.top + scrollY - padding,
-      left: rect.left + scrollX - padding,
+      top: rect.top - padding,
+      left: rect.left - padding,
       width: rect.width + padding * 2,
       height: rect.height + padding * 2,
     }
 
-    // Position message below the chart
-    messagePosition.value = {
-      top: `${rect.bottom + scrollY + 20}px`,
-      left: `${rect.left + scrollX + rect.width / 2}px`,
-      transform: 'translateX(-50%)',
+    // Message uses document coords (position: absolute in overlay)
+    if (highlight === 'batteries') {
+      messagePosition.value = {
+        top: `${rect.top + scrollY + 20}px`,
+        left: `${rect.right + scrollX + 20}px`,
+        transform: 'none',
+      }
+    } else {
+      messagePosition.value = {
+        top: `${rect.bottom + scrollY + 20}px`,
+        left: `${rect.left + scrollX + rect.width / 2}px`,
+        transform: 'translateX(-50%)',
+      }
     }
   } else {
     spotlightRect.value = null
@@ -138,11 +149,13 @@ onMounted(() => {
   
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('mouseup', stopDrag)
+  window.addEventListener('scroll', updateSpotlight)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('mouseup', stopDrag)
+  window.removeEventListener('scroll', updateSpotlight)
 })
 
 function queueBiddingMessages() {
@@ -154,11 +167,14 @@ function queueBiddingMessages() {
       { id: 'd1_welcome', text: 'Welcome to the Tutorial! Over 4 in-game days, you\'ll gradually learn to trade and control batteries on energy markets.' },
       { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy volumes, drag down to buy.', highlight: 'da-chart' },
       { id: 'd1_prices', text: 'The numbers show prices in €/MWh. Larger, redder numbers = higher prices. Sell high, buy low!', highlight: 'prices' },
-      { id: 'd1_capacity', text: 'Your batteries have limited capacity. Don\'t bid more than you can deliver! Place at least one bid to start.' },
+      { id: 'd1_batteries', text: 'These are your batteries! Batteries have power (MW) and energy (MWh). The MW rating means how much power they can deliver at most at any one instant. The MWh rating means how much energy they can maximally store.', highlight: 'batteries' },
+      { id: 'd1_place_bid', text: 'Place at least one bid to start.', highlight: 'da-chart' },
     ])
   } else if (day === 2) {
     tutorialController.queueMessages([
       { id: 'd2_goal', text: 'Day 2: Earn at least €600 to advance! Plan your bids carefully.' },
+      { id: 'd2_capacity', text: 'The maximum bid you can make (up or down) is constrained by the power rating of your batteries. Other than that, the game (and the real world market) will not stop you from making bids that are impossible to fulfill . Don\'t bid more than you can deliver as you need to pay penalties for failed deliveries!', highlight: 'da-chart' },
+      { id: 'd2_battery_capacity', text: 'Check your batteries\' energy capacity. The energy capacity will limit how much power you will be able to deliver throughout the day. Charge batteries when the price is low, discharge when price is high.', highlight: 'batteries' },
       { id: 'd2_tips', text: 'For the sake of the game, your batteries are reset to 50% state-of-charge (SOC) every day. Trade wisely to hit your goal!' },
     ])
   } else if (day === 3) {
@@ -404,7 +420,11 @@ function goRight() {
 
     <div class="main-content">
       <!-- BESS Panel (visual only) -->
-      <div class="bess-wrapper">
+      <div 
+        ref="bessWrapperRef" 
+        class="bess-wrapper"
+        :class="{ 'tutorial-highlight': tutorialMessage?.highlight === 'batteries' }"
+      >
         <BESSPanel :hide-controls="true" />
       </div>
 
@@ -620,7 +640,7 @@ function goRight() {
 
     <!-- Tutorial message overlay -->
     <Transition name="fade">
-      <div v-if="tutorialMessage" class="tutorial-overlay" @click="tutorialController.advanceMessage()">
+      <div v-if="tutorialMessage" class="tutorial-overlay">
         <div class="tutorial-backdrop" :class="{ 'has-spotlight': spotlightRect }">
           <div 
             v-if="spotlightRect" 

@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
-import { tutorialController } from '../game/TutorialController'
+import { tutorialController } from '../tutorial'
 import PowerChart from '../components/PowerChart.vue'
 import WeatherChart from '../components/WeatherChart.vue'
 import ConsumptionChart from '../components/ConsumptionChart.vue'
@@ -46,15 +46,15 @@ function updateSpotlight() {
     const scrollX = window.scrollX
     const padding = 8
     
-    // Convert viewport coords to document coords
+    // Spotlight uses viewport coords (parent is position: fixed)
     spotlightRect.value = {
-      top: rect.top + scrollY - padding,
-      left: rect.left + scrollX - padding,
+      top: rect.top - padding,
+      left: rect.left - padding,
       width: rect.width + padding * 2,
       height: rect.height + padding * 2,
     }
 
-    // Position message to the right of BESS panel, or below charts
+    // Message uses document coords (position: absolute in overlay)
     if (highlight === 'bess') {
       messagePosition.value = {
         top: `${rect.top + scrollY + 20}px`,
@@ -198,6 +198,7 @@ function handleDayCompleteKeydown(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('keydown', handleDayCompleteKeydown)
+  window.addEventListener('scroll', updateSpotlight)
   
   if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
     router.push('/game')
@@ -216,6 +217,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('keydown', handleDayCompleteKeydown)
+  window.removeEventListener('scroll', updateSpotlight)
 })
 
 const currentTime = computed(() => gameState.currentTime)
@@ -438,7 +440,7 @@ watch(tutorialMessage, (msg) => {
 
     <!-- Tutorial message overlay -->
     <Transition name="fade">
-      <div v-if="tutorialMessage" class="tutorial-overlay" @click="tutorialController.advanceMessage()">
+      <div v-if="tutorialMessage" class="tutorial-overlay">
         <!-- Spotlight cutout using CSS mask -->
         <div class="tutorial-backdrop" :class="{ 'has-spotlight': spotlightRect }">
           <div 

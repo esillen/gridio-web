@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { gameState } from './GameState'
+import { gameState } from '../game/GameState'
 
 export type TutorialDay = 1 | 2 | 3 | 4
 export type TutorialPhase = 'bidding' | 'day' | 'end'

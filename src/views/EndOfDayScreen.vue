@@ -2,7 +2,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { gameState } from '../game/GameState'
-import { tutorialController } from '../game/TutorialController'
+import { tutorialController } from '../tutorial'
 import DABidChart from '../components/DABidChart.vue'
 import FCRBidChart from '../components/FCRBidChart.vue'
 

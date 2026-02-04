@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { tutorialController } from '../game/TutorialController'
+import { tutorialController } from './TutorialController'
 
 const router = useRouter()
 
