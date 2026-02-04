@@ -179,21 +179,21 @@ function queueBiddingMessages() {
     ])
   } else if (day === 2) {
     tutorialController.queueMessages([
-      { id: 'd2_goal', text: 'Day 2: Earn at least €600 to advance! Plan your bids carefully.' },
-      { id: 'd2_capacity', text: 'The maximum bid you can make (up or down) is constrained by the power rating of your batteries. Other than that, the game (and the real world market) will not stop you from making bids that are impossible to fulfill . Don\'t bid more than you can deliver as you need to pay penalties for failed deliveries!', highlight: 'da-chart' },
-      { id: 'd2_battery_capacity', text: 'Check your batteries\' energy capacity. The energy capacity will limit how much power you will be able to deliver throughout the day. Buy (charge) when the price is low, sell (discharge) when price is high.', highlight: 'batteries' },
+      { id: 'd2_goal', text: 'Day 2: Earn at least €1000 to advance! Plan your bids carefully.' },
+      { id: 'd2_capacity', text: 'The maximum bid you can make (up or down) is constrained by the power rating of your batteries. Other than that, the game (and the real world market) will not stop you from making bids that are impossible to fulfill. Don\'t bid more than you can deliver as you need to pay penalties for failed deliveries!', highlight: 'da-chart' },
+      { id: 'd2_battery_capacity', text: 'Check your batteries\' energy capacity (the MWh number). The energy capacity will limit how much power you will be able to deliver throughout the day. Buy (charge) when the price is low, sell (discharge) when price is high.', highlight: 'batteries' },
       { id: 'd2_tips', text: 'For the sake of the game, your batteries are reset to 50% state-of-charge (SOC) every day. Trade wisely to hit your goal!' },
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([
       { id: 'd3_fcr_intro', text: 'Day 3: Today you trade on the FCR market - crucial for grid stability!' },
-      { id: 'd3_fcr_explain', text: 'In FCR, you bid how much power your batteries CAN provide if the grid needs it. You get paid for availability!' },
-      { id: 'd3_goal', text: 'Earn €400 to advance. But if the grid needs power and you can\'t deliver, you\'ll face penalties!' },
+      { id: 'd3_fcr_explain', text: 'In FCR, you bid how much power your batteries CAN provide if the grid needs it. You get paid only for being available! But if the grid needs power and you can\'t deliver, you\'ll face penalties.' },
+      { id: 'd3_goal', text: 'Earn €1000 to advance.' },
     ])
   } else if (day === 4) {
     tutorialController.queueMessages([
       { id: 'd4_intro', text: 'Day 4: Final tutorial day! You now bid on BOTH DA and FCR markets with full control.' },
-      { id: 'd4_goal', text: 'Earn €1000 to complete the tutorial! Use Tab to switch between DA and FCR views.' },
+      { id: 'd4_goal', text: 'Earn €2000 to complete the tutorial! Use Tab to switch between DA and FCR views.' },
     ])
   }
 }

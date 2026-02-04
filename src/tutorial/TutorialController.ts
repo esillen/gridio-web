@@ -35,7 +35,7 @@ const DAY_CONFIGS: Record<TutorialDay, DayConfig> = {
     fcrEnabled: false,
     chargeDischargeEnabled: false,
     marketToggleEnabled: false,
-    earningsGoal: 600,
+    earningsGoal: 1000,
     forcedMarket: 'da',
   },
   3: {
@@ -43,7 +43,7 @@ const DAY_CONFIGS: Record<TutorialDay, DayConfig> = {
     fcrEnabled: true,
     chargeDischargeEnabled: true,
     marketToggleEnabled: false,
-    earningsGoal: 400,
+    earningsGoal: 1000,
     forcedMarket: 'fcr',
   },
   4: {
@@ -51,7 +51,7 @@ const DAY_CONFIGS: Record<TutorialDay, DayConfig> = {
     fcrEnabled: true,
     chargeDischargeEnabled: true,
     marketToggleEnabled: true,
-    earningsGoal: 1000,
+    earningsGoal: 2000,
     forcedMarket: null,
   },
 }
