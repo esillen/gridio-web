@@ -247,10 +247,10 @@ function queueGameplayMessages() {
     tutorialController.queueMessages([
       { id: 'd1_control', text: 'This is the control room where you monitor and control everything during a trading day.' },
       { id: 'd1_batteries', text: 'These are your batteries. Their state of charge (SOC), power (MW), and capacity (MWh) are displayed.', highlight: 'bess' },
-      { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids. If they run out of energy, they can\'t deliver!' },
-      { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance - why we need balancing services (your role!)', highlight: 'frequency' },
-      { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your delivery.', waitFor: 'tab_to_da' },
-      { id: 'd1_da_chart', text: 'This shows your DA bids and how well you\'re delivering. Press Space to unpause!', highlight: 'frequency' },
+      { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids (DA is the selected mode and you can\'t change it for now).', highlight: 'bess' },
+      { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance. Your services help balance the grid! However, this information is irrelevant when only trading on DA as we do not', highlight: 'frequency' },
+      { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your bids and delivery.', waitFor: 'tab_to_da' },
+      { id: 'd1_da_chart', text: 'This shows your DA commitments and how well you\'re delivering. Press Space to unpause!', highlight: 'frequency' },
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([

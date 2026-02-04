@@ -1,4 +1,8 @@
 import { createSeededRandom, createSeededGaussian } from './seededRandom'
+import hydroReservoirImage from '../../assets/background-images/hydro-reservoir.jpg'
+import hydroRoRImage from '../../assets/background-images/hydro-ror.jpg'
+import houseHeatingImage from '../../assets/background-images/house-heating.jpg'
+import restaurantImage from '../../assets/background-images/restaurant.jpg'
 
 export interface HourlyData {
   hour: number
@@ -35,7 +39,7 @@ export const DEMAND_CATEGORIES: DemandCategory[] = [
     key: 'heating', 
     label: 'Space Heating', 
     color: '#EF4444',
-    image: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=1200&q=80' // Cozy home interior
+    image: houseHeatingImage
   },
   { 
     key: 'industry', 
@@ -47,7 +51,7 @@ export const DEMAND_CATEGORIES: DemandCategory[] = [
     key: 'services', 
     label: 'Services & Commercial', 
     color: '#F59E0B',
-    image: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=1200&q=80' // Office building
+    image: restaurantImage
   },
   { 
     key: 'nonHeating', 
@@ -80,13 +84,13 @@ export const PRODUCTION_CATEGORIES: ProductionCategory[] = [
     key: 'hydroReservoir', 
     label: 'Hydro (Reservoir)', 
     color: '#4467FE',
-    image: 'https://images.unsplash.com/photo-1504701954957-2010ec3bcec1?w=1200&q=80' // Dam
+    image: hydroReservoirImage
   },
   { 
     key: 'hydroRoR', 
     label: 'Hydro (Run-of-River)', 
     color: '#7B9FFF',
-    image: 'https://images.unsplash.com/photo-1432405972618-c60b0225b8f9?w=1200&q=80' // River/waterfall
+    image: hydroRoRImage
   },
   { 
     key: 'chp', 

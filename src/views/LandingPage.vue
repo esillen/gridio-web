@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import backgroundImage from '../assets/background-images/power-lines.jpg'
 
 const router = useRouter()
 </script>
 
 <template>
-  <div class="landing-page">
+  <div class="landing-page" :style="{ backgroundImage: `url(${backgroundImage})` }">
+    <div class="overlay"></div>
     <div class="hero">
       <h1 class="logo">Grid.io</h1>
       <p class="tagline">Master the balance of the power grid</p>
@@ -45,7 +47,22 @@ const router = useRouter()
   align-items: center;
   justify-content: center;
   padding: 2rem;
-  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  position: relative;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  z-index: 0;
+}
+
+.hero, .options, .footer {
+  position: relative;
+  z-index: 1;
 }
 
 .hero {
@@ -56,14 +73,15 @@ const router = useRouter()
 .logo {
   font-size: 4rem;
   font-weight: 700;
-  color: var(--gridio-sky-vivid);
+  color: white;
   margin-bottom: 0.5rem;
   letter-spacing: -0.02em;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
 .tagline {
   font-size: 1.25rem;
-  color: var(--color-gray-600);
+  color: rgba(255, 255, 255, 0.9);
   font-weight: 400;
 }
 
@@ -147,6 +165,6 @@ const router = useRouter()
 
 .footer p {
   font-size: 0.875rem;
-  color: var(--color-gray-400);
+  color: rgba(255, 255, 255, 0.6);
 }
 </style>
