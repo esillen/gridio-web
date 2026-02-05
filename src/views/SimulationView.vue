@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, markRaw } from 'vue'
+import { ref, computed, onMounted, onUnmounted, markRaw } from 'vue'
 import { WorldSimulation } from '../game/WorldSimulation'
 import type { WeatherSnapshot, ConsumptionSnapshot, ProductionSnapshot, FrequencySnapshot, BalancingSnapshot } from '../game/WorldSimulation'
 import type { GridSnapshot } from '../game/PowerGrid'
@@ -12,6 +12,10 @@ import ConsumptionChart from '../components/ConsumptionChart.vue'
 import ProductionChart from '../components/ProductionChart.vue'
 import FrequencyChart from '../components/FrequencyChart.vue'
 import BalancingChart from '../components/BalancingChart.vue'
+
+function fmt(n: number, decimals = 0): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals })
+}
 
 const currentTime = ref(0)
 const isRunning = ref(false)
@@ -133,6 +137,17 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+const latestGrid = computed<GridSnapshot | null>(() =>
+  gridHistory.value.length ? gridHistory.value[gridHistory.value.length - 1]! : null)
+const latestProduction = computed<ProductionSnapshot | null>(() =>
+  productionHistory.value.length ? productionHistory.value[productionHistory.value.length - 1]! : null)
+const latestConsumption = computed<ConsumptionSnapshot | null>(() =>
+  consumptionHistory.value.length ? consumptionHistory.value[consumptionHistory.value.length - 1]! : null)
+const latestWeather = computed<WeatherSnapshot | null>(() =>
+  weatherHistory.value.length ? weatherHistory.value[weatherHistory.value.length - 1]! : null)
+const latestBalancing = computed<BalancingSnapshot | null>(() =>
+  balancingHistory.value.length ? balancingHistory.value[balancingHistory.value.length - 1]! : null)
+
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
   initialize()
@@ -219,6 +234,47 @@ onUnmounted(() => {
             :history="balancingHistory"
             :version="historyVersion"
           />
+        </div>
+        <div v-if="bottomChartView === 'grid' && latestGrid" class="chart-numbers">
+          <span>Production <strong>{{ fmt(latestGrid.production) }}</strong> MW</span>
+          <span>Consumption <strong>{{ fmt(latestGrid.consumption) }}</strong> MW</span>
+          <span>Imbalance <strong>{{ fmt(latestGrid.imbalance) }}</strong> MW</span>
+        </div>
+        <div v-else-if="bottomChartView === 'production' && latestProduction" class="chart-numbers">
+          <span>Nuclear <strong>{{ fmt(latestProduction.nuclearMW) }}</strong></span>
+          <span>Hydro res. <strong>{{ fmt(latestProduction.hydroReservoirMW) }}</strong></span>
+          <span>Hydro RoR <strong>{{ fmt(latestProduction.hydroRoRMW) }}</strong></span>
+          <span>Wind <strong>{{ fmt(latestProduction.windMW) }}</strong></span>
+          <span>Solar <strong>{{ fmt(latestProduction.solarMW) }}</strong></span>
+          <span>CHP <strong>{{ fmt(latestProduction.chpMW) }}</strong></span>
+          <span>Ind. CHP <strong>{{ fmt(latestProduction.industrialChpMW) }}</strong></span>
+          <span>Peakers <strong>{{ fmt(latestProduction.peakersMW) }}</strong></span>
+          <span>Interconn. <strong>{{ fmt(latestProduction.interconnectorsMW) }}</strong></span>
+          <span class="total">Total <strong>{{ fmt(latestProduction.totalMW) }}</strong> MW</span>
+        </div>
+        <div v-else-if="bottomChartView === 'consumption' && latestConsumption" class="chart-numbers">
+          <span>Heating <strong>{{ fmt(latestConsumption.heatingMW) }}</strong></span>
+          <span>Non-heating <strong>{{ fmt(latestConsumption.nonHeatingMW) }}</strong></span>
+          <span>Services <strong>{{ fmt(latestConsumption.servicesMW) }}</strong></span>
+          <span>Transport <strong>{{ fmt(latestConsumption.transportMW) }}</strong></span>
+          <span>Industry <strong>{{ fmt(latestConsumption.industryMW) }}</strong></span>
+          <span>Losses <strong>{{ fmt(latestConsumption.lossesMW) }}</strong></span>
+          <span>Exports <strong>{{ fmt(latestConsumption.exportsMW) }}</strong></span>
+          <span class="total">Total <strong>{{ fmt(latestConsumption.totalMW) }}</strong> MW</span>
+        </div>
+        <div v-else-if="bottomChartView === 'weather' && latestWeather" class="chart-numbers">
+          <span>Temp <strong>{{ fmt(latestWeather.current.synoptic.temperatureC, 1) }}</strong> °C</span>
+          <span>Wind <strong>{{ fmt(latestWeather.current.synoptic.windMps, 1) }}</strong> m/s</span>
+          <span>Cloud <strong>{{ fmt(latestWeather.current.synoptic.cloudCover01 * 100, 0) }}</strong>%</span>
+          <span v-if="latestWeather.current.windRegions.length">Wind regions: {{ latestWeather.current.windRegions.map(r => fmt(r.windSpeed100mMps, 1)).join(', ') }} m/s</span>
+        </div>
+        <div v-else-if="bottomChartView === 'balancing' && latestBalancing" class="chart-numbers">
+          <span>FCR <strong>{{ fmt(latestBalancing.fcrMW) }}</strong></span>
+          <span>FFR <strong>{{ fmt(latestBalancing.ffrMW) }}</strong></span>
+          <span>aFRR <strong>{{ fmt(latestBalancing.afrrMW) }}</strong></span>
+          <span>mFRR <strong>{{ fmt(latestBalancing.mfrrMW) }}</strong></span>
+          <span class="total">Total reserves <strong>{{ fmt(latestBalancing.totalReserveMW) }}</strong> MW</span>
+          <span>Frequency <strong>{{ fmt(latestBalancing.frequencyHz, 3) }}</strong> Hz</span>
         </div>
       </div>
     </div>
@@ -347,10 +403,38 @@ h1 {
 }
 
 .bottom-chart {
-  height: 500px;
+  height: 600px;
+}
+
+.chart-numbers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem 0 1.25rem;
+  border-top: 1px solid var(--color-gray-200);
+  font-size: 0.8rem;
+  color: var(--color-gray-600);
+  min-height: 5rem;
+}
+
+.chart-numbers span {
+  white-space: nowrap;
+}
+
+.chart-numbers strong {
+  color: var(--color-gray-800);
+  font-weight: 600;
+  margin-left: 0.25rem;
+}
+
+.chart-numbers span.total {
+  margin-left: auto;
+  font-weight: 500;
 }
 
 .advanced-section {
   margin-top: 0.5rem;
+  padding-bottom: 1rem;
 }
 </style>

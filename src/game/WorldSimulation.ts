@@ -72,6 +72,7 @@ export interface ConsumptionSnapshot {
   transportMW: number
   industryMW: number
   lossesMW: number
+  exportsMW: number
   totalMW: number
 }
 
@@ -449,6 +450,7 @@ export class WorldSimulation {
     }
 
     const interconnectorsMW = toggles.interconnectors ? this._interconnectors.netImportMW : 0
+    const exportsMW = Math.max(0, -interconnectorsMW)
     const totalProductionMW = domesticProductionMW + interconnectorsMW
 
     // Record history snapshots at sample interval (not every tick) and only after warm-up
@@ -468,7 +470,8 @@ export class WorldSimulation {
         transportMW,
         industryMW,
         lossesMW,
-        totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW,
+        exportsMW,
+        totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW + exportsMW,
       })
 
       this._productionHistory.push({
@@ -719,9 +722,10 @@ export class WorldSimulation {
           maxMW: hydroBreakdown?.maxProductionMW ?? 14580,
           rampUpMWPerS: 20,
           rampDownMWPerS: 40,
-          reservoirEnergyMWh: hydroBreakdown?.energyBudgetTodayMWh ?? 300000,
+          reservoirEnergyMWh: hydroBreakdown?.reservoirStorageMWh ?? 0,
           reservoirEnergyMinMWh: 0,
-          reservoirEnergyMaxMWh: 350000,
+          reservoirEnergyMaxMWh: 34_000_000,
+          maxDailyEnergyDrawMWh: hydroBreakdown?.dailyEnergyBudgetMaxMWh,
         },
         hydroRunOfRiver: {
           minMW: 0,
@@ -735,8 +739,8 @@ export class WorldSimulation {
           startDelayS: 300,
         },
         interconnectors: {
-          netImportMinMW: -3000,
-          netImportMaxMW: 3000,
+          netImportMinMW: -7000,
+          netImportMaxMW: 7000,
           rampMWPerS: 100,
         },
         demandResponse: {

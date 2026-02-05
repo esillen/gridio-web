@@ -13,6 +13,8 @@ const props = defineProps<{
 const chartEl = ref<HTMLDivElement>()
 let chart: uPlot | null = null
 
+const LEGEND_RESERVE_PX = 100
+
 const COLORS = {
   nuclear: '#F0A679',
   hydroReservoir: '#4467FE',
@@ -281,7 +283,8 @@ function getOpts(width: number, height: number): uPlot.Options {
 function initChart() {
   if (!chartEl.value) return
   const rect = chartEl.value.getBoundingClientRect()
-  const opts = getOpts(rect.width, rect.height)
+  const plotHeight = Math.max(200, rect.height - LEGEND_RESERVE_PX)
+  const opts = getOpts(rect.width, plotHeight)
   chart = new uPlot(opts, buildData(), chartEl.value)
 }
 
@@ -296,7 +299,8 @@ onMounted(() => {
   const resizeObserver = new ResizeObserver(() => {
     if (chart && chartEl.value) {
       const rect = chartEl.value.getBoundingClientRect()
-      chart.setSize({ width: rect.width, height: rect.height })
+      const plotHeight = Math.max(200, rect.height - LEGEND_RESERVE_PX)
+      chart.setSize({ width: rect.width, height: plotHeight })
     }
   })
   
@@ -325,12 +329,12 @@ watch(() => props.version, updateChart)
 
 .chart :deep(.u-legend) {
   text-align: left;
-  padding: 8px;
-  font-size: 12px;
+  padding: 6px 8px 8px;
+  font-size: 11px;
 }
 
 .chart :deep(.u-legend .u-series) {
-  padding: 2px 8px;
+  padding: 1px 6px;
 }
 
 .chart :deep(.u-legend .u-label) {

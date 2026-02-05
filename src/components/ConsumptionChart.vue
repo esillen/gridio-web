@@ -13,6 +13,8 @@ const props = defineProps<{
 const chartEl = ref<HTMLDivElement>()
 let chart: uPlot | null = null
 
+const LEGEND_RESERVE_PX = 100
+
 const COLORS = {
   heating: '#F2555D',
   industry: '#8B5CF6',
@@ -20,6 +22,7 @@ const COLORS = {
   services: '#4467FE',
   transport: '#55D379',
   losses: '#9CA3AF',
+  exports: '#0EA5E9',
   axis: '#6b7280',
   grid: '#e5e7eb',
 }
@@ -31,7 +34,7 @@ function formatHours(hours: number): string {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
 }
 
-// Build stacked data: heating (bottom), industry, services, non-heating, transport, losses (top)
+// Build stacked data: heating (bottom), industry, services, non-heating, transport, losses, exports (top)
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const heating: number[] = []
@@ -40,27 +43,28 @@ function buildData(): uPlot.AlignedData {
   const nonHeating: number[] = []
   const transport: number[] = []
   const losses: number[] = []
+  const exports: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
-    // Cumulative stacking from bottom to top
     const heatingVal = s.heatingMW
     const industryVal = heatingVal + s.industryMW
     const servicesVal = industryVal + s.servicesMW
     const nonHeatingVal = servicesVal + s.nonHeatingMW
     const transportVal = nonHeatingVal + s.transportMW
     const lossesVal = transportVal + s.lossesMW
-    
+    const exportsVal = lossesVal + (s.exportsMW ?? 0)
+
     heating.push(heatingVal)
     industry.push(industryVal)
     services.push(servicesVal)
     nonHeating.push(nonHeatingVal)
     transport.push(transportVal)
     losses.push(lossesVal)
+    exports.push(exportsVal)
   }
 
-  // Order: time, then top-to-bottom for rendering
-  return [times, losses, transport, nonHeating, services, industry, heating]
+  return [times, exports, losses, transport, nonHeating, services, industry, heating]
 }
 
 function stackedAreaPaths(u: uPlot, seriesIdx: number, idx0: number, idx1: number): uPlot.Series.Paths | null {
@@ -150,6 +154,18 @@ function getOpts(width: number, height: number): uPlot.Options {
         value: (_, v) => v != null ? formatHours(v) : '--',
       },
       {
+        label: 'Exports',
+        stroke: COLORS.exports,
+        fill: COLORS.exports + '80',
+        width: 1,
+        paths: stackedAreaPaths,
+        value: (u, v, si, i) => {
+          if (v == null || i == null) return '--'
+          const below = u.data[si + 1]?.[i] ?? 0
+          return `${(v - below).toFixed(0)} MW`
+        },
+      },
+      {
         label: 'Losses',
         stroke: COLORS.losses,
         fill: COLORS.losses + '80',
@@ -230,7 +246,8 @@ function getOpts(width: number, height: number): uPlot.Options {
 function initChart() {
   if (!chartEl.value) return
   const rect = chartEl.value.getBoundingClientRect()
-  const opts = getOpts(rect.width, rect.height)
+  const plotHeight = Math.max(200, rect.height - LEGEND_RESERVE_PX)
+  const opts = getOpts(rect.width, plotHeight)
   chart = new uPlot(opts, buildData(), chartEl.value)
 }
 
@@ -245,7 +262,8 @@ onMounted(() => {
   const resizeObserver = new ResizeObserver(() => {
     if (chart && chartEl.value) {
       const rect = chartEl.value.getBoundingClientRect()
-      chart.setSize({ width: rect.width, height: rect.height })
+      const plotHeight = Math.max(200, rect.height - LEGEND_RESERVE_PX)
+      chart.setSize({ width: rect.width, height: plotHeight })
     }
   })
   
@@ -274,12 +292,12 @@ watch(() => props.version, updateChart)
 
 .chart :deep(.u-legend) {
   text-align: left;
-  padding: 8px;
-  font-size: 12px;
+  padding: 6px 8px 8px;
+  font-size: 11px;
 }
 
 .chart :deep(.u-legend .u-series) {
-  padding: 2px 8px;
+  padding: 1px 6px;
 }
 
 .chart :deep(.u-legend .u-label) {

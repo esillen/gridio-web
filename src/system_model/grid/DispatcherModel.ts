@@ -187,8 +187,8 @@ const CONSTANTS = {
   },
   
   hydroPolicy: {
-    endOfDayTargetFracOfCurrent: 0.90,
-    minEndOfDayFrac: 0.70,
+    endOfDayTargetFracOfCurrent: 0.35,
+    minEndOfDayFrac: 0.20,
   },
 }
 

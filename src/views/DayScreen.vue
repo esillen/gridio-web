@@ -763,13 +763,13 @@ h1 {
 }
 
 .advanced-content .chart-container {
-  height: 500px;
+  height: 600px;
 }
 
 .expand-enter-active,
 .expand-leave-active {
   transition: all 0.3s ease;
-  max-height: 800px;
+  max-height: 920px;
 }
 
 .expand-enter-from,

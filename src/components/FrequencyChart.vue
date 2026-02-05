@@ -59,7 +59,27 @@ function getOpts(width: number, height: number): uPlot.Options {
         range: () => [49.0, 51.0],
       },
       imbalance: {
-        auto: true,
+        auto: false,
+        range: (u, dataMin, dataMax) => {
+          let lo = dataMin ?? 0
+          let hi = dataMax ?? 0
+          const imbalanceData = u.data[2]
+          if (imbalanceData?.length) {
+            let minVal = Infinity
+            let maxVal = -Infinity
+            for (let i = 0; i < imbalanceData.length; i++) {
+              const v = imbalanceData[i]
+              if (v != null && Number.isFinite(v)) {
+                minVal = Math.min(minVal, v)
+                maxVal = Math.max(maxVal, v)
+              }
+            }
+            if (Number.isFinite(minVal)) lo = minVal
+            if (Number.isFinite(maxVal)) hi = maxVal
+          }
+          const m = Math.max(Math.abs(lo), Math.abs(hi), 50)
+          return [-m, m]
+        },
       },
     },
     axes: [
@@ -143,16 +163,43 @@ function getOpts(width: number, height: number): uPlot.Options {
   }
 }
 
+function setImbalanceScaleFromData(u: uPlot, data: uPlot.AlignedData) {
+  const imbalanceData = data[2]
+  if (imbalanceData?.length) {
+    let minVal = Infinity
+    let maxVal = -Infinity
+    for (let i = 0; i < imbalanceData.length; i++) {
+      const v = imbalanceData[i]
+      if (v != null && Number.isFinite(v)) {
+        minVal = Math.min(minVal, v)
+        maxVal = Math.max(maxVal, v)
+      }
+    }
+    if (Number.isFinite(minVal) || Number.isFinite(maxVal)) {
+      const m = Math.max(
+        Math.abs(Number.isFinite(minVal) ? minVal : 0),
+        Math.abs(Number.isFinite(maxVal) ? maxVal : 0),
+        50
+      )
+      u.setScale('imbalance', { min: -m, max: m })
+    }
+  }
+}
+
 function initChart() {
   if (!chartEl.value) return
   const rect = chartEl.value.getBoundingClientRect()
   const opts = getOpts(rect.width, rect.height)
-  chart = new uPlot(opts, buildData(), chartEl.value)
+  const data = buildData()
+  chart = new uPlot(opts, data, chartEl.value)
+  setImbalanceScaleFromData(chart, data)
 }
 
 function updateChart() {
   if (!chart) return
-  chart.setData(buildData())
+  const data = buildData()
+  chart.setData(data)
+  setImbalanceScaleFromData(chart, data)
 }
 
 onMounted(() => {

@@ -73,7 +73,7 @@ initCSV('production_solar_sites', ['time_s', 'site_id', 'production_MW', 'capaci
 
 initCSV('consumption', [
   'time_s',
-  'heating_MW', 'non_heating_MW', 'services_MW', 'transport_MW', 'industry_MW', 'grid_losses_MW', 'total_MW'
+  'heating_MW', 'non_heating_MW', 'services_MW', 'transport_MW', 'industry_MW', 'grid_losses_MW', 'exports_MW', 'total_MW'
 ])
 
 initCSV('frequency', [
@@ -214,7 +214,9 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
   const transportMW = transport?.consumptionMW ?? 0
   const industryMW = industry?.consumptionMW ?? 0
   const gridLossesMW = gridLosses?.consumptionMW ?? 0
-  const totalConsumption = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + gridLossesMW
+  const netImportMW = simulation.interconnectorsBreakdown?.netImportMW ?? 0
+  const exportsMW = Math.max(0, -netImportMW)
+  const totalConsumption = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + gridLossesMW + exportsMW
 
   writeCSVRow('consumption', [
     simTime,
@@ -224,6 +226,7 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
     transportMW,
     industryMW,
     gridLossesMW,
+    exportsMW,
     totalConsumption
   ])
 

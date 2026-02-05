@@ -22,6 +22,7 @@ export interface HydroBreakdown {
   reservoirStorageMWh: number
   reservoirStorageLevelPct: number
   maxProductionMW: number
+  dailyEnergyBudgetMaxMWh: number
 }
 
 const CONSTANTS = {
@@ -197,6 +198,7 @@ export class HydroReservoirFleetModel implements Actor {
       reservoirStorageMWh: this.reservoirStorageMWh,
       reservoirStorageLevelPct: (this.reservoirStorageMWh / CONSTANTS.storageEnergyCapacityMWh) * 100,
       maxProductionMW: MAX_POWER_MW,
+      dailyEnergyBudgetMaxMWh: DAILY_ENERGY_BUDGET_MAX_MWH,
     }
 
     return this.lastBreakdown
