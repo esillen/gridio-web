@@ -12,11 +12,11 @@ const CONSTANTS = {
   
   // Frequency PID gains
   freqKp: 2000.0,      // MW per Hz error
-  freqKi: 500.0,       // MW per Hz*s
+  freqKi: 800.0,       // MW per Hz*s
   
   // Imbalance PI gains
   imbKp: 0.3,          // Fraction of imbalance
-  imbKi: 0.05,         // Integral gain
+  imbKi: 0.15,         // Integral gain
   
   // Limits
   maxCorrectionMW: 2000.0,
@@ -69,8 +69,10 @@ export class GameplayCorrectionModel {
     // Smooth the output to avoid sudden jumps
     this.smoothedCorrectionMW += (totalCorrectionMW - this.smoothedCorrectionMW) * (dt / C.tauSmoothS)
 
+    // DISABLED FOR TESTING - to re-enable, uncomment the line below and comment out the return 0 line
+    // return { correctionMW: this.smoothedCorrectionMW }
     return {
-      correctionMW: this.smoothedCorrectionMW,
+      correctionMW: 0,  // Disabled - FFR testing
     }
   }
 

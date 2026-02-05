@@ -15,6 +15,7 @@ let chart: uPlot | null = null
 
 const COLORS = {
   fcr: '#10B981',
+  ffr: '#EC4899',
   afrr: '#3B82F6',
   mfrr: '#F59E0B',
   frequency: '#6366F1',
@@ -33,6 +34,7 @@ function formatHours(hours: number): string {
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const fcr: number[] = []
+  const ffr: number[] = []
   const afrr: number[] = []
   const mfrr: number[] = []
   const frequency: number[] = []
@@ -40,12 +42,13 @@ function buildData(): uPlot.AlignedData {
   for (const s of props.history) {
     times.push(s.time / 3600)
     fcr.push(s.fcrMW)
+    ffr.push(s.ffrMW)
     afrr.push(s.afrrMW)
     mfrr.push(s.mfrrMW)
     frequency.push(s.frequencyHz)
   }
 
-  return [times, fcr, afrr, mfrr, frequency]
+  return [times, fcr, ffr, afrr, mfrr, frequency]
 }
 
 function getOpts(width: number, height: number): uPlot.Options {
@@ -103,6 +106,13 @@ function getOpts(width: number, height: number): uPlot.Options {
         stroke: COLORS.fcr,
         width: 2,
         fill: COLORS.fcr + '40',
+        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
+      },
+      {
+        label: 'FFR',
+        stroke: COLORS.ffr,
+        width: 2,
+        fill: COLORS.ffr + '40',
         value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
       {

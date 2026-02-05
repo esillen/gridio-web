@@ -58,6 +58,9 @@ export type { AFRRInput, AFRRBreakdown } from './grid/AFRRModel'
 export { MFRRModel } from './grid/MFRRModel'
 export type { MFRRInput, MFRRBreakdown } from './grid/MFRRModel'
 
+export { FFRModel } from './grid/FFRModel'
+export type { FFRInput, FFRBreakdown } from './grid/FFRModel'
+
 export { DispatcherModel } from './grid/DispatcherModel'
 export type { 
   DispatcherInput, 

@@ -211,7 +211,7 @@ class TutorialController {
   calculateEarnings(): number {
     const daRevenue = gameState.bessPerformance.daPerformance.reduce((sum, hour) => {
       const price = gameState.marketPrices.daEurPerMWh[hour.hour] ?? 0
-      return sum + (hour.deliveredMWh * price)
+      return sum + (hour.bidMWh * price)
     }, 0)
 
     const fcrRevenue = gameState.bessPerformance.fcrPerformance.reduce((sum, hour) => {

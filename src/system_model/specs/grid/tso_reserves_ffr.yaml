@@ -1,0 +1,192 @@
+model_part: tso_reserves_ffr
+version: 1.0
+tick_s: 1
+
+description: >
+  Fast Frequency Reserve (FFR) model for a Nordic-style grid.
+  FFR is a very fast, short-duration active power response intended to arrest fast frequency drops
+  after a large contingency (e.g., generator trip) by injecting power within ~1–2 seconds.
+  This model:
+    - Arms/disarms FFR based on availability and SOC constraints (for BESS providers).
+    - Triggers only on underfrequency (below threshold) AND sufficiently negative RoCoF (fast drop),
+      to avoid chattering on normal regulation.
+    - Delivers a power injection profile with fast ramp to a contracted MW and an energy-limited sustain,
+      then decays/releases (no long-term balancing).
+  Output is the aggregate activated MW from all FFR providers in the system.
+
+units:
+  power: MW
+  frequency: Hz
+  rocof: Hz/s
+  time: s
+  energy: MWh
+
+inputs:
+  time_now:
+    unix_s: int
+
+  # System measurements (from system_frequency_and_imbalance)
+  system_frequency_and_imbalance:
+    frequency_Hz: float
+    rocof_Hz_per_s: float
+
+  # Available/contracted FFR capacity in MW (aggregate of providers).
+  # In your game, you can compute this from enabled assets (BESS, etc.).
+  ffr_capacity:
+    available_MW: float
+
+  # Optional: energy budget limiter (e.g., aggregate BESS energy reserved for FFR)
+  # If not available, model uses a conservative default energy per MW.
+  ffr_energy_budget:
+    enabled: bool
+    energy_available_MWh: float
+
+  # Optional manual disable (sandbox / debugging)
+  enable:
+    enabled: bool
+
+state:
+  armed: bool
+  active: bool
+  time_since_trigger_s: float
+  delivered_energy_MWh: float
+  last_activation_MW: float
+  rearm_timer_s: float
+
+constants:
+  # --- Trigger logic (typical concept: underfrequency + fast drop) ---
+  # These are game-tunable; pick conservative values to avoid false triggers.
+  trigger_freq_Hz: 49.70              # trigger when f < 49.70 Hz
+  trigger_rocof_Hz_per_s: -0.15        # and RoCoF < -0.15 Hz/s (fast drop)
+
+  # Disarm conditions / hysteresis to avoid oscillation
+  reset_freq_Hz: 49.85                # must recover above this to allow re-arming
+  reset_rocof_Hz_per_s: -0.02          # and RoCoF not strongly negative
+
+  # Rearm cooldown after an event (avoid repeated triggers from the same disturbance)
+  rearm_cooldown_s: 900.0             # 15 minutes
+
+  # --- Delivery profile (fast) ---
+  # Aim: reach full power quickly and sustain briefly.
+  ramp_up_time_s: 1.0                  # reach full within ~1s
+  hold_time_s: 5.0                     # hold full for 5s
+  ramp_down_time_s: 10.0               # then ramp down over 10s
+
+  # --- Energy limits ---
+  # If energy budget input not used: assume each MW of FFR has limited duration energy behind it.
+  # Example: 15 seconds at full power => 15/3600 MWh per MW = 0.004167 MWh per MW.
+  default_energy_per_MW_MWh: 0.0042
+
+  # Safety caps
+  max_activation_MW: 5000.0            # sanity cap
+  min_capacity_to_arm_MW: 10.0         # ignore tiny capacity
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  s_to_h: "s_to_h(s)=s/3600.0"
+
+init:
+  armed: true
+  active: false
+  time_since_trigger_s: 0.0
+  delivered_energy_MWh: 0.0
+  last_activation_MW: 0.0
+  rearm_timer_s: 0.0
+
+update_per_tick:
+  - enabled: "= enable.enabled"
+  - f: "= system_frequency_and_imbalance.frequency_Hz"
+  - rocof: "= system_frequency_and_imbalance.rocof_Hz_per_s"
+
+  - cap_MW: "= clamp(ffr_capacity.available_MW, 0.0, max_activation_MW)"
+  - cap_MW: "= (cap_MW < min_capacity_to_arm_MW) ? 0.0 : cap_MW"
+
+  # Energy budget available (MWh)
+  - energy_budget_MWh: >
+      if ffr_energy_budget.enabled:
+        max(0.0, ffr_energy_budget.energy_available_MWh)
+      else:
+        cap_MW * default_energy_per_MW_MWh
+
+  # Rearm timer
+  - state.rearm_timer_s: "= max(0.0, state.rearm_timer_s - tick_s)"
+
+  # Arm/disarm logic
+  - can_arm: "= enabled and (cap_MW > 0.0) and (state.rearm_timer_s == 0.0)"
+  - if can_arm == false:
+      - state.armed: false
+  - if can_arm == true and state.active == false:
+      - state.armed: true
+
+  # Trigger condition (only if armed and not already active)
+  - trigger: "= (state.armed and (state.active == false) and (f <= trigger_freq_Hz) and (rocof <= trigger_rocof_Hz_per_s))"
+
+  - if trigger:
+      - state.active: true
+      - state.armed: false
+      - state.time_since_trigger_s: 0.0
+      - state.delivered_energy_MWh: 0.0
+
+  # If active, compute desired activation profile
+  - if state.active:
+      - state.time_since_trigger_s: "= state.time_since_trigger_s + tick_s"
+
+      # Piecewise profile in per-unit (0..1):
+      # 0..ramp_up: linear up
+      # ramp_up..ramp_up+hold: 1
+      # then ramp down to 0 over ramp_down
+      - t: "= state.time_since_trigger_s"
+      - pu: >
+          if t <= ramp_up_time_s:
+            clamp01(t / max(1e-6, ramp_up_time_s))
+          else if t <= (ramp_up_time_s + hold_time_s):
+            1.0
+          else if t <= (ramp_up_time_s + hold_time_s + ramp_down_time_s):
+            clamp01(1.0 - (t - ramp_up_time_s - hold_time_s) / max(1e-6, ramp_down_time_s))
+          else:
+            0.0
+
+      - desired_MW: "= cap_MW * pu"
+
+      # Enforce remaining energy budget (integrate energy and clip if needed)
+      - dt_h: "= s_to_h(tick_s)"
+      - remaining_MWh: "= max(0.0, energy_budget_MWh - state.delivered_energy_MWh)"
+      - max_MW_from_energy: "= (dt_h > 0) ? (remaining_MWh / dt_h) : desired_MW"
+      - activation_MW: "= min(desired_MW, max_MW_from_energy)"
+
+      - state.delivered_energy_MWh: "= state.delivered_energy_MWh + activation_MW * dt_h"
+      - state.last_activation_MW: "= activation_MW"
+
+      # End condition: profile ended OR energy depleted OR frequency recovered strongly (optional early stop)
+      - finished_profile: "= (t > (ramp_up_time_s + hold_time_s + ramp_down_time_s))"
+      - depleted: "= (remaining_MWh <= 1e-6)"
+      - recovered: "= (f >= reset_freq_Hz and rocof >= reset_rocof_Hz_per_s)"
+      - if finished_profile or depleted or recovered:
+          - state.active: false
+          - state.last_activation_MW: 0.0
+          - state.rearm_timer_s: "= rearm_cooldown_s"
+
+  - if state.active == false:
+      - state.time_since_trigger_s: 0.0
+
+outputs:
+  # FFR is an injection when frequency is low => positive MW helps generation side.
+  activation_MW: "= state.last_activation_MW"
+
+  # For convenience in your frequency model:
+  # You would add this to the system power balance as +MW (supports generation).
+  production_MW: "= state.last_activation_MW"
+  consumption_MW: 0.0
+
+  state:
+    armed: "= state.armed"
+    active: "= state.active"
+    rearm_timer_s: "= state.rearm_timer_s"
+    delivered_energy_MWh: "= state.delivered_energy_MWh"
+
+  debug:
+    frequency_Hz: "= f"
+    rocof_Hz_per_s: "= rocof"
+    capacity_MW: "= cap_MW"
+    energy_budget_MWh: "= energy_budget_MWh"

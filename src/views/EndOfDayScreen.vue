@@ -27,7 +27,7 @@ const imbalanceData = computed(() => gameState.imbalanceSettlement)
 const revenueBreakdown = computed(() => {
   const daRevenue = daPerformance.value.reduce((sum, hour) => {
     const price = marketPrices.value.daEurPerMWh[hour.hour] ?? 0
-    return sum + (hour.deliveredMWh * price)
+    return sum + (hour.bidMWh * price)
   }, 0)
 
   const fcrRevenue = fcrPerformance.value.reduce((sum, hour) => {

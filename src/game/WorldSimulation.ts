@@ -21,6 +21,7 @@ import {
   FCRModel,
   AFRRModel,
   MFRRModel,
+  FFRModel,
   DispatcherModel,
   GameplayCorrectionModel,
   type WeatherOutput, 
@@ -46,6 +47,7 @@ import {
   type FCRBreakdown,
   type AFRRBreakdown,
   type MFRRBreakdown,
+  type FFRBreakdown,
   type DispatcherBreakdown,
   type DispatcherInput
 } from '../system_model'
@@ -105,6 +107,7 @@ export interface FrequencySnapshot {
 export interface BalancingSnapshot {
   time: number
   fcrMW: number
+  ffrMW: number
   afrrMW: number
   mfrrMW: number
   totalReserveMW: number
@@ -151,6 +154,7 @@ export class WorldSimulation {
   private _fcrModel: FCRModel
   private _afrrModel: AFRRModel
   private _mfrrModel: MFRRModel
+  private _ffrModel: FFRModel
   private _dispatcher: DispatcherModel
   private _gameplayCorrection: GameplayCorrectionModel
   private _currentTime = 0
@@ -203,6 +207,7 @@ export class WorldSimulation {
     this._fcrModel = new FCRModel()
     this._afrrModel = new AFRRModel()
     this._mfrrModel = new MFRRModel()
+    this._ffrModel = new FFRModel()
     this._dispatcher = new DispatcherModel()
     this._gameplayCorrection = new GameplayCorrectionModel()
   }
@@ -233,6 +238,7 @@ export class WorldSimulation {
     this._fcrModel.reset()
     this._afrrModel.reset()
     this._mfrrModel.reset()
+    this._ffrModel.reset()
     this._dispatcher.reset()
     this._gameplayCorrection.reset()
     this._currentTime = -12 * 3600 // Start 12 hours before day 0 for better settling
@@ -514,7 +520,22 @@ export class WorldSimulation {
     // Current frequency for reserve controllers
     const currentFreqHz = this._frequencyModel.currentFrequencyHz
     
-    // Run slower reserve controllers (aFRR, mFRR) based on current frequency
+    // Run reserve controllers based on current frequency
+    // FFR: Ultra-fast response from BESS and fast-acting resources (activates in ~1s on severe frequency drops)
+    // For now, use a conservative estimate based on interconnector and peaker capacity
+    // TODO: Make this configurable and connected to actual BESS capacity
+    const ffrCapacityMW = 500.0  // FFR capacity estimate (increased for better response)
+    const ffrEnergyBudgetMWh = 2.0 // ~15 seconds at full power
+    
+    const ffrBreakdown = this._ffrModel.tick({
+      frequencyHz: currentFreqHz,
+      rocofHzPerS: prevRocof,
+      availableCapacityMW: ffrCapacityMW,
+      energyBudgetMWh: ffrEnergyBudgetMWh,
+      enabled: true,  // FFR is always enabled as part of grid balancing
+    })
+    
+    // aFRR and mFRR
     const afrrBreakdown = this._afrrModel.tick({
       frequencyHz: currentFreqHz,
       netImbalanceMW: rawImbalanceMW,
@@ -532,8 +553,8 @@ export class WorldSimulation {
       downCapacityMW: reserveAvail.mfrr.downCapacityMW,
     })
     
-    // Slower reserves injection (FCR is now handled internally by frequency model)
-    const slowerReservesMW = afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
+    // All frequency restoration reserves (FFR + aFRR + mFRR)
+    const allReservesMW = ffrBreakdown.activationMW + afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
     
     // Hidden gameplay correction (PID controller for stability)
     const gameplayCorrection = this._gameplayCorrection.tick({
@@ -541,11 +562,11 @@ export class WorldSimulation {
       imbalanceMW: rawImbalanceMW,
     })
     
-    // Single frequency tick with internal FCR droop + external slower reserves + correction
+    // Single frequency tick with internal FCR droop + external reserves + correction
     const finalFreqBreakdown = this._frequencyModel.tick({
       totalGenerationMW: totalProductionMW,
       totalConsumptionMW,
-      ffrMW: slowerReservesMW + gameplayCorrection.correctionMW,  // aFRR + mFRR + hidden correction
+      ffrMW: allReservesMW + gameplayCorrection.correctionMW,  // FFR + aFRR + mFRR + hidden correction
       fcrCapacityMW,            // FCR handled internally with droop
       inertia: {
         nuclearMW,
@@ -576,12 +597,13 @@ export class WorldSimulation {
         sBaseMW: finalFreqBreakdown.sBaseMW,
       })
 
-      // Total reserve = internal FCR response + slower reserves (aFRR + mFRR)
-      const totalReserveMW = finalFreqBreakdown.fcrResponseMW + slowerReservesMW
+      // Total reserve = internal FCR response + all other reserves (FFR + aFRR + mFRR)
+      const totalReserveMW = finalFreqBreakdown.fcrResponseMW + allReservesMW
       
       this._balancingHistory.push({
         time: this._currentTime,
         fcrMW: finalFreqBreakdown.fcrResponseMW,  // Use internal FCR response
+        ffrMW: ffrBreakdown.activationMW,
         afrrMW: afrrBreakdown.activatedMW,
         mfrrMW: mfrrBreakdown.activatedMW,
         totalReserveMW,
@@ -964,6 +986,10 @@ export class WorldSimulation {
     return this._mfrrModel.breakdown
   }
 
+  get ffrBreakdown(): FFRBreakdown | null {
+    return this._ffrModel.breakdown
+  }
+
   get dispatcherBreakdown(): DispatcherBreakdown | null {
     return this._dispatcher.breakdown
   }
@@ -1003,6 +1029,7 @@ export class WorldSimulation {
     this._fcrModel.reset()
     this._afrrModel.reset()
     this._mfrrModel.reset()
+    this._ffrModel.reset()
     this._dispatcher.reset()
     this._gameplayCorrection.reset()
     this._currentTime = 0
