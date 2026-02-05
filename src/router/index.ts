@@ -7,6 +7,7 @@ import StartOfDayScreen from '../views/StartOfDayScreen.vue'
 import InitializingScreen from '../views/InitializingScreen.vue'
 import DayScreen from '../views/DayScreen.vue'
 import EndOfDayScreen from '../views/EndOfDayScreen.vue'
+import SimulationView from '../views/SimulationView.vue'
 import { gameState } from '../game/GameState'
 
 const router = createRouter({
@@ -58,6 +59,10 @@ const router = createRouter({
           return '/game'
         }
       }
+    },
+    {
+      path: '/simulation',
+      component: SimulationView
     }
   ]
 })
