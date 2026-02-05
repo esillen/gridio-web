@@ -23,7 +23,7 @@ export interface RoRBreakdown {
   inflowMW: number
 }
 
-const CONSTANTS = {
+export const HYDRO_ROR_CONSTANTS = {
   installedCapacityMW: 2500.0,
   availability: 0.98,
   netLossFactor: 0.97,
@@ -33,8 +33,12 @@ const CONSTANTS = {
   rampDownMWPerS: 80.0,
 }
 
+const CONSTANTS = HYDRO_ROR_CONSTANTS
+
 const EFFECTIVE_CAPACITY = CONSTANTS.installedCapacityMW * CONSTANTS.availability * CONSTANTS.netLossFactor
 const PONDAGE_CAPACITY_MWH = EFFECTIVE_CAPACITY * CONSTANTS.pondageHoursAtFullPower
+
+export const HYDRO_ROR_EFFECTIVE_CAPACITY_MW = EFFECTIVE_CAPACITY
 
 function clamp(x: number, min: number, max: number): number {
   return Math.min(Math.max(x, min), max)

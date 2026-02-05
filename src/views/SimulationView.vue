@@ -97,7 +97,7 @@ async function initialize() {
   world = markRaw(new WorldSimulation(config))
   world.initialize()
   
-  const warmupSeconds = 12 * 3600
+  const warmupSeconds = 48 * 3600
   for (let i = 0; i < warmupSeconds; i++) {
     world.tick()
   }

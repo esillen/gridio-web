@@ -24,6 +24,14 @@ import {
   FFRModel,
   DispatcherModel,
   GameplayCorrectionModel,
+  BalancingControllerModel,
+  NUCLEAR_CONSTANTS,
+  NUCLEAR_TOTAL_CAPACITY_MW,
+  HYDRO_RESERVOIR_CONSTANTS,
+  HYDRO_RESERVOIR_MAX_POWER_MW,
+  HYDRO_ROR_EFFECTIVE_CAPACITY_MW,
+  PEAKERS_CONSTANTS,
+  INTERCONNECTORS_CONSTANTS,
   type WeatherRegionsOutput, 
   type ForecastRegionalOutput,
   type HeatingBreakdown,
@@ -152,6 +160,7 @@ export class WorldSimulation {
   private _mfrrModel: MFRRModel
   private _ffrModel: FFRModel
   private _dispatcher: DispatcherModel
+  private _balancingController: BalancingControllerModel
   private _gameplayCorrection: GameplayCorrectionModel
   private _currentTime = 0
   private _latestForecastOutput: ForecastRegionalOutput | null = null
@@ -160,7 +169,13 @@ export class WorldSimulation {
   private _productionHistory: ProductionSnapshot[] = []
   private _frequencyHistory: FrequencySnapshot[] = []
   private _balancingHistory: BalancingSnapshot[] = []
+  
+  private _prevTotalProductionMW = 0
+  private _prevTotalConsumptionMW = 0
+  
+  
   private _config: WorldConfig
+
 
   constructor(config: WorldConfig) {
     this._config = config
@@ -206,6 +221,7 @@ export class WorldSimulation {
     this._mfrrModel = new MFRRModel()
     this._ffrModel = new FFRModel()
     this._dispatcher = new DispatcherModel()
+    this._balancingController = new BalancingControllerModel()
     this._gameplayCorrection = new GameplayCorrectionModel()
   }
 
@@ -237,6 +253,7 @@ export class WorldSimulation {
     this._mfrrModel.reset()
     this._ffrModel.reset()
     this._dispatcher.reset()
+    this._balancingController.reset()
     this._gameplayCorrection.reset()
     this._currentTime = -12 * 3600 // Start 12 hours before day 0 for better settling
     this._weatherHistory = []
@@ -244,6 +261,9 @@ export class WorldSimulation {
     this._productionHistory = []
     this._frequencyHistory = []
     this._balancingHistory = []
+    
+    this._prevTotalProductionMW = 15000
+    this._prevTotalConsumptionMW = 15000
 
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
@@ -301,6 +321,49 @@ export class WorldSimulation {
     )
     const dispatcherBreakdown = this._dispatcher.tick(dispatcherInput)
     
+    // Compute raw imbalance from previous tick for balancing controller
+    const prevImbalanceMW = this._prevTotalProductionMW - this._prevTotalConsumptionMW
+    
+    // Baseline setpoints from dispatcher
+    const baseline = {
+      hydroReservoirMW: dispatcherBreakdown.setpoints.hydroReservoirMW,
+      netImportMW: dispatcherBreakdown.setpoints.netImportMW,
+      peakersMW: dispatcherBreakdown.setpoints.peakersMW,
+      drShedMW: dispatcherBreakdown.setpoints.drShedMW,
+    }
+    
+    // Capabilities from dispatcher input
+    const caps = dispatcherInput.capabilities
+    
+    // Reserve availability from dispatcher
+    const balancingReserveAvail = dispatcherBreakdown.reserveAvailability
+    
+    // Run balancing controller to get corrected setpoints
+    const balancingOut = this._balancingController.tick({
+      baseline,
+      measurements: {
+        frequencyHz: prevFreqHz,
+        rocofHzPerS: prevRocof,
+        imbalanceMW: prevImbalanceMW,
+      },
+      capabilities: {
+        hydro: caps.hydroReservoir,
+        interconnectors: caps.interconnectors,
+        peakers: caps.gasOilPeakers,
+        demandResponse: {
+          maxShedMW: caps.demandResponse.maxShedMW,
+          rampMWPerS: caps.demandResponse.maxShedRampMWPerS,
+        },
+      },
+      reserveAvailability: {
+        afrr: balancingReserveAvail.afrr,
+        mfrr: balancingReserveAvail.mfrr,
+      },
+      dtS: 1,
+    })
+    
+    const corrected = balancingOut.corrected
+    
     const toggles = this._config.toggles
 
     // Update nuclear fleet
@@ -308,10 +371,10 @@ export class WorldSimulation {
       this._nuclearFleet.tick(this._currentTime)
     }
 
-    // Update hydro reservoir with dispatcher setpoint
+    // Update hydro reservoir with corrected setpoint from balancing controller
     if (toggles.hydroReservoir) {
       this._hydroReservoir.setDispatch({
-        targetProductionMW: dispatcherBreakdown.setpoints.hydroReservoirMW,
+        targetProductionMW: corrected.hydroReservoirMW,
         mode: 'follow_target',
       })
       this._hydroReservoir.tick(this._currentTime)
@@ -350,16 +413,16 @@ export class WorldSimulation {
       })
     }
 
-    // Update peakers (dispatched by dispatcher when needed)
+    // Update peakers with corrected setpoint from balancing controller
     if (toggles.peakers) {
       this._peakers.tick({
-        dispatchMode: dispatcherBreakdown.setpoints.peakersMW > 0 ? 'follow_target' : 'off',
-        targetProductionMW: dispatcherBreakdown.setpoints.peakersMW,
+        dispatchMode: corrected.peakersMW > 0 ? 'follow_target' : 'off',
+        targetProductionMW: corrected.peakersMW,
       })
     }
 
-    // Calculate demand response curtailment fraction from dispatcher
-    const drShedMW = dispatcherBreakdown.setpoints.drShedMW
+    // Calculate demand response curtailment fraction from corrected setpoint
+    const drShedMW = corrected.drShedMW
     const estimatedDemandMW = 15000 // rough estimate for fraction calculation
     const drCurtailmentFrac = toggles.demandResponse ? Math.min(0.3, drShedMW / estimatedDemandMW) : 0
 
@@ -437,7 +500,7 @@ export class WorldSimulation {
     const domesticProductionMW = nuclearMW + hydroReservoirMW + hydroRoRMW + windMW + solarMW + chpMW + industrialChpMW + peakersMW
     const totalConsumptionMWForInterconnectors = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW
 
-    // Update interconnectors (auto-balances based on domestic imbalance)
+    // Update interconnectors with corrected setpoint from balancing controller
     if (toggles.interconnectors) {
       this._interconnectors.tick({
         localHour: clock.localHour,
@@ -445,7 +508,8 @@ export class WorldSimulation {
         totalConsumptionMW: totalConsumptionMWForInterconnectors,
         frequencyHz: this._frequencyModel.currentFrequencyHz,
         rocofHzPerS: this._frequencyModel.breakdown?.rocofHzPerS ?? 0,
-        dispatchMode: 'auto_balance',
+        dispatchMode: 'follow_target',
+        targetNetImportMW: corrected.netImportMW,
       })
     }
 
@@ -540,18 +604,13 @@ export class WorldSimulation {
     // All frequency restoration reserves (FFR + aFRR + mFRR)
     const allReservesMW = ffrBreakdown.activationMW + afrrBreakdown.activatedMW + mfrrBreakdown.activatedMW
     
-    // Hidden gameplay correction (PID controller for stability)
-    const gameplayCorrection = this._gameplayCorrection.tick({
-      frequencyHz: currentFreqHz,
-      imbalanceMW: rawImbalanceMW,
-    })
-    
-    // Single frequency tick with internal FCR droop + external reserves + correction
+    // Single frequency tick with internal FCR droop only
+    // Balancing is now applied physically through corrected setpoints (hydro, peakers, DR, imports)
     const finalFreqBreakdown = this._frequencyModel.tick({
       totalGenerationMW: totalProductionMW,
       totalConsumptionMW,
-      ffrMW: allReservesMW + gameplayCorrection.correctionMW,  // FFR + aFRR + mFRR + hidden correction
-      fcrCapacityMW,            // FCR handled internally with droop
+      ffrMW: 0,  // No ghost reserves - balancing is physically applied
+      fcrCapacityMW,  // FCR handled internally with droop
       inertia: {
         nuclearMW,
         hydroReservoirMW,
@@ -559,6 +618,7 @@ export class WorldSimulation {
         bioWasteChpMW: chpMW,
         industrialChpMW,
         motorLoadMW,
+        gasOilPeakersMW: peakersMW,
       },
     })
     
@@ -597,6 +657,10 @@ export class WorldSimulation {
 
     // Update grid (collects updates from all connected actors)
     this._grid.tick()
+    
+    // Store current tick measurements for next tick's balancing controller
+    this._prevTotalProductionMW = totalProductionMW
+    this._prevTotalConsumptionMW = totalConsumptionMW
 
     this._currentTime++
   }
@@ -725,36 +789,36 @@ export class WorldSimulation {
       capabilities: {
         nuclear: {
           onlinePlantsMW: this._nuclearFleet.productionMW,
-          minMW: 5000,
-          maxMW: 7000,
-          rampUpMWPerS: 5,
-          rampDownMWPerS: 10,
+          minMW: NUCLEAR_TOTAL_CAPACITY_MW * NUCLEAR_CONSTANTS.minStableFraction,
+          maxMW: NUCLEAR_TOTAL_CAPACITY_MW,
+          rampUpMWPerS: NUCLEAR_CONSTANTS.rampRateFleetMWPerS,
+          rampDownMWPerS: NUCLEAR_CONSTANTS.rampRateFleetMWPerS,
         },
         hydroReservoir: {
-          minMW: 500,
-          maxMW: hydroBreakdown?.maxProductionMW ?? 14580,
-          rampUpMWPerS: 20,
-          rampDownMWPerS: 40,
+          minMW: HYDRO_RESERVOIR_CONSTANTS.mustRunMinMW,
+          maxMW: hydroBreakdown?.maxProductionMW ?? HYDRO_RESERVOIR_MAX_POWER_MW,
+          rampUpMWPerS: HYDRO_RESERVOIR_CONSTANTS.rampRateUpMWPerS,
+          rampDownMWPerS: HYDRO_RESERVOIR_CONSTANTS.rampRateDownMWPerS,
           reservoirEnergyMWh: hydroBreakdown?.reservoirStorageMWh ?? 0,
           reservoirEnergyMinMWh: 0,
-          reservoirEnergyMaxMWh: 34_000_000,
+          reservoirEnergyMaxMWh: HYDRO_RESERVOIR_CONSTANTS.storageEnergyCapacityMWh,
           maxDailyEnergyDrawMWh: hydroBreakdown?.dailyEnergyBudgetMaxMWh,
         },
         hydroRunOfRiver: {
           minMW: 0,
-          maxMW: 2500,
+          maxMW: HYDRO_ROR_EFFECTIVE_CAPACITY_MW,
         },
         gasOilPeakers: {
           minMW: 0,
-          maxMW: 2000,
-          rampUpMWPerS: 50,
-          rampDownMWPerS: 50,
-          startDelayS: 300,
+          maxMW: PEAKERS_CONSTANTS.installedCapacityMW,
+          rampUpMWPerS: PEAKERS_CONSTANTS.rampUpMWPerS,
+          rampDownMWPerS: PEAKERS_CONSTANTS.rampDownMWPerS,
+          startDelayS: PEAKERS_CONSTANTS.startDelayS,
         },
         interconnectors: {
-          netImportMinMW: -7000,
-          netImportMaxMW: 7000,
-          rampMWPerS: 100,
+          netImportMinMW: -INTERCONNECTORS_CONSTANTS.exportMaxMW,
+          netImportMaxMW: INTERCONNECTORS_CONSTANTS.importMaxMW,
+          rampMWPerS: INTERCONNECTORS_CONSTANTS.rampMWPerS,
         },
         demandResponse: {
           maxShedMW: 500,
@@ -1035,6 +1099,7 @@ export class WorldSimulation {
     this._mfrrModel.reset()
     this._ffrModel.reset()
     this._dispatcher.reset()
+    this._balancingController.reset()
     this._gameplayCorrection.reset()
     this._currentTime = 0
     this._weatherHistory = []

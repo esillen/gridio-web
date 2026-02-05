@@ -25,13 +25,13 @@ export interface HydroBreakdown {
   dailyEnergyBudgetMaxMWh: number
 }
 
-const CONSTANTS = {
+export const HYDRO_RESERVOIR_CONSTANTS = {
   installedHydroCapacityMW: 16200.0,
   storageEnergyCapacityMWh: 34_000_000.0,
   reservoirFractionOfInstalled: 0.90,
   turbineEfficiency: 0.92,
-  rampRateUpMWPerS: 20.0,
-  rampRateDownMWPerS: 40.0,
+  rampRateUpMWPerS: 10.0,
+  rampRateDownMWPerS: 20.0,
   mustRunMinMW: 500.0,
   sustainableFractionForDay: 0.95,
   lookaheadPeakWindowS: 6000,
@@ -39,8 +39,13 @@ const CONSTANTS = {
   waterSaverMinFractionOfTarget: 0.50,
 }
 
+const CONSTANTS = HYDRO_RESERVOIR_CONSTANTS
+
 const MAX_POWER_MW = CONSTANTS.installedHydroCapacityMW * CONSTANTS.reservoirFractionOfInstalled
 const DAILY_ENERGY_BUDGET_MAX_MWH = MAX_POWER_MW * 24.0 * CONSTANTS.sustainableFractionForDay
+
+export const HYDRO_RESERVOIR_MAX_POWER_MW = MAX_POWER_MW
+export const HYDRO_RESERVOIR_DAILY_ENERGY_BUDGET_MAX_MWH = DAILY_ENERGY_BUDGET_MAX_MWH
 
 function clamp(x: number, min: number, max: number): number {
   return Math.min(Math.max(x, min), max)
@@ -96,7 +101,6 @@ export class HydroReservoirFleetModel implements Actor {
   }
 
   tick(timeInDayS: number): HydroBreakdown {
-    const C = CONSTANTS
     const dt = 1.0
 
     // Daily reset check (simple: based on time wrapping)
@@ -130,12 +134,12 @@ export class HydroReservoirFleetModel implements Actor {
     if (this.dispatch.mode === 'follow_target') {
       rawTargetMW = this.dispatch.targetProductionMW
     } else if (this.dispatch.mode === 'must_run_min') {
-      rawTargetMW = Math.max(this.dispatch.targetProductionMW, C.mustRunMinMW)
+      rawTargetMW = Math.max(this.dispatch.targetProductionMW, CONSTANTS.mustRunMinMW)
     } else {
       // water_saver mode
       const nlNowMW = this.forecast.netLoadMW[0] ?? 10000
       const windowSteps = Math.min(
-        Math.floor(C.lookaheadPeakWindowS / this.forecast.stepS),
+        Math.floor(CONSTANTS.lookaheadPeakWindowS / this.forecast.stepS),
         this.forecast.netLoadMW.length - 1
       )
       
@@ -145,16 +149,16 @@ export class HydroReservoirFleetModel implements Actor {
       }
       
       const peakGapMW = Math.max(0, nlPeakMW - nlNowMW)
-      const saveBiasMW = C.waterSaverStrength * peakGapMW
+      const saveBiasMW = CONSTANTS.waterSaverStrength * peakGapMW
       
-      rawTargetMW = Math.max(C.mustRunMinMW, this.dispatch.targetProductionMW - saveBiasMW)
-      rawTargetMW = Math.max(rawTargetMW, C.waterSaverMinFractionOfTarget * this.dispatch.targetProductionMW)
+      rawTargetMW = Math.max(CONSTANTS.mustRunMinMW, this.dispatch.targetProductionMW - saveBiasMW)
+      rawTargetMW = Math.max(rawTargetMW, CONSTANTS.waterSaverMinFractionOfTarget * this.dispatch.targetProductionMW)
     }
 
     // Apply constraints
     const constrainedTargetMW = clamp(
       rawTargetMW,
-      C.mustRunMinMW,
+      CONSTANTS.mustRunMinMW,
       Math.min(availablePowerMW, energyLimitedPowerMW)
     )
 
@@ -162,30 +166,30 @@ export class HydroReservoirFleetModel implements Actor {
     const deltaMW = constrainedTargetMW - this.currentProductionMW
     let deltaLimitedMW: number
     if (deltaMW >= 0) {
-      deltaLimitedMW = Math.min(deltaMW, C.rampRateUpMWPerS * dt)
+      deltaLimitedMW = Math.min(deltaMW, CONSTANTS.rampRateUpMWPerS * dt)
     } else {
-      deltaLimitedMW = Math.max(deltaMW, -C.rampRateDownMWPerS * dt)
+      deltaLimitedMW = Math.max(deltaMW, -CONSTANTS.rampRateDownMWPerS * dt)
     }
 
     let newProductionMW = clamp(this.currentProductionMW + deltaLimitedMW, 0, availablePowerMW)
 
     // Spend energy budget
     const producedMWhThisTick = newProductionMW * (dt / 3600.0)
-    const requiredBudgetMWhThisTick = producedMWhThisTick / C.turbineEfficiency
+    const requiredBudgetMWhThisTick = producedMWhThisTick / CONSTANTS.turbineEfficiency
 
     if (requiredBudgetMWhThisTick <= this.energyBudgetTodayMWh) {
       this.energyBudgetTodayMWh -= requiredBudgetMWhThisTick
       this.currentProductionMW = newProductionMW
     } else {
       // Not enough budget
-      const maxMWhPossible = this.energyBudgetTodayMWh * C.turbineEfficiency
+      const maxMWhPossible = this.energyBudgetTodayMWh * CONSTANTS.turbineEfficiency
       this.currentProductionMW = maxMWhPossible * (3600.0 / dt)
       this.energyBudgetTodayMWh = 0
     }
 
     // Update long-run storage
     this.reservoirStorageMWh = clamp(
-      this.reservoirStorageMWh - requiredBudgetMWhThisTick + (inflowMWhThisTick / C.turbineEfficiency),
+      this.reservoirStorageMWh - requiredBudgetMWhThisTick + (inflowMWhThisTick / CONSTANTS.turbineEfficiency),
       0,
       CONSTANTS.storageEnergyCapacityMWh
     )

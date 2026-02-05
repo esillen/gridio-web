@@ -23,13 +23,13 @@ const simulation = new WorldSimulation({
     chp: true,
     peakers: true,
     interconnectors: true,
-    demandResponse: false,
+    demandResponse: true,
   },
 })
 
 simulation.initialize()
 
-const WARMUP_HOURS = 12
+const WARMUP_HOURS = 48
 const SIMULATION_HOURS = 24
 const TOTAL_SECONDS = (WARMUP_HOURS + SIMULATION_HOURS) * 3600
 
@@ -73,7 +73,7 @@ initCSV('production_solar_sites', ['time_s', 'site_id', 'production_MW', 'capaci
 
 initCSV('consumption', [
   'time_s',
-  'heating_MW', 'non_heating_MW', 'services_MW', 'transport_MW', 'industry_MW', 'grid_losses_MW', 'exports_MW', 'total_MW'
+  'heating_MW', 'non_heating_MW', 'services_MW', 'transport_MW', 'industry_MW', 'grid_losses_MW', /*'exports_MW',*/ 'total_MW'
 ])
 
 initCSV('frequency', [
@@ -215,7 +215,7 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
   const industryMW = industry?.consumptionMW ?? 0
   const gridLossesMW = gridLosses?.consumptionMW ?? 0
   const netImportMW = simulation.interconnectorsBreakdown?.netImportMW ?? 0
-  const exportsMW = Math.max(0, -netImportMW)
+  //const exportsMW = Math.max(0, -netImportMW)
   const totalConsumption = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + gridLossesMW
 
   writeCSVRow('consumption', [
@@ -226,7 +226,7 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
     transportMW,
     industryMW,
     gridLossesMW,
-    exportsMW,
+    //exportsMW,
     totalConsumption
   ])
 

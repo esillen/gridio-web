@@ -30,6 +30,9 @@ const CONSTANTS = {
 
   // Schedule smoothing
   tauScheduleSmoothS: 1800.0,
+  
+  // Consumption output smoothing
+  tauConsumptionSmoothS: 480.0,
 
   // Capacity caps (MW)
   hpCompressorElectricCapMW: 4500.0,
@@ -97,6 +100,7 @@ export class ResidentialSpaceHeatingModel implements Actor {
   
   private effectiveOutdoorTempC: number
   private scheduleFactorSmooth: number
+  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: HeatingBreakdown | null = null
 
@@ -158,14 +162,18 @@ export class ResidentialSpaceHeatingModel implements Actor {
     // 9) Direct electric
     const directSpaceheatElecMW = Math.min(C.directElectricSpaceheatCapMW, thermalDirectRequestMW)
 
-    // 10) Total consumption
-    const consumptionMW = 
+    // 10) Total consumption (instantaneous)
+    const consumptionInstantMW = 
       hpCompressorElecMW + 
       hpAuxResistiveElecMW + 
       directSpaceheatElecMW + 
       C.hvacParasiticMW
+    
+    // 11) Smooth consumption output to avoid steps
+    this.consumptionSmoothMW += 
+      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / C.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = consumptionMW
+    this.lastConsumptionMW = this.consumptionSmoothMW
     this.lastBreakdown = {
       hpCompressorElecMW,
       hpAuxResistiveElecMW,
@@ -202,6 +210,7 @@ export class ResidentialSpaceHeatingModel implements Actor {
   reset(initialTempC: number = -5): void {
     this.effectiveOutdoorTempC = initialTempC
     this.scheduleFactorSmooth = 1.0
+    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

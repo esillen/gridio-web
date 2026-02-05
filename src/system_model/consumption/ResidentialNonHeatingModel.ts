@@ -55,6 +55,9 @@ const CONSTANTS = {
   dhwEveningTimeH: 20.0,
 
   curtailmentMinFactor: 0.70,
+  
+  // Consumption output smoothing
+  tauConsumptionSmoothS: 480.0,
 }
 
 // Schedule: [startHour, endHour, multiplier]
@@ -108,6 +111,7 @@ export class ResidentialNonHeatingModel implements Actor {
   id: string
   name: string
 
+  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: NonHeatingBreakdown | null = null
 
@@ -118,6 +122,7 @@ export class ResidentialNonHeatingModel implements Actor {
 
   tick(input: NonHeatingInput): NonHeatingBreakdown {
     const C = CONSTANTS
+    const dt = 1.0
 
     const tDayS = input.localHour * 3600 + input.localMinute * 60
     const isWeekend = input.dayOfWeek >= 5
@@ -175,12 +180,16 @@ export class ResidentialNonHeatingModel implements Actor {
       evMW = Math.max(0, input.evTargetMW)
     }
 
-    // Total
-    const consumptionMW = appliancesMW + lightingMW + cookingMW + laundryMW + dhwMW + evMW
+    // Total (instantaneous)
+    const consumptionInstantMW = appliancesMW + lightingMW + cookingMW + laundryMW + dhwMW + evMW
+    
+    // Smooth consumption output to avoid steps
+    this.consumptionSmoothMW += 
+      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / C.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = consumptionMW
+    this.lastConsumptionMW = this.consumptionSmoothMW
     this.lastBreakdown = {
-      consumptionMW,
+      consumptionMW: this.consumptionSmoothMW,
       appliancesMW,
       lightingMW,
       cookingMW,
@@ -208,6 +217,7 @@ export class ResidentialNonHeatingModel implements Actor {
   }
 
   reset(): void {
+    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

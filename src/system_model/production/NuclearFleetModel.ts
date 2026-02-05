@@ -24,9 +24,9 @@ export interface NuclearBreakdown {
   maxProductionMW: number
 }
 
-const UNIT_IDS: UnitId[] = ['Forsmark_1', 'Forsmark_2', 'Forsmark_3', 'Ringhals_3', 'Ringhals_4', 'Oskarshamn_3']
+export const UNIT_IDS: UnitId[] = ['Forsmark_1', 'Forsmark_2', 'Forsmark_3', 'Ringhals_3', 'Ringhals_4', 'Oskarshamn_3']
 
-const INITIAL_UNITS: Record<UnitId, UnitState> = {
+export const INITIAL_UNITS: Record<UnitId, UnitState> = {
   Forsmark_1: { netCapacityMW: 1104.0, currentMW: 1104.0 },
   Forsmark_2: { netCapacityMW: 1121.0, currentMW: 1121.0 },
   Forsmark_3: { netCapacityMW: 1172.0, currentMW: 1172.0 },
@@ -35,11 +35,15 @@ const INITIAL_UNITS: Record<UnitId, UnitState> = {
   Oskarshamn_3: { netCapacityMW: 1400.0, currentMW: 1400.0 },
 }
 
-const CONSTANTS = {
+export const NUCLEAR_TOTAL_CAPACITY_MW = Object.values(INITIAL_UNITS).reduce((sum, u) => sum + u.netCapacityMW, 0)
+
+export const NUCLEAR_CONSTANTS = {
   minStableFraction: 0.50,
   rampRateMWPerSPerUnit: 0.05,
   rampRateFleetMWPerS: 0.30,
 }
+
+const CONSTANTS = NUCLEAR_CONSTANTS
 
 function clamp(x: number, min: number, max: number): number {
   return Math.min(Math.max(x, min), max)

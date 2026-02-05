@@ -44,6 +44,11 @@ const EV_CONSTANTS = {
   smartChargingStressExponent: 1.6,
 }
 
+const CONSTANTS = {
+  // Consumption output smoothing
+  tauConsumptionSmoothS: 480.0,
+}
+
 // Derived
 const RAIL_AVG_POWER_MW = (RAIL_CONSTANTS.annualEnergyTWhProxy * 1_000_000) / 8760
 const AVG_KM_PER_CAR_PER_DAY = EV_CONSTANTS.avgKmPerCarPerYear / 365
@@ -108,6 +113,7 @@ export class TransportModel implements Actor {
   private evEnergyNeedTodayMWh = 0
   private evEnergyDeliveredTodayMWh = 0
   private lastDayIndex = -1
+  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: TransportBreakdown | null = null
 
@@ -117,6 +123,7 @@ export class TransportModel implements Actor {
   }
 
   tick(input: TransportInput): TransportBreakdown {
+    const dt = 1.0
     const tDayS = input.localHour * 3600 + input.localMinute * 60
     const isWeekend = input.dayOfWeek >= 5
     const dayIndex = Math.floor(tDayS / 86400)
@@ -201,11 +208,15 @@ export class TransportModel implements Actor {
     // Update delivered energy
     this.evEnergyDeliveredTodayMWh += evTotalMW / 3600
 
-    const consumptionMW = railTotalMW + evTotalMW
+    const consumptionInstantMW = railTotalMW + evTotalMW
+    
+    // Smooth consumption output to avoid steps
+    this.consumptionSmoothMW += 
+      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / CONSTANTS.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = consumptionMW
+    this.lastConsumptionMW = this.consumptionSmoothMW
     this.lastBreakdown = {
-      consumptionMW,
+      consumptionMW: this.consumptionSmoothMW,
       railTotalMW,
       railTractionMW,
       railAuxMW,
@@ -237,6 +248,7 @@ export class TransportModel implements Actor {
     this.evEnergyNeedTodayMWh = 0
     this.evEnergyDeliveredTodayMWh = 0
     this.lastDayIndex = -1
+    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

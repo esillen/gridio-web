@@ -27,9 +27,15 @@ export interface InterconnectorBreakdown {
   isExporting: boolean
 }
 
-const IMPORT_MAX_MW = 7000.0
-const EXPORT_MAX_MW = 7000.0
-const RAMP_MW_PER_S = 50.0
+export const INTERCONNECTORS_CONSTANTS = {
+  importMaxMW: 7000000.0,
+  exportMaxMW: 7000000.0,
+  rampMWPerS: 500.0,
+}
+
+const IMPORT_MAX_MW = INTERCONNECTORS_CONSTANTS.importMaxMW
+const EXPORT_MAX_MW = INTERCONNECTORS_CONSTANTS.exportMaxMW
+const RAMP_MW_PER_S = INTERCONNECTORS_CONSTANTS.rampMWPerS
 
 const CONTROL = {
   freqNomHz: 50.0,

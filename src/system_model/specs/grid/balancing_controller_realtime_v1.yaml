@@ -1,0 +1,227 @@
+model_part: balancing_controller_realtime_v1
+version: 1.0
+tick_s: 1
+
+description: >
+  Real-time balancing controller that converts imbalance/frequency error into
+  actual setpoint adjustments for controllable actuators. Intended to sit between
+  Dispatcher and physical plant models.
+  - aFRR-like PI control: fast correction (hydro/import) on seconds–minutes.
+  - mFRR-like escalation: slower sustained correction (peakers/DR) when aFRR saturates.
+  - Optional rate limits to avoid jitter.
+  Outputs corrected setpoints and activation breakdowns.
+
+units:
+  power: MW
+  frequency: Hz
+  time: s
+
+inputs:
+  time_now:
+    local_second_0_59: int
+
+  baseline_setpoints:
+    hydro_reservoir_MW: float
+    net_import_MW: float
+    peakers_MW: float
+    dr_shed_MW: float
+
+  measurements:
+    frequency_Hz: float
+    rocof_Hz_per_s: float
+    imbalance_MW: float   # (domestic_production + net_import) - domestic_consumption
+
+  capabilities:
+    hydro:
+      min_MW: float
+      max_MW: float
+      ramp_up_MW_per_s: float
+      ramp_down_MW_per_s: float
+    interconnectors:
+      net_import_min_MW: float
+      net_import_max_MW: float
+      ramp_MW_per_s: float
+    peakers:
+      min_MW: float
+      max_MW: float
+      ramp_up_MW_per_s: float
+      ramp_down_MW_per_s: float
+    demand_response:
+      max_shed_MW: float
+      ramp_MW_per_s: float
+
+  reserve_availability:
+    afrr:
+      up_capacity_MW: float
+      down_capacity_MW: float
+    mfrr:
+      up_capacity_MW: float
+      down_capacity_MW: float
+
+state:
+  afrr_integrator_MW: float
+  mfrr_integrator_MW: float
+  last_hydro_cmd_MW: float
+  last_import_cmd_MW: float
+  last_peaker_cmd_MW: float
+  last_dr_cmd_MW: float
+
+constants:
+  freq_nom_Hz: 50.0
+  freq_deadband_Hz: 0.02
+
+  # aFRR PI tuning (use imbalance primarily; freq provides small extra push)
+  afrr_kp: 0.20           # MW per MW error (dimensionless gain)
+  afrr_ki_per_s: 0.0025   # integrator gain per second
+  afrr_freq_gain_MW_per_Hz: 400.0
+
+  # mFRR escalation when aFRR saturates / sustained imbalance
+  mfrr_trigger_imbalance_MW: 400.0
+  mfrr_trigger_time_s: 120.0
+  mfrr_ki_per_s: 0.0015
+
+  # Allocation priority inside aFRR: hydro first, then imports.
+  afrr_hydro_share_0_1: 0.75
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+  ramp: >
+    func(prev, target, up_rate, down_rate, dt):
+      d = target - prev
+      if d >= 0: return prev + min(d, up_rate*dt)
+      else: return prev + max(d, -down_rate*dt)
+
+update_per_tick:
+  - df_Hz: "= freq_nom_Hz - measurements.frequency_Hz"
+  - df_eff_Hz: "= (abs(df_Hz) < freq_deadband_Hz) ? 0.0 : df_Hz"
+
+  # Positive need_MW means we need MORE power (freq low / deficit)
+  - need_MW: >
+      (-measurements.imbalance_MW)
+      + afrr_freq_gain_MW_per_Hz * df_eff_Hz
+
+  # --- aFRR PI ---
+  - p_afrr_MW: "= afrr_kp * need_MW"
+  - state.afrr_integrator_MW: >
+      clamp(
+        state.afrr_integrator_MW + afrr_ki_per_s * need_MW * tick_s,
+        -reserve_availability.afrr.down_capacity_MW,
+        +reserve_availability.afrr.up_capacity_MW
+      )
+  - afrr_cmd_MW: >
+      clamp(
+        p_afrr_MW + state.afrr_integrator_MW,
+        -reserve_availability.afrr.down_capacity_MW,
+        +reserve_availability.afrr.up_capacity_MW
+      )
+
+  # --- Allocate aFRR between hydro and imports ---
+  - afrr_hydro_MW: "= afrr_cmd_MW * afrr_hydro_share_0_1"
+  - afrr_import_MW: "= afrr_cmd_MW - afrr_hydro_MW"
+
+  # Respect actuator headroom (capabilities), but keep it simple: clamp commands.
+  - hydro_target_MW: >
+      clamp(
+        baseline_setpoints.hydro_reservoir_MW + afrr_hydro_MW,
+        capabilities.hydro.min_MW,
+        capabilities.hydro.max_MW
+      )
+  - import_target_MW: >
+      clamp(
+        baseline_setpoints.net_import_MW + afrr_import_MW,
+        capabilities.interconnectors.net_import_min_MW,
+        capabilities.interconnectors.net_import_max_MW
+      )
+
+  # Rate limit hydro/import commands for smoothness
+  - hydro_cmd_MW: >
+      ramp(
+        state.last_hydro_cmd_MW,
+        hydro_target_MW,
+        capabilities.hydro.ramp_up_MW_per_s,
+        capabilities.hydro.ramp_down_MW_per_s,
+        tick_s
+      )
+  - import_cmd_MW: >
+      ramp(
+        state.last_import_cmd_MW,
+        import_target_MW,
+        capabilities.interconnectors.ramp_MW_per_s,
+        capabilities.interconnectors.ramp_MW_per_s,
+        tick_s
+      )
+
+  - state.last_hydro_cmd_MW: "= hydro_cmd_MW"
+  - state.last_import_cmd_MW: "= import_cmd_MW"
+
+  # --- mFRR escalation (slow) ---
+  # Trigger if sustained deficit OR aFRR saturated and need persists
+  - sustained_deficit: "= (need_MW > mfrr_trigger_imbalance_MW) ? 1 : 0"
+  # naive timer using mfrr_integrator as proxy; simpler: integrate only when triggered
+  - if sustained_deficit == 1:
+      - state.mfrr_integrator_MW: >
+          clamp(
+            state.mfrr_integrator_MW + mfrr_ki_per_s * need_MW * tick_s,
+            0.0,
+            reserve_availability.mfrr.up_capacity_MW
+          )
+  - else:
+      - state.mfrr_integrator_MW: "= max(0.0, state.mfrr_integrator_MW - 0.5*tick_s)"  # decay
+
+  - mfrr_up_MW: "= clamp(state.mfrr_integrator_MW, 0.0, reserve_availability.mfrr.up_capacity_MW)"
+
+  # Allocate mFRR up: peakers then DR
+  - peaker_target_MW: >
+      clamp(
+        baseline_setpoints.peakers_MW + mfrr_up_MW,
+        capabilities.peakers.min_MW,
+        capabilities.peakers.max_MW
+      )
+  - remaining_mfrr_after_peakers: "= max(0.0, mfrr_up_MW - (peaker_target_MW - baseline_setpoints.peakers_MW))"
+  - dr_target_MW: >
+      clamp(
+        baseline_setpoints.dr_shed_MW + remaining_mfrr_after_peakers,
+        0.0,
+        capabilities.demand_response.max_shed_MW
+      )
+
+  # Rate limit peakers & DR
+  - peaker_cmd_MW: >
+      ramp(
+        state.last_peaker_cmd_MW,
+        peaker_target_MW,
+        capabilities.peakers.ramp_up_MW_per_s,
+        capabilities.peakers.ramp_down_MW_per_s,
+        tick_s
+      )
+  - dr_cmd_MW: >
+      ramp(
+        state.last_dr_cmd_MW,
+        dr_target_MW,
+        capabilities.demand_response.ramp_MW_per_s,
+        capabilities.demand_response.ramp_MW_per_s,
+        tick_s
+      )
+
+  - state.last_peaker_cmd_MW: "= peaker_cmd_MW"
+  - state.last_dr_cmd_MW: "= dr_cmd_MW"
+
+outputs:
+  corrected_setpoints:
+    hydro_reservoir_MW: "= hydro_cmd_MW"
+    net_import_MW: "= import_cmd_MW"
+    peakers_MW: "= peaker_cmd_MW"
+    dr_shed_MW: "= dr_cmd_MW"
+
+  activations:
+    afrr_cmd_MW: "= afrr_cmd_MW"
+    afrr_hydro_MW: "= hydro_cmd_MW - baseline_setpoints.hydro_reservoir_MW"
+    afrr_import_MW: "= import_cmd_MW - baseline_setpoints.net_import_MW"
+    mfrr_up_MW: "= mfrr_up_MW"
+    mfrr_peakers_MW: "= peaker_cmd_MW - baseline_setpoints.peakers_MW"
+    mfrr_dr_MW: "= dr_cmd_MW - baseline_setpoints.dr_shed_MW"
+
+  debug:
+    need_MW: "= need_MW"
+    df_eff_Hz: "= df_eff_Hz"

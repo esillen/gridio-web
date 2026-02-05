@@ -61,6 +61,9 @@ const CONSTANTS = {
   // Curtailment
   curtailmentMinFactor: 0.80,
   curtailableShare: 0.55,
+  
+  // Consumption output smoothing
+  tauConsumptionSmoothS: 480.0,
 }
 
 // Derived constants
@@ -97,6 +100,7 @@ export class ServicesCommercialModel implements Actor {
   id: string
   name: string
 
+  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastHeatingMW = 0
   private lastBreakdown: ServicesBreakdown | null = null
@@ -165,13 +169,17 @@ export class ServicesCommercialModel implements Actor {
     this.lastHeatingMW += (heatingTargetMW - this.lastHeatingMW) * (dt / C.heatingResponseTauS)
     const heatingMW = this.lastHeatingMW
 
-    // Total, capped
-    let consumptionMW = plugItMW + lightingMW + ventilationMW + refrigerationMW + heatingMW
-    consumptionMW = Math.min(consumptionMW, C.peakCapMW)
+    // Total (instantaneous), capped
+    let consumptionInstantMW = plugItMW + lightingMW + ventilationMW + refrigerationMW + heatingMW
+    consumptionInstantMW = Math.min(consumptionInstantMW, C.peakCapMW)
+    
+    // Smooth consumption output to avoid steps
+    this.consumptionSmoothMW += 
+      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / C.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = consumptionMW
+    this.lastConsumptionMW = this.consumptionSmoothMW
     this.lastBreakdown = {
-      consumptionMW,
+      consumptionMW: this.consumptionSmoothMW,
       plugItMW,
       lightingMW,
       ventilationMW,
@@ -200,6 +208,7 @@ export class ServicesCommercialModel implements Actor {
   }
 
   reset(): void {
+    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastHeatingMW = 0
     this.lastBreakdown = null

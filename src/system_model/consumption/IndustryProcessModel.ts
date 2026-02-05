@@ -91,6 +91,11 @@ const DR = {
   paybackAllowedIfStressBelow: 0.35,
 }
 
+const CONSTANTS = {
+  // Consumption output smoothing
+  tauConsumptionSmoothS: 480.0,
+}
+
 function clamp01(x: number): number {
   return Math.min(Math.max(x, 0), 1)
 }
@@ -106,6 +111,7 @@ export class IndustryProcessModel implements Actor {
   name: string
 
   private deferredMWh = 0
+  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: IndustryBreakdown | null = null
 
@@ -184,13 +190,17 @@ export class IndustryProcessModel implements Actor {
     const transportEquipmentMW = transportEquipmentBase - transportEquipmentCurtailed
     const otherIndustryMW = otherIndustryBase - otherIndustryCurtailed
 
-    const consumptionMW = pulpPaperMW + basicMetalsMW + chemicalsRefiningMW + miningQuarryingMW
+    const consumptionInstantMW = pulpPaperMW + basicMetalsMW + chemicalsRefiningMW + miningQuarryingMW
       + foodMW + woodProductsMW + machineryEquipmentMW + transportEquipmentMW + otherIndustryMW
       + paybackMW
+    
+    // Smooth consumption output to avoid steps
+    this.consumptionSmoothMW += 
+      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / CONSTANTS.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = consumptionMW
+    this.lastConsumptionMW = this.consumptionSmoothMW
     this.lastBreakdown = {
-      consumptionMW,
+      consumptionMW: this.consumptionSmoothMW,
       pulpPaperMW,
       basicMetalsMW,
       chemicalsRefiningMW,
@@ -226,6 +236,7 @@ export class IndustryProcessModel implements Actor {
 
   reset(): void {
     this.deferredMWh = 0
+    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

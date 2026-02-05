@@ -16,11 +16,19 @@ export interface PeakersBreakdown {
   targetMW: number
 }
 
-const INSTALLED_CAPACITY_MW = 3500.0
-const MIN_STABLE_MW = 300.0
-const RAMP_UP_MW_PER_S = 40.0
-const RAMP_DOWN_MW_PER_S = 60.0
-const START_DELAY_S = 600.0
+export const PEAKERS_CONSTANTS = {
+  installedCapacityMW: 3500.0,
+  minStableMW: 300.0,
+  rampUpMWPerS: 40.0,
+  rampDownMWPerS: 60.0,
+  startDelayS: 600.0,
+}
+
+const INSTALLED_CAPACITY_MW = PEAKERS_CONSTANTS.installedCapacityMW
+const MIN_STABLE_MW = PEAKERS_CONSTANTS.minStableMW
+const RAMP_UP_MW_PER_S = PEAKERS_CONSTANTS.rampUpMWPerS
+const RAMP_DOWN_MW_PER_S = PEAKERS_CONSTANTS.rampDownMWPerS
+const START_DELAY_S = PEAKERS_CONSTANTS.startDelayS
 
 function clamp(x: number, min: number, max: number): number {
   return Math.min(Math.max(x, min), max)

@@ -157,7 +157,7 @@ export interface DispatcherBreakdown {
 
 const CONSTANTS = {
   dayAheadStepS: 3600,
-  replanningIntervalS: 900,
+  replanningIntervalS: 60,
   planHorizonS: 86400,
   
   forecastErrorMarginFrac: 0.05,
@@ -485,15 +485,25 @@ export class DispatcherModel {
       const nuclearH = this.planHourly.nuclearMW[h]!
       const hydroH = this.planHourly.hydroReservoirMW[h]!
       
-      const residualAfterHydroH = Math.max(0, demandH - mustTakeH - nuclearH - hydroH)
-      
-      // Imports
-      const importCapH = sandbox.enableInterconnectors ? cap.interconnectors.netImportMaxMW : 0
-      const importUseH = Math.min(importCapH, residualAfterHydroH * clamp01(policy.preferImports01))
-      this.planHourly.netImportMW[h] = importUseH
+      const residual = demandH - mustTakeH - nuclearH - hydroH
+      const prefer = clamp01(policy.preferImports01)
+
+      const impMin = cap.interconnectors.netImportMinMW  // negative allowed
+      const impMax = cap.interconnectors.netImportMaxMW  // positive
+
+      let importUse = 0
+      if (residual >= 0) {
+        // need supply → import (0..impMax)
+        importUse = clamp(residual * prefer, 0, impMax)
+      } else {
+        // surplus → export (impMin..0) IF you want exports in the game
+        importUse = clamp(residual * prefer, impMin, 0)
+      }
+
+      this.planHourly.netImportMW[h] = importUse
       
       // Peakers
-      const residualAfterImportH = Math.max(0, residualAfterHydroH - importUseH)
+      const residualAfterImportH = Math.max(0, residual - importUse)
       const peakerCapH = sandbox.enableGasOilPeakers ? cap.gasOilPeakers.maxMW : 0
       this.planHourly.peakersMW[h] = Math.min(peakerCapH, residualAfterImportH)
     }
