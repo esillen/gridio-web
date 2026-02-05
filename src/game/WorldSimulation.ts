@@ -451,6 +451,7 @@ export class WorldSimulation {
 
     const interconnectorsMW = toggles.interconnectors ? this._interconnectors.netImportMW : 0
     const exportsMW = Math.max(0, -interconnectorsMW)
+    // Total supply = domestic generation + net import (import > 0, export < 0). Balance: totalProductionMW = totalConsumptionMW.
     const totalProductionMW = domesticProductionMW + interconnectorsMW
 
     // Record history snapshots at sample interval (not every tick) and only after warm-up
@@ -471,7 +472,7 @@ export class WorldSimulation {
         industryMW,
         lossesMW,
         exportsMW,
-        totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW + exportsMW,
+        totalMW: heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW,
       })
 
       this._productionHistory.push({
@@ -489,7 +490,7 @@ export class WorldSimulation {
       })
     }
 
-    // Update frequency model with reserve control loop
+    // Total consumption = domestic load only (heating + ... + losses). Exports are not part of consumption; balance: totalProductionMW = totalConsumptionMW.
     const totalConsumptionMW = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + lossesMW
     const motorLoadMW = industryMW * 0.6 + transportMW * 0.3 // rough motor load estimate
     const rawImbalanceMW = totalProductionMW - totalConsumptionMW
@@ -671,9 +672,21 @@ export class WorldSimulation {
     fcrUsed: { up: number; down: number },
     afrrUsed: { up: number; down: number }
   ): DispatcherInput {
-    // Build 24-hour forecast arrays (simplified: use forecast model's output)
-    const forecast24h = this.build24hForecast(clock, weatherOutput)
-    
+    const heatingMW = this._heatingDemand.consumptionMW
+    const nonHeatingMW = this._nonHeatingDemand.consumptionMW
+    const servicesMW = this._servicesDemand.consumptionMW
+    const transportMW = this._transportDemand.consumptionMW
+    const industryMW = this._industryDemand.consumptionMW
+    const lossesMW = this._gridLosses.consumptionMW
+    const forecast24h = this.build24hForecast(clock, weatherOutput, {
+      heatingMW,
+      nonHeatingMW,
+      servicesMW,
+      transportMW,
+      industryMW,
+      lossesMW,
+    })
+
     const hydroBreakdown = this._hydroReservoir.breakdown
     
     return {
@@ -756,7 +769,18 @@ export class WorldSimulation {
     }
   }
 
-  private build24hForecast(clock: ClockState, weather: WeatherRegionsOutput): {
+  private build24hForecast(
+    clock: ClockState,
+    weather: WeatherRegionsOutput,
+    demandNow: {
+      heatingMW: number
+      nonHeatingMW: number
+      servicesMW: number
+      transportMW: number
+      industryMW: number
+      lossesMW: number
+    }
+  ): {
     stepS: number
     demandTotalMW: number[]
     windGenerationMW: number[]
@@ -765,14 +789,15 @@ export class WorldSimulation {
     bioWasteChpGenerationMW: number[]
     industrialChpGenerationMW: number[]
   } {
-    // Hourly demand pattern (normalized)
     const demandHourlyPattern = [0.75, 0.72, 0.70, 0.70, 0.72, 0.80, 0.95, 1.05, 1.02, 0.98, 0.95, 0.93,
                                   0.92, 0.91, 0.92, 0.95, 1.00, 1.08, 1.10, 1.05, 0.98, 0.92, 0.85, 0.80]
-    
-    // Temperature-adjusted base demand (colder = higher demand)
-    const tempFactor = 1 + Math.max(0, (5 - weather.synoptic.temperatureC) * 0.02)
-    const baseDemandMW = 15000 * tempFactor
-    
+
+    const baseOnlyMW = demandNow.heatingMW + demandNow.nonHeatingMW + demandNow.servicesMW + demandNow.transportMW
+    const patternAtNow = demandHourlyPattern[clock.localHour % 24] ?? 1.0
+    const baseDemandMW = patternAtNow > 0 ? baseOnlyMW / patternAtNow : baseOnlyMW
+    const industryMW = demandNow.industryMW
+    const lossesMW = demandNow.lossesMW
+
     // Wind: estimate from weather, not current production
     const windCapacity = 16000
     const windSpeedMps = weather.synoptic.windMps
@@ -808,9 +833,8 @@ export class WorldSimulation {
     for (let i = 0; i < 24; i++) {
       const h = (clock.localHour + i) % 24
       const pattern = demandHourlyPattern[h] ?? 1.0
-      
-      // Demand
-      demandTotalMW.push(baseDemandMW * pattern)
+
+      demandTotalMW.push(baseDemandMW * pattern + industryMW + lossesMW)
       
       // Wind varies ±30% over day
       const windVariation = 1.0 + 0.3 * Math.sin((h - 6) / 24 * 2 * Math.PI)

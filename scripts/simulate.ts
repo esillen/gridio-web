@@ -153,14 +153,14 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
   const peakers = simulation.peakersBreakdown
   const interconnectors = simulation.interconnectorsBreakdown
 
-  const totalProduction = 
+  const totalProduction =
     (nuclear?.productionMW ?? 0) +
     (hydroRes?.productionMW ?? 0) +
     (hydroRoR?.productionMW ?? 0) +
     (wind?.productionMW ?? 0) +
     (solar?.productionMW ?? 0) +
-    (chp?.electricMW ?? 0) +
-    (industrialChp?.electricMW ?? 0) +
+    (chp?.productionMW ?? 0) +
+    (industrialChp?.productionMW ?? 0) +
     (peakers?.productionMW ?? 0) +
     (interconnectors?.netImportMW ?? 0)
 
@@ -171,8 +171,8 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
     hydroRoR?.productionMW ?? 0,
     wind?.productionMW ?? 0,
     solar?.productionMW ?? 0,
-    chp?.electricMW ?? 0,
-    industrialChp?.electricMW ?? 0,
+    chp?.productionMW ?? 0,
+    industrialChp?.productionMW ?? 0,
     peakers?.productionMW ?? 0,
     interconnectors?.netImportMW ?? 0,
     totalProduction
@@ -216,7 +216,7 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
   const gridLossesMW = gridLosses?.consumptionMW ?? 0
   const netImportMW = simulation.interconnectorsBreakdown?.netImportMW ?? 0
   const exportsMW = Math.max(0, -netImportMW)
-  const totalConsumption = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + gridLossesMW + exportsMW
+  const totalConsumption = heatingMW + nonHeatingMW + servicesMW + transportMW + industryMW + gridLossesMW
 
   writeCSVRow('consumption', [
     simTime,
@@ -263,10 +263,10 @@ for (let t = 0; t < TOTAL_SECONDS; t++) {
     fcrMW + ffrMW + afrrMW + mfrrMW
   ])
 
-  const capReservoirEnergyMWh = hydroRes?.energyBudgetTodayMWh ?? 300000
+  const capabilitiesReservoirEnergyMWh = hydroRes?.reservoirStorageMWh ?? 0
   writeCSVRow('debug_outputs', [
     simTime,
-    capReservoirEnergyMWh,
+    capabilitiesReservoirEnergyMWh,
     hydroRes?.energyBudgetTodayMWh ?? '',
     hydroRes?.reservoirStorageMWh ?? ''
   ])
