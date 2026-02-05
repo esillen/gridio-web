@@ -3,12 +3,12 @@ import { ref, watch, onMounted, onUnmounted } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { WeatherSnapshot } from '../game/WorldSimulation'
-import type { ForecastArrays } from '../system_model'
+import type { ForecastRegionalOutput } from '../system_model'
 import { DAY_DURATION_SECONDS } from '../game/GameState'
 
 const props = defineProps<{
   history: WeatherSnapshot[]
-  forecastArrays: ForecastArrays | null
+  forecastRegional: ForecastRegionalOutput | null
   currentTime: number
   version: number
 }>()
@@ -40,34 +40,40 @@ function buildData(): uPlot.AlignedData {
   const solar: number[] = []
   const solarFc: (number | null)[] = []
 
-  // Current weather history (solid lines)
+  // Current weather history (solid lines) – use synoptic + aggregate solar
   for (const s of props.history) {
     times.push(s.time / 3600)
-    temp.push(s.current.temperatureC)
-    wind.push(s.current.windSpeed100mMps)
-    solar.push(s.current.solarIrradianceWm2 / 10)
+    temp.push(s.current.synoptic.temperatureC)
+    wind.push(s.current.synoptic.windMps)
+    const solarAvg = s.current.solarSites.length
+      ? s.current.solarSites.reduce((a, site) => a + site.solarIrradianceWm2, 0) / s.current.solarSites.length
+      : 0
+    solar.push(solarAvg / 10)
     tempFc.push(null)
     windFc.push(null)
     solarFc.push(null)
   }
 
   // Add forecast data (dotted lines) from current time forward
-  if (props.forecastArrays && props.currentTime > 0) {
-    const fc = props.forecastArrays
+  if (props.forecastRegional && props.currentTime > 0) {
+    const fc = props.forecastRegional
     const currentTimeHours = props.currentTime / 3600
-    const resolutionS = 60
-    const maxForecastHours = 24 - currentTimeHours // Show forecast until end of day
+    const resolutionS = fc.stepS
+    const maxForecastHours = 24 - currentTimeHours
+    const N = fc.forecastWindSpeed100mMpsByRegion[0]?.length ?? 0
 
-    // Sample every 5 minutes for display (every 5th point)
-    for (let i = 0; i < fc.TMeanC.length; i += 5) {
+    for (let i = 0; i < N; i += 5) {
       const deltaS = i * resolutionS
       const forecastTimeHours = currentTimeHours + deltaS / 3600
       if (forecastTimeHours > 24 || deltaS > maxForecastHours * 3600) break
       if (forecastTimeHours <= currentTimeHours) continue
       times.push(forecastTimeHours)
-      tempFc.push(fc.TMeanC[i] ?? null)
-      windFc.push(fc.windMps[i] ?? null)
-      solarFc.push((fc.solarWm2[i] ?? 0) / 10)
+      const tAvg = fc.forecastTemperatureCByWindRegion.reduce((s, row) => s + (row[i] ?? 0), 0) / 8
+      const wAvg = fc.forecastWindSpeed100mMpsByRegion.reduce((s, row) => s + (row[i] ?? 0), 0) / 8
+      const solAvg = fc.forecastSolarIrradianceWm2BySite.reduce((s, row) => s + (row[i] ?? 0), 0) / 2
+      tempFc.push(tAvg)
+      windFc.push(wAvg)
+      solarFc.push(solAvg / 10)
     }
   }
 

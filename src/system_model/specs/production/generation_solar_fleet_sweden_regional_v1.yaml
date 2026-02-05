@@ -1,0 +1,151 @@
+model_part: generation_solar_fleet_sweden_regional_v1
+version: 1.0.0
+tick_s: 1
+
+description: >
+  Swedish solar PV fleet generation split into 2 solar locations (South/North).
+  Consumes weather_regions_sweden_v1.solar.* arrays.
+  Outputs production MW per solar site and aggregated total.
+  No generic losses here (availability/soiling/wiring/inverter losses handled elsewhere if desired).
+
+units:
+  power: MW
+  irradiance: W_per_m2
+  temperature: C
+  time: s
+
+inputs:
+  weather_regions_sweden_v1:
+    solar:
+      solar_irradiance_Wm2_by_site: [float]        # len=2
+      temperature_C_by_site: [float]               # len=2
+      precipitation_snow_mmph_by_site: [float]     # len=2
+      site_ids: [string]                           # len=2
+
+  curtailment:
+    curtailment_frac_0_1: float
+    curtailment_frac_0_1_by_site: [float]          # optional len=2
+
+state_init:
+  power_frac_smooth_0_1_by_site: [0.0,0.0]
+  snow_cover_0_1_by_site: [0.0,0.0]
+
+state:
+  power_frac_smooth_0_1_by_site: [float]
+  snow_cover_0_1_by_site: [float]
+
+constants:
+  n_sites: 2
+
+  # Sweden total grid-connected PV (AC) - update as desired
+  installed_capacity_MW_AC_total: 4808.4
+  capacity_share_0_1_by_site: [0.70,0.30]   # South/North (must sum to 1.0)
+
+  # PV conversion (simple)
+  ghi_to_plane_factor: 1.10
+  irradiance_ref_Wm2: 1000.0
+  min_irradiance_Wm2: 10.0
+
+  dc_ac_ratio: 1.15   # DC oversizing
+  NOCT_C: 45.0
+  temp_coeff_per_C: -0.004
+  T_ref_C: 25.0
+
+  # Snow cover state
+  snow_accum_temp_threshold_C: 1.0
+  snow_accum_rate_per_mm: 0.12
+  snow_accum_cold_boost: 1.5
+
+  snow_melt_temp_start_C: 0.0
+  snow_melt_rate_per_s_at_5C: 2.5e-5
+  snow_melt_solar_rate_per_Wm2_per_s: 2.0e-8
+
+  tau_power_smooth_s: 12.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+update_per_tick:
+  - poa_Wm2_by_site: >
+      let out = [];
+      let ghi = weather_regions_sweden_v1.solar.solar_irradiance_Wm2_by_site;
+      for s in 0..n_sites-1:
+        out[s] = ghi[s] * ghi_to_plane_factor;
+      return out
+
+  # Snow cover update per site
+  - state.snow_cover_0_1_by_site: >
+      let out = state.snow_cover_0_1_by_site;
+      let T = weather_regions_sweden_v1.solar.temperature_C_by_site;
+      let snow = weather_regions_sweden_v1.solar.precipitation_snow_mmph_by_site;
+      for s in 0..n_sites-1:
+        snow_mm = snow[s] * (tick_s / 3600.0);
+        cold_boost = (T[s] <= snow_accum_temp_threshold_C) ? snow_accum_cold_boost : 1.0;
+        accum = snow_mm * snow_accum_rate_per_mm * cold_boost;
+
+        poa = poa_Wm2_by_site[s];
+        temp_above_0 = max(0, T[s] - snow_melt_temp_start_C);
+        melt_temp = snow_melt_rate_per_s_at_5C * (temp_above_0 / 5.0);
+        melt_solar = snow_melt_solar_rate_per_Wm2_per_s * max(0, poa);
+        melt = (melt_temp + melt_solar) * tick_s;
+
+        out[s] = clamp01(out[s] + accum - melt);
+      return out
+
+  # Instant AC power fraction per site (DC model + DC/AC clipping + curtailment + snow)
+  - power_frac_ac_instant_0_1_by_site: >
+      let out = [];
+      let T = weather_regions_sweden_v1.solar.temperature_C_by_site;
+      for s in 0..n_sites-1:
+        poa = poa_Wm2_by_site[s];
+        if poa < min_irradiance_Wm2:
+          out[s] = 0.0;
+        else:
+          irr_frac = clamp01(poa / irradiance_ref_Wm2);
+          T_cell = T[s] + ((NOCT_C - 20.0) / 800.0) * poa;
+          temp_eff = clamp(1.0 + temp_coeff_per_C * (T_cell - T_ref_C), 0.75, 1.10);
+          dc_frac = clamp01(irr_frac * temp_eff);
+
+          # DC->AC with clipping via DC/AC ratio
+          ac_frac = min(dc_frac * dc_ac_ratio, 1.0);
+
+          curtail = if exists(curtailment.curtailment_frac_0_1_by_site):
+                      clamp01(1.0 - curtailment.curtailment_frac_0_1_by_site[s])
+                    else:
+                      clamp01(1.0 - curtailment.curtailment_frac_0_1);
+
+          snow_factor = clamp01(1.0 - state.snow_cover_0_1_by_site[s]);
+
+          out[s] = clamp01(ac_frac * curtail * snow_factor);
+      return out
+
+  # Smooth output per site
+  - state.power_frac_smooth_0_1_by_site: >
+      let out = state.power_frac_smooth_0_1_by_site;
+      for s in 0..n_sites-1:
+        out[s] = out[s] + (power_frac_ac_instant_0_1_by_site[s] - out[s]) * (tick_s / tau_power_smooth_s);
+      return out
+
+  # MW per site + total
+  - production_MW_by_site_now: >
+      let out = [];
+      for s in 0..n_sites-1:
+        cap_s = installed_capacity_MW_AC_total * capacity_share_0_1_by_site[s];
+        out[s] = cap_s * state.power_frac_smooth_0_1_by_site[s];
+      return out
+
+  - production_MW_total_now: >
+      let s = 0.0;
+      for i in 0..n_sites-1: s = s + production_MW_by_site_now[i];
+      return s
+
+outputs:
+  site_ids: "= weather_regions_sweden_v1.solar.site_ids"
+
+  production_MW: "= production_MW_total_now"
+  production_MW_total: "= production_MW_total_now"
+  production_MW_by_site: "= production_MW_by_site_now"
+
+  power_frac_0_1_by_site: "= state.power_frac_smooth_0_1_by_site"
+  snow_cover_0_1_by_site: "= state.snow_cover_0_1_by_site"

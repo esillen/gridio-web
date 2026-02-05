@@ -23,7 +23,7 @@
       Actors who can quickly adjust their power output or consumption are essential for grid stability.
     </p>
         
-        
+        we
       </div>
     </div>
     

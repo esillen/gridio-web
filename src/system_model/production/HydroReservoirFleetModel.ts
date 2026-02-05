@@ -19,6 +19,7 @@ export interface HydroBreakdown {
   availablePowerMW: number
   energyBudgetTodayMWh: number
   energyLimitedPowerMW: number
+  reservoirStorageMWh: number
   reservoirStorageLevelPct: number
   maxProductionMW: number
 }
@@ -193,6 +194,7 @@ export class HydroReservoirFleetModel implements Actor {
       availablePowerMW,
       energyBudgetTodayMWh: this.energyBudgetTodayMWh,
       energyLimitedPowerMW,
+      reservoirStorageMWh: this.reservoirStorageMWh,
       reservoirStorageLevelPct: (this.reservoirStorageMWh / CONSTANTS.storageEnergyCapacityMWh) * 100,
       maxProductionMW: MAX_POWER_MW,
     }

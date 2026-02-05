@@ -1,0 +1,195 @@
+model_part: generation_wind_fleet_sweden_regional_v1
+version: 1.0.0
+tick_s: 1
+
+description: >
+  Swedish wind fleet generation split into 8 wind regions (Option D).
+  Consumes weather_regions_sweden_v1.wind.* arrays.
+  Outputs production MW per region and aggregated total.
+  No generic losses here (availability/wake/electrical/etc handled elsewhere if desired).
+
+units:
+  power: MW
+  wind_speed: m/s
+  time: s
+
+inputs:
+  weather_regions_sweden_v1:
+    wind:
+      wind_speed_100m_mps_by_region: [float]   # len=8
+      wind_gust_mps_by_region: [float]         # len=8
+      temperature_C_by_region: [float]         # len=8
+      icing_risk_0_1_by_region: [float]        # len=8
+      site_ids: [string]                       # len=8
+
+  curtailment:
+    curtailment_frac_0_1: float
+    curtailment_frac_0_1_by_region: [float]    # optional len=8
+
+state_init:
+  wind_smooth_mps_by_region: [0,0,0,0,0,0,0,0]
+  power_frac_smooth_0_1_by_region: [0,0,0,0,0,0,0,0]
+  power_frac_smooth2_0_1_by_region: [0,0,0,0,0,0,0,0]
+  shutdown_active_by_region: [false,false,false,false,false,false,false,false]
+  shutdown_timer_s_by_region: [0,0,0,0,0,0,0,0]
+
+state:
+  wind_smooth_mps_by_region: [float]
+  power_frac_smooth_0_1_by_region: [float]
+  power_frac_smooth2_0_1_by_region: [float]
+  shutdown_active_by_region: [bool]
+  shutdown_timer_s_by_region: [float]
+
+constants:
+  n_regions: 8
+
+  # Total installed wind capacity (update as desired)
+  installed_capacity_MW_total: 16820.0
+
+  # Must sum to 1.0
+  capacity_share_0_1_by_region: [0.08,0.06,0.18,0.14,0.10,0.16,0.14,0.14]
+
+  # Power curve
+  v_cut_in_mps: 3.0
+  v_rated_mps: 12.0
+  v_cut_out_mps: 25.0
+  below_rated_exponent: 3.0
+
+  # Smoothing (per region)
+  tau_wind_smooth_s: 180.0
+  tau_power_smooth_s: 45.0
+  tau_power_smooth2_s: 20.0
+
+  # Gust shutdown (per region)
+  gust_trip_mps: 28.0
+  gust_restart_mps: 22.0
+  shutdown_min_duration_s: 600.0
+
+  # Icing derate (weather-based)
+  icing_derate_max_0_1: 0.35
+  icing_temp_center_C: -1.0
+  icing_temp_width_C: 6.0
+
+helpers:
+  clamp: "clamp(x,a,b)=min(max(x,a),b)"
+  clamp01: "clamp(x,0,1)"
+
+  fleet_power_curve_frac: >
+    func(v):
+      if v < v_cut_in_mps: return 0
+      if v < v_rated_mps:
+        x = (v - v_cut_in_mps) / (v_rated_mps - v_cut_in_mps)
+        return pow(x, below_rated_exponent)
+      if v < v_cut_out_mps: return 1
+      return 0
+
+update_per_tick:
+  # 1) Smooth wind speed per region
+  - state.wind_smooth_mps_by_region: >
+      let out = state.wind_smooth_mps_by_region;
+      let v = weather_regions_sweden_v1.wind.wind_speed_100m_mps_by_region;
+      for r in 0..n_regions-1:
+        out[r] = out[r] + (v[r] - out[r]) * (tick_s / tau_wind_smooth_s);
+      return out
+
+  # 2) Gust shutdown hysteresis per region
+  - shutdown_active_next_by_region: >
+      let a = state.shutdown_active_by_region;
+      let t = state.shutdown_timer_s_by_region;
+      let gust = weather_regions_sweden_v1.wind.wind_gust_mps_by_region;
+      let a_next = [];
+      for r in 0..n_regions-1:
+        trip = (!a[r]) && (gust[r] >= gust_trip_mps);
+        t_decr = a[r] ? max(0, t[r] - tick_s) : 0.0;
+        restart = (a[r]) && (t_decr == 0.0) && (gust[r] <= gust_restart_mps);
+        a_next[r] = trip ? true : (restart ? false : a[r]);
+      return a_next
+
+  - shutdown_timer_next_s_by_region: >
+      let a = state.shutdown_active_by_region;
+      let t = state.shutdown_timer_s_by_region;
+      let gust = weather_regions_sweden_v1.wind.wind_gust_mps_by_region;
+      let t_next = [];
+      for r in 0..n_regions-1:
+        trip = (!a[r]) && (gust[r] >= gust_trip_mps);
+        t_decr = a[r] ? max(0, t[r] - tick_s) : 0.0;
+        restart = (a[r]) && (t_decr == 0.0) && (gust[r] <= gust_restart_mps);
+        t_next[r] = trip ? shutdown_min_duration_s : (restart ? 0.0 : (a[r] ? t_decr : 0.0));
+      return t_next
+
+  - state.shutdown_active_by_region: "= shutdown_active_next_by_region"
+  - state.shutdown_timer_s_by_region: "= shutdown_timer_next_s_by_region"
+
+  # 3) Base power fraction from smoothed wind (or 0 if shutdown)
+  - base_power_frac_0_1_by_region: >
+      let out = [];
+      for r in 0..n_regions-1:
+        out[r] = state.shutdown_active_by_region[r] ? 0.0 : fleet_power_curve_frac(state.wind_smooth_mps_by_region[r]);
+      return out
+
+  # 4) Icing derate per region
+  - icing_factor_0_1_by_region: >
+      let out = [];
+      let T = weather_regions_sweden_v1.wind.temperature_C_by_region;
+      let risk = weather_regions_sweden_v1.wind.icing_risk_0_1_by_region;
+      for r in 0..n_regions-1:
+        temp_weight = exp(-pow((T[r] - icing_temp_center_C) / icing_temp_width_C, 2));
+        out[r] = clamp01(1.0 - risk[r] * icing_derate_max_0_1 * temp_weight);
+      return out
+
+  # 5) Curtailment factor per region (optional per-region)
+  - curtail_factor_0_1_by_region: >
+      let out = [];
+      if exists(curtailment.curtailment_frac_0_1_by_region):
+        for r in 0..n_regions-1: out[r] = clamp01(1.0 - curtailment.curtailment_frac_0_1_by_region[r]);
+      else:
+        for r in 0..n_regions-1: out[r] = clamp01(1.0 - curtailment.curtailment_frac_0_1);
+      return out
+
+  # 6) Instant power fraction per region (no generic losses)
+  - power_frac_instant_0_1_by_region: >
+      let out = [];
+      for r in 0..n_regions-1:
+        out[r] = clamp01(
+          base_power_frac_0_1_by_region[r]
+          * icing_factor_0_1_by_region[r]
+          * curtail_factor_0_1_by_region[r]
+        );
+      return out
+
+  # 7) Smooth power fraction per region
+  - state.power_frac_smooth_0_1_by_region: >
+      let out = state.power_frac_smooth_0_1_by_region;
+      for r in 0..n_regions-1:
+        out[r] = out[r] + (power_frac_instant_0_1_by_region[r] - out[r]) * (tick_s / tau_power_smooth_s);
+      return out
+
+  - state.power_frac_smooth2_0_1_by_region: >
+      let out = state.power_frac_smooth2_0_1_by_region;
+      for r in 0..n_regions-1:
+        out[r] = out[r] + (state.power_frac_smooth_0_1_by_region[r] - out[r]) * (tick_s / tau_power_smooth2_s);
+      return out
+
+  # 8) MW per region + total
+  - production_MW_by_region_now: >
+      let out = [];
+      for r in 0..n_regions-1:
+        cap_r = installed_capacity_MW_total * capacity_share_0_1_by_region[r];
+        out[r] = cap_r * state.power_frac_smooth2_0_1_by_region[r];
+      return out
+
+  - production_MW_total_now: >
+      let s = 0.0;
+      for r in 0..n_regions-1: s = s + production_MW_by_region_now[r];
+      return s
+
+outputs:
+  region_ids: "= weather_regions_sweden_v1.wind.site_ids"
+
+  production_MW: "= production_MW_total_now"
+  production_MW_total: "= production_MW_total_now"
+  production_MW_by_region: "= production_MW_by_region_now"
+
+  power_frac_0_1_by_region: "= state.power_frac_smooth2_0_1_by_region"
+  wind_smooth_mps_by_region: "= state.wind_smooth_mps_by_region"
+  shutdown_active_by_region: "= state.shutdown_active_by_region"

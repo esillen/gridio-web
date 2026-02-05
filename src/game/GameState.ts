@@ -1,7 +1,7 @@
 import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot, type BalancingSnapshot } from './WorldSimulation'
 import type { GridSnapshot } from './PowerGrid'
-import type { WeatherOutput, ForecastArrays, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindBreakdown, SolarBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
+import type { WeatherRegionsOutput, ForecastRegionalOutput, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindFleetRegionalBreakdown, SolarFleetRegionalBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
 import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput, type SettlementSnapshot } from '../system_model'
 import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
@@ -123,7 +123,7 @@ class GameState {
   // Reactive UI state - synced once per frame
   currentTime = 0
   currentSnapshot: GridSnapshot | null = null
-  currentWeather: WeatherOutput | null = null
+  currentWeather: WeatherRegionsOutput | null = null
   heatingBreakdown: HeatingBreakdown | null = null
   nonHeatingBreakdown: NonHeatingBreakdown | null = null
   servicesBreakdown: ServicesBreakdown | null = null
@@ -131,8 +131,8 @@ class GameState {
   nuclearBreakdown: NuclearBreakdown | null = null
   hydroReservoirBreakdown: HydroBreakdown | null = null
   hydroRoRBreakdown: RoRBreakdown | null = null
-  windBreakdown: WindBreakdown | null = null
-  solarBreakdown: SolarBreakdown | null = null
+  windBreakdown: WindFleetRegionalBreakdown | null = null
+  solarBreakdown: SolarFleetRegionalBreakdown | null = null
   frequencyBreakdown: FrequencyBreakdown | null = null
   currentFrequencyHz = 50.0
   currentFrequencyBand: FrequencyBand = 'normal'
@@ -502,8 +502,8 @@ class GameState {
     return this._imbalanceSettlement.history
   }
 
-  get forecastArrays(): ForecastArrays | null {
-    return this._world?.forecastArrays ?? null
+  get forecastRegional(): ForecastRegionalOutput | null {
+    return this._world?.forecastRegional ?? null
   }
 
   stopSimulation(): void {

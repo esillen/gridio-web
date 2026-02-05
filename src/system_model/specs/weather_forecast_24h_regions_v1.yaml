@@ -1,0 +1,331 @@
+# -------------------------------------------------------------------
+# weather_forecast_24h_regions_v1
+# (per-second rolling forecast of the next 24h, now with regions)
+# -------------------------------------------------------------------
+- id: weather_forecast_24h_regions_v1
+  type: forecast
+  tick_hz: 1
+  horizon_s: 86400
+  resolution_s: 60    # compute once per minute; arrays exposed each second
+
+  description: >
+    24h rolling forecast consistent with weather_regions_sweden_v1.
+    Outputs:
+      - Wind weather at 8 wind regions (speed, gust, temperature, icing risk)
+      - Solar weather at 2 solar sites (irradiance, temperature, cloud, snow precip)
+    Uses shared synoptic backbone forecast + decaying current regional deviations.
+
+  constants:
+    # Uncertainty growth (optional; kept scalar here)
+    sigma0_T_C: 0.4
+    k_T_C_per_sqrt_h: 0.35
+    sigma0_wind_mps: 1.0
+    k_wind_mps_per_sqrt_h: 0.9
+    sigma0_cloud: 0.10
+    k_cloud_per_sqrt_h: 0.08
+
+    # Forecast mean-reversion times (match "now" model roughly)
+    tau_T_forecast_s: 6.0e4
+    tau_wind_forecast_s: 7.2e3
+    tau_cloud_forecast_s: 1.44e4
+
+    # Regional deviation decay (how quickly local anomalies wash out)
+    tau_wind_dev_forecast_s: 1800.0
+    tau_temp_dev_forecast_s: 7200.0
+    tau_cloud_dev_forecast_s: 3600.0
+    tau_snow_dev_forecast_s: 3600.0
+
+    # Snow / icing forecast knobs (toy)
+    p_snow_next_hour_base: 0.12
+    snow_temp_boost_C: -1.0
+    snow_prob_boost: 0.10
+    tau_snow_forecast_s: 1.2e4
+
+    # Solar (same as now model)
+    solar_constant_Wm2: 1361.0
+    clear_sky_transmittance: 0.72
+    k_cloud: 0.75
+    p_cloud: 1.3
+    min_sin_elevation: 0.0
+
+    # Gust (deterministic forecast; no noise)
+    gust_base_mps: 1.0
+    gust_factor: 0.35
+
+    # ---- Region/site definitions (must match weather_regions_sweden_v1) ----
+    wind_n: 8
+    wind_site_ids: ["FarNorth_inland","FarNorth_coast","North_inland","North_coast","Central_inland","Central_coast_east","South_west","Offshore"]
+    wind_multiplier_by_site: [0.95,1.05,0.95,1.05,0.95,1.05,1.02,1.15]
+    temp_offset_C_by_wind_site: [-6.5,-6.5,-4.5,-4.5,-1.5,-1.5,1.0,1.5]
+
+    solar_n: 2
+    solar_site_ids: ["South","North"]
+    solar_lat_deg_by_site: [56.5,64.0]
+    cloud_offset_by_solar_site: [0.00,0.05]
+    temp_offset_C_by_solar_site: [2.0,-3.5]
+
+    # ---- Seasonal constants (same formulas as now model) ----
+    T_annual_mean_C: 2.0
+    T_season_amp_C: 10.0
+    T_season_phase_doy: 20.0
+    T_diurnal_amp_C: 2.0
+    T_diurnal_min_hour: 5.0
+
+    V_season_mean_mps: 7.0
+    V_season_amp_mps: 2.0
+    V_season_phase_doy: 10.0
+
+    cloud_season_mean: 0.75
+    cloud_season_amp: 0.10
+    cloud_season_phase_doy: 5.0
+
+    # Icing rule (same as now model)
+    icing_T_hi_C: 1.0
+    icing_T_lo_C: -6.0
+
+  inputs:
+    clock_utc_plus1.time_s: "current time"
+    clock_utc_plus1.local_hour: "for diurnal"
+    clock_utc_plus1.local_minute: "for diurnal"
+    clock_utc_plus1.local_second: "for diurnal"
+    clock_utc_plus1.day_of_year: "for seasonal + solar"
+
+    # Current regionalized weather from weather_regions_sweden_v1
+    weather_regions_sweden_v1.wind.wind_speed_100m_mps_by_region: "len=8"
+    weather_regions_sweden_v1.wind.temperature_C_by_region: "len=8"
+    weather_regions_sweden_v1.wind.icing_risk_0_1_by_region: "len=8"
+
+    weather_regions_sweden_v1.solar.cloud_cover_0_1_by_site: "len=2"
+    weather_regions_sweden_v1.solar.temperature_C_by_site: "len=2"
+    weather_regions_sweden_v1.solar.precipitation_snow_mmph_by_site: "len=2"
+
+    # Synoptic backbone (from weather_regions_sweden_v1 outputs/debug)
+    weather_regions_sweden_v1.synoptic.temperature_C: "current synoptic temp"
+    weather_regions_sweden_v1.synoptic.wind_mps: "current synoptic wind"
+    weather_regions_sweden_v1.synoptic.cloud_cover_0_1: "current synoptic cloud"
+    weather_regions_sweden_v1.synoptic.is_snowing: "bool"
+    weather_regions_sweden_v1.synoptic.snow_intensity_mmph: "current synoptic snow intensity"
+
+  state_init:
+    # Arrays length N where N = horizon_s / resolution_s
+    step_s: "resolution_s"
+    N: "horizon_s / resolution_s"
+
+    forecast_wind_speed_100m_mps_by_region: "8 x N array"
+    forecast_wind_gust_mps_by_region: "8 x N array"
+    forecast_temperature_C_by_wind_region: "8 x N array"
+    forecast_icing_risk_0_1_by_wind_region: "8 x N array"
+
+    forecast_solar_irradiance_Wm2_by_site: "2 x N array"
+    forecast_cloud_cover_0_1_by_site: "2 x N array"
+    forecast_temperature_C_by_solar_site: "2 x N array"
+    forecast_precipitation_snow_mmph_by_site: "2 x N array"
+
+    # Optional scalar uncertainty arrays
+    sigma_T_C: "N array"
+    sigma_wind_mps: "N array"
+    sigma_cloud: "N array"
+
+  update_per_second:
+    - step: >
+        "Recompute the full forecast arrays once per resolution_s (60s).
+         Every second, outputs expose the latest arrays."
+
+    - recompute_every_resolution_s:
+        do:
+          - define:
+              pi: "3.141592653589793"
+              t0: "clock_utc_plus1.time_s"
+              doy: "clock_utc_plus1.day_of_year"
+              t_day_s0: "clock_utc_plus1.local_hour*3600 + clock_utc_plus1.local_minute*60 + clock_utc_plus1.local_second"
+              N: "horizon_s / resolution_s"
+
+              # Current synoptic values
+              T_syn_now: "weather_regions_sweden_v1.synoptic.temperature_C"
+              V_syn_now: "weather_regions_sweden_v1.synoptic.wind_mps"
+              cloud_syn_now: "weather_regions_sweden_v1.synoptic.cloud_cover_0_1"
+              is_snowing_now: "weather_regions_sweden_v1.synoptic.is_snowing"
+              snow_syn_now_mmph: "weather_regions_sweden_v1.synoptic.snow_intensity_mmph"
+
+              # Current region/site values
+              wind_now_by_r: "weather_regions_sweden_v1.wind.wind_speed_100m_mps_by_region"
+              Twind_now_by_r: "weather_regions_sweden_v1.wind.temperature_C_by_region"
+
+              cloud_now_by_s: "weather_regions_sweden_v1.solar.cloud_cover_0_1_by_site"
+              Tsolar_now_by_s: "weather_regions_sweden_v1.solar.temperature_C_by_site"
+              snow_now_by_s_mmph: "weather_regions_sweden_v1.solar.precipitation_snow_mmph_by_site"
+
+          # Precompute current deviations (so forecast can decay them)
+          - define:
+              wind_dev_now_by_r: >
+                let out = [];
+                for r in 0..wind_n-1:
+                  out[r] = wind_now_by_r[r] - (V_syn_now * wind_multiplier_by_site[r]);
+                return out
+
+              temp_dev_now_by_r: >
+                let out = [];
+                for r in 0..wind_n-1:
+                  out[r] = Twind_now_by_r[r] - (T_syn_now + temp_offset_C_by_wind_site[r]);
+                return out
+
+              cloud_dev_now_by_s: >
+                let out = [];
+                for s in 0..solar_n-1:
+                  out[s] = cloud_now_by_s[s] - (cloud_syn_now + cloud_offset_by_solar_site[s]);
+                return out
+
+              snow_dev_frac_now_by_s: >
+                let out = [];
+                # define as multiplicative deviation around synoptic snow intensity
+                for s in 0..solar_n-1:
+                  base = max(0.01, snow_syn_now_mmph);
+                  out[s] = (snow_now_by_s_mmph[s] / base) - 1.0;
+                return out
+
+          # Loop over horizon points i = 0..N-1
+          - loop:
+              i: "0..N-1"
+              define:
+                h_s: "i * resolution_s"
+                t_day_s: "(t_day_s0 + h_s) mod 86400"
+
+                # Seasonal targets
+                T_season_C: "T_annual_mean_C - T_season_amp_C * cos(2*pi*(doy - T_season_phase_doy)/365)"
+                V_season_target_mps: "V_season_mean_mps + V_season_amp_mps * cos(2*pi*(doy - V_season_phase_doy)/365)"
+                cloud_target: "cloud_season_mean + cloud_season_amp * cos(2*pi*(doy - cloud_season_phase_doy)/365)"
+
+                # Diurnal temp term
+                T_diurnal_C: "T_diurnal_amp_C * sin(2*pi*(t_day_s - (T_diurnal_min_hour*3600 + 86400/4))/86400)"
+                T_target_C: "T_season_C + T_diurnal_C"
+
+                # Synoptic forecasts (exponential approach)
+                T_syn_hat_C: "T_target_C + (T_syn_now - T_target_C) * exp(-h_s/tau_T_forecast_s)"
+                V_syn_hat_mps: "V_season_target_mps + (V_syn_now - V_season_target_mps) * exp(-h_s/tau_wind_forecast_s)"
+                cloud_syn_hat: "clamp01(cloud_target + (cloud_syn_now - cloud_target) * exp(-h_s/tau_cloud_forecast_s))"
+
+                # Snow synoptic forecast: expected intensity via probability model (toy)
+                p_snow_next_hour: >
+                  clamp01(
+                    p_snow_next_hour_base
+                    + (T_syn_hat_C < snow_temp_boost_C ? snow_prob_boost : 0.0)
+                    + 0.10 * (cloud_syn_hat - 0.7)
+                  )
+                snow_syn_hat_mmph: >
+                  (p_snow_next_hour)
+                  * (0.6 * exp(-h_s/tau_snow_forecast_s) + 0.2)
+                  * 1.2
+                snow_syn_hat_mmph_clamped: "clamp(snow_syn_hat_mmph, 0.0, 2.0)"
+
+                # Uncertainty (optional)
+                h_hours: "h_s / 3600"
+                sigma_T: "sigma0_T_C + k_T_C_per_sqrt_h * sqrt(h_hours)"
+                sigma_wind: "sigma0_wind_mps + k_wind_mps_per_sqrt_h * sqrt(h_hours)"
+                sigma_cloud: "sigma0_cloud + k_cloud_per_sqrt_h * sqrt(h_hours)"
+
+              # --- Write scalar uncertainty arrays ---
+              write_arrays:
+                sigma_T_C[i]: "sigma_T"
+                sigma_wind_mps[i]: "sigma_wind"
+                sigma_cloud[i]: "sigma_cloud"
+
+              # --- Wind regions (8) ---
+              write_arrays:
+                forecast_wind_speed_100m_mps_by_region[*][i]: >
+                  let out = [];
+                  for r in 0..wind_n-1:
+                    dev_hat = wind_dev_now_by_r[r] * exp(-h_s/tau_wind_dev_forecast_s);
+                    v_hat = V_syn_hat_mps * wind_multiplier_by_site[r] + dev_hat;
+                    out[r] = clamp(v_hat, 0.0, 35.0);
+                  return out
+
+                forecast_wind_gust_mps_by_region[*][i]: >
+                  let out = [];
+                  for r in 0..wind_n-1:
+                    v_hat = forecast_wind_speed_100m_mps_by_region[r][i];
+                    out[r] = clamp(v_hat + gust_base_mps + gust_factor * v_hat, v_hat, 45.0);
+                  return out
+
+                forecast_temperature_C_by_wind_region[*][i]: >
+                  let out = [];
+                  for r in 0..wind_n-1:
+                    dev_hat = temp_dev_now_by_r[r] * exp(-h_s/tau_temp_dev_forecast_s);
+                    out[r] = T_syn_hat_C + temp_offset_C_by_wind_site[r] + dev_hat;
+                  return out
+
+                forecast_icing_risk_0_1_by_wind_region[*][i]: >
+                  let out = [];
+                  for r in 0..wind_n-1:
+                    T_hat = forecast_temperature_C_by_wind_region[r][i];
+                    snow_on = (snow_syn_hat_mmph_clamped > 0.05) ? 1.0 : 0.0;
+                    out[r] = clamp01(
+                      snow_on
+                      * (
+                        (T_hat <= icing_T_hi_C && T_hat >= icing_T_lo_C ? 1.0 : 0.0)
+                        + (T_hat < icing_T_lo_C ? 0.4 : 0.0)
+                      )
+                    );
+                  return out
+
+              # --- Solar sites (2) ---
+              write_arrays:
+                forecast_cloud_cover_0_1_by_site[*][i]: >
+                  let out = [];
+                  for s in 0..solar_n-1:
+                    dev_hat = cloud_dev_now_by_s[s] * exp(-h_s/tau_cloud_dev_forecast_s);
+                    out[s] = clamp01(cloud_syn_hat + cloud_offset_by_solar_site[s] + dev_hat);
+                  return out
+
+                forecast_temperature_C_by_solar_site[*][i]: >
+                  let out = [];
+                  for s in 0..solar_n-1:
+                    # keep solar temp tied to synoptic + offset (simple)
+                    out[s] = T_syn_hat_C + temp_offset_C_by_solar_site[s];
+                  return out
+
+                forecast_solar_irradiance_Wm2_by_site[*][i]: >
+                  let out = [];
+                  decl_deg = 23.44 * sin(2*pi*(284 + doy)/365);
+                  decl_rad = decl_deg * pi/180;
+                  t_hours = t_day_s / 3600;
+                  H_rad = (t_hours - 12.0) * 15.0 * pi/180;
+                  for s in 0..solar_n-1:
+                    lat_rad = solar_lat_deg_by_site[s] * pi/180;
+                    sin_elev = sin(lat_rad)*sin(decl_rad) + cos(lat_rad)*cos(decl_rad)*cos(H_rad);
+                    sin_elev_pos = max(min_sin_elevation, sin_elev);
+                    ghi_clear = solar_constant_Wm2 * clear_sky_transmittance * sin_elev_pos;
+
+                    cloud_hat = forecast_cloud_cover_0_1_by_site[s][i];
+                    cloud_factor = clamp01(1.0 - k_cloud * pow(cloud_hat, p_cloud));
+                    out[s] = ghi_clear * cloud_factor;
+                  return out
+
+                forecast_precipitation_snow_mmph_by_site[*][i]: >
+                  let out = [];
+                  for s in 0..solar_n-1:
+                    dev_hat = snow_dev_frac_now_by_s[s] * exp(-h_s/tau_snow_dev_forecast_s);
+                    mult = clamp(1.0 + dev_hat, 0.7, 1.3);
+                    out[s] = snow_syn_hat_mmph_clamped * mult;
+                  return out
+
+  outputs_per_second:
+    step_s: "resolution_s"
+
+    wind_site_ids: "constants.wind_site_ids"
+    solar_site_ids: "constants.solar_site_ids"
+
+    # Arrays (preferred consumption pattern)
+    forecast_wind_speed_100m_mps_by_region: "state.forecast_wind_speed_100m_mps_by_region"
+    forecast_wind_gust_mps_by_region: "state.forecast_wind_gust_mps_by_region"
+    forecast_temperature_C_by_wind_region: "state.forecast_temperature_C_by_wind_region"
+    forecast_icing_risk_0_1_by_wind_region: "state.forecast_icing_risk_0_1_by_wind_region"
+
+    forecast_solar_irradiance_Wm2_by_site: "state.forecast_solar_irradiance_Wm2_by_site"
+    forecast_cloud_cover_0_1_by_site: "state.forecast_cloud_cover_0_1_by_site"
+    forecast_temperature_C_by_solar_site: "state.forecast_temperature_C_by_solar_site"
+    forecast_precipitation_snow_mmph_by_site: "state.forecast_precipitation_snow_mmph_by_site"
+
+    # Optional uncertainty (scalar vs horizon)
+    forecast_temperature_sigma_C: "state.sigma_T_C"
+    forecast_wind_sigma_mps: "state.sigma_wind_mps"
+    forecast_cloud_sigma: "state.sigma_cloud"

@@ -439,7 +439,7 @@ watch(tutorialMessage, (msg) => {
                 <WeatherChart 
                   v-else-if="bottomChartView === 'weather'"
                   :history="gameState.weatherHistory" 
-                  :forecastArrays="gameState.forecastArrays"
+                  :forecastRegional="gameState.forecastRegional"
                   :currentTime="gameState.currentTime"
                   :version="gameState.weatherHistoryVersion" 
                 />

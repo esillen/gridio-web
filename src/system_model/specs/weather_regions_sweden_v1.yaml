@@ -1,0 +1,372 @@
+# ------------------------------------------------------------
+# weather_regions_sweden_v1
+# - Synthesizes partly-correlated regional weather fields.
+# - Outputs 8 wind-site weather + 2 solar-site weather each second.
+# ------------------------------------------------------------
+- id: weather_regions_sweden_v1
+  type: input_state
+  tick_hz: 1
+
+  description: >
+    Regionalized Sweden weather synthesizer for games.
+    Produces partly-correlated wind/temperature/icing at 8 wind locations and
+    solar irradiance/temperature/snow at 2 solar locations.
+    Uses a shared synoptic backbone (slow) + local AR(1) deviations (medium),
+    plus simple lat/region offsets. Designed to reduce "single-location" spikiness.
+
+  constants:
+    dt_s: 1.0
+    day_s: 86400.0
+
+    # --- RNG placeholders ---
+    # N(0,1) standard normal; U(0,1) uniform
+
+    clamp: "clamp(x,a,b)=min(max(x,a),b)"
+    clamp01: "clamp01(x)=clamp(x,0,1)"
+
+    # ----------------------------
+    # Site definitions
+    # ----------------------------
+    wind_n: 8
+    wind_site_ids: ["FarNorth_inland","FarNorth_coast","North_inland","North_coast","Central_inland","Central_coast_east","South_west","Offshore"]
+    wind_lat_deg_by_site: [67.5,67.5,65.0,65.0,60.5,60.5,57.5,58.0]
+    wind_lon_deg_by_site: [20.0,22.5,18.0,21.0,15.0,19.5,12.0,16.0]
+
+    solar_n: 2
+    solar_site_ids: ["South","North"]
+    solar_lat_deg_by_site: [56.5,64.0]
+    solar_lon_deg_by_site: [13.5,20.0]
+
+    # ----------------------------
+    # Synoptic (shared) seasonal targets
+    # ----------------------------
+    T_annual_mean_C: 2.0
+    T_season_amp_C: 10.0
+    T_season_phase_doy: 20.0
+
+    V_season_mean_mps: 7.0
+    V_season_amp_mps: 2.0
+    V_season_phase_doy: 10.0
+
+    cloud_season_mean: 0.75
+    cloud_season_amp: 0.10
+    cloud_season_phase_doy: 5.0
+
+    # Diurnal temperature swing
+    T_diurnal_amp_C: 2.0
+    T_diurnal_min_hour: 5.0
+
+    # Mean reversion + stochasticity (synoptic)
+    tau_T_mean_s: 6.0e4
+    sigma_T_C_per_sqrt_s: 0.010
+
+    tau_front_s: 2.0e5
+    sigma_front_C_per_sqrt_s: 0.004
+
+    tau_wind_syn_s: 7.2e3
+    sigma_wind_syn_mps_per_sqrt_s: 0.030
+
+    tau_cloud_syn_s: 1.44e4
+    sigma_cloud_syn_per_sqrt_s: 0.0012
+
+    # Snow on/off (synoptic)
+    p_start_snow_per_s: 2.0e-5
+    p_stop_snow_per_s: 2.0e-4
+    snow_intensity_min_mmph: 0.1
+    snow_intensity_max_mmph: 2.0
+    tau_snow_intensity_s: 1800.0
+    sigma_snow_intensity_mmph_per_sqrt_s: 0.02
+
+    # ----------------------------
+    # Regional deviations (AR(1))
+    # ----------------------------
+    tau_wind_reg_s: 1800.0
+    sigma_wind_reg_mps_per_sqrt_s: 0.015
+
+    tau_temp_reg_s: 7200.0
+    sigma_temp_reg_C_per_sqrt_s: 0.003
+
+    tau_cloud_reg_s: 3600.0
+    sigma_cloud_reg_per_sqrt_s: 0.0009
+
+    tau_snow_reg_s: 3600.0
+    sigma_snow_reg_per_sqrt_s: 0.002
+
+    # ----------------------------
+    # Region scaling/offsets (simple “geography”)
+    # ----------------------------
+    # Wind multipliers: offshore/coast tends higher, inland lower
+    wind_multiplier_by_site: [0.95,1.05,0.95,1.05,0.95,1.05,1.02,1.15]
+
+    # Temperature offsets: north colder (simple gradient-ish)
+    temp_offset_C_by_wind_site: [-6.5,-6.5,-4.5,-4.5,-1.5,-1.5,1.0,1.5]
+    temp_offset_C_by_solar_site: [2.0,-3.5]
+
+    # Cloud offsets (slight)
+    cloud_offset_by_solar_site: [0.00,0.05]
+
+    # ----------------------------
+    # Gust model (per wind site)
+    # ----------------------------
+    gust_base_mps: 1.0
+    gust_factor: 0.35
+    sigma_gust_mps: 0.7
+
+    # ----------------------------
+    # Solar irradiance (per solar site)
+    # ----------------------------
+    solar_constant_Wm2: 1361.0
+    clear_sky_transmittance: 0.72
+    k_cloud: 0.75
+    p_cloud: 1.3
+    min_sin_elevation: 0.0
+
+  inputs:
+    clock_utc_plus1:
+      time_s: "simulation time"
+      local_hour: "0..23"
+      local_minute: "0..59"
+      local_second: "0..59"
+      day_of_year: "1..365"
+
+  state_init:
+    # Synoptic backbone
+    syn_temperature_C: -8.0
+    front_offset_C: 0.0
+    syn_wind_mps: 8.0
+    syn_cloud_0_1: 0.8
+    syn_is_snowing: false
+    syn_snow_intensity_mmph: 0.0
+
+    # Regional deviations
+    wind_dev_mps_by_site: [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]
+    temp_dev_C_by_site: [0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]
+    cloud_dev_0_1_by_solar_site: [0.0,0.0]
+    snow_dev_frac_by_solar_site: [0.0,0.0]
+
+  update_per_second:
+    # Time scalars
+    - define:
+        t_day_s: "clock_utc_plus1.local_hour*3600 + clock_utc_plus1.local_minute*60 + clock_utc_plus1.local_second"
+        doy: "clock_utc_plus1.day_of_year"
+        pi: "3.141592653589793"
+
+    # Seasonal targets
+    - define:
+        T_season_C: "T_annual_mean_C - T_season_amp_C * cos(2*pi*(doy - T_season_phase_doy)/365)"
+        V_season_target_mps: "V_season_mean_mps + V_season_amp_mps * cos(2*pi*(doy - V_season_phase_doy)/365)"
+        cloud_target: "cloud_season_mean + cloud_season_amp * cos(2*pi*(doy - cloud_season_phase_doy)/365)"
+
+    # Diurnal temp swing (min at T_diurnal_min_hour)
+    - define:
+        T_diurnal_C: "T_diurnal_amp_C * sin(2*pi*(t_day_s - (T_diurnal_min_hour*3600 + day_s/4))/day_s)"
+
+    # Front offset
+    - update_state:
+        front_offset_C: >
+          front_offset_C
+          + (0.0 - front_offset_C) * (dt_s / tau_front_s)
+          + sigma_front_C_per_sqrt_s * sqrt(dt_s) * N(0,1)
+
+    # Synoptic temperature
+    - define:
+        T_target_C: "T_season_C + front_offset_C + T_diurnal_C"
+    - update_state:
+        syn_temperature_C: >
+          syn_temperature_C
+          + (T_target_C - syn_temperature_C) * (dt_s / tau_T_mean_s)
+          + sigma_T_C_per_sqrt_s * sqrt(dt_s) * N(0,1)
+
+    # Synoptic wind
+    - update_state:
+        syn_wind_mps: >
+          clamp(
+            syn_wind_mps
+            + (V_season_target_mps - syn_wind_mps) * (dt_s / tau_wind_syn_s)
+            + sigma_wind_syn_mps_per_sqrt_s * sqrt(dt_s) * N(0,1),
+            0.0,
+            35.0
+          )
+
+    # Synoptic cloud
+    - update_state:
+        syn_cloud_0_1: >
+          clamp01(
+            syn_cloud_0_1
+            + (cloud_target - syn_cloud_0_1) * (dt_s / tau_cloud_syn_s)
+            + sigma_cloud_syn_per_sqrt_s * sqrt(dt_s) * N(0,1)
+          )
+
+    # Synoptic snow on/off + intensity
+    - update_state:
+        syn_is_snowing: >
+          if syn_is_snowing == false:
+            (U(0,1) < p_start_snow_per_s)
+          else:
+            not (U(0,1) < p_stop_snow_per_s)
+
+    - update_state:
+        syn_snow_intensity_mmph: >
+          if syn_is_snowing == true:
+            clamp(
+              syn_snow_intensity_mmph
+              + ((0.7 - syn_snow_intensity_mmph) * (dt_s / tau_snow_intensity_s))
+              + sigma_snow_intensity_mmph_per_sqrt_s * sqrt(dt_s) * N(0,1),
+              snow_intensity_min_mmph,
+              snow_intensity_max_mmph
+            )
+          else:
+            0.0
+
+    # Regional wind deviations (8)
+    - update_state:
+        wind_dev_mps_by_site: >
+          let out = wind_dev_mps_by_site;
+          for r in 0..wind_n-1:
+            out[r] =
+              out[r]
+              + (0.0 - out[r]) * (dt_s / tau_wind_reg_s)
+              + sigma_wind_reg_mps_per_sqrt_s * sqrt(dt_s) * N(0,1);
+          return out
+
+    # Regional temp deviations (8)
+    - update_state:
+        temp_dev_C_by_site: >
+          let out = temp_dev_C_by_site;
+          for r in 0..wind_n-1:
+            out[r] =
+              out[r]
+              + (0.0 - out[r]) * (dt_s / tau_temp_reg_s)
+              + sigma_temp_reg_C_per_sqrt_s * sqrt(dt_s) * N(0,1);
+          return out
+
+    # Solar-site cloud deviations (2)
+    - update_state:
+        cloud_dev_0_1_by_solar_site: >
+          let out = cloud_dev_0_1_by_solar_site;
+          for s in 0..solar_n-1:
+            out[s] =
+              out[s]
+              + (0.0 - out[s]) * (dt_s / tau_cloud_reg_s)
+              + sigma_cloud_reg_per_sqrt_s * sqrt(dt_s) * N(0,1);
+          return out
+
+    # Solar-site snow intensity deviations (2) as small multiplicative frac
+    - update_state:
+        snow_dev_frac_by_solar_site: >
+          let out = snow_dev_frac_by_solar_site;
+          for s in 0..solar_n-1:
+            out[s] =
+              out[s]
+              + (0.0 - out[s]) * (dt_s / tau_snow_reg_s)
+              + sigma_snow_reg_per_sqrt_s * sqrt(dt_s) * N(0,1);
+          return out
+
+    # ----- Derived wind-site fields -----
+    - define:
+        wind_speed_100m_mps_by_region: >
+          let out = [];
+          for r in 0..wind_n-1:
+            v = syn_wind_mps * wind_multiplier_by_site[r] + wind_dev_mps_by_site[r];
+            out[r] = clamp(v, 0.0, 35.0);
+          return out
+
+        temperature_C_by_wind_region: >
+          let out = [];
+          for r in 0..wind_n-1:
+            out[r] = syn_temperature_C + temp_offset_C_by_wind_site[r] + temp_dev_C_by_site[r];
+          return out
+
+        wind_gust_mps_by_region: >
+          let out = [];
+          for r in 0..wind_n-1:
+            v = wind_speed_100m_mps_by_region[r];
+            g = v + gust_base_mps + gust_factor * v + sigma_gust_mps * N(0,1);
+            out[r] = clamp(g, v, 45.0);
+          return out
+
+        icing_risk_0_1_by_wind_region: >
+          let out = [];
+          for r in 0..wind_n-1:
+            T = temperature_C_by_wind_region[r];
+            # icing risk: high when -6..+1°C and snowing, moderate below -6
+            out[r] = clamp01(
+              (syn_is_snowing ? 1.0 : 0.0)
+              * (
+                (T <= 1.0 && T >= -6.0 ? 1.0 : 0.0)
+                + (T < -6.0 ? 0.4 : 0.0)
+              )
+            );
+          return out
+
+    # ----- Derived solar-site fields -----
+    - define:
+        temperature_C_by_solar_site: >
+          let out = [];
+          for s in 0..solar_n-1:
+            out[s] = syn_temperature_C + temp_offset_C_by_solar_site[s];
+          return out
+
+        cloud_cover_0_1_by_solar_site: >
+          let out = [];
+          for s in 0..solar_n-1:
+            out[s] = clamp01(syn_cloud_0_1 + cloud_offset_by_solar_site[s] + cloud_dev_0_1_by_solar_site[s]);
+          return out
+
+        solar_irradiance_Wm2_by_solar_site: >
+          let out = [];
+          for s in 0..solar_n-1:
+            lat_rad = solar_lat_deg_by_site[s] * pi/180;
+
+            # declination (Cooper-like)
+            decl_deg = 23.44 * sin(2*pi*(284 + doy)/365);
+            decl_rad = decl_deg * pi/180;
+
+            t_hours = t_day_s / 3600;
+            H_rad = (t_hours - 12.0) * 15.0 * pi/180;
+
+            sin_elev = sin(lat_rad)*sin(decl_rad) + cos(lat_rad)*cos(decl_rad)*cos(H_rad);
+            sin_elev_pos = max(min_sin_elevation, sin_elev);
+
+            ghi_clear = solar_constant_Wm2 * clear_sky_transmittance * sin_elev_pos;
+
+            cloud = cloud_cover_0_1_by_solar_site[s];
+            cloud_factor = clamp01(1.0 - k_cloud * pow(cloud, p_cloud));
+
+            out[s] = ghi_clear * cloud_factor;
+          return out
+
+        precipitation_snow_mmph_by_solar_site: >
+          let out = [];
+          for s in 0..solar_n-1:
+            if syn_is_snowing:
+              mult = clamp(1.0 + snow_dev_frac_by_solar_site[s], 0.7, 1.3);
+              out[s] = syn_snow_intensity_mmph * mult;
+            else:
+              out[s] = 0.0;
+          return out
+
+  outputs_per_second:
+    # Wind locations (8)
+    wind:
+      site_ids: "constants.wind_site_ids"
+      wind_speed_100m_mps_by_region: "derived.wind_speed_100m_mps_by_region"
+      wind_gust_mps_by_region: "derived.wind_gust_mps_by_region"
+      temperature_C_by_region: "derived.temperature_C_by_wind_region"
+      icing_risk_0_1_by_region: "derived.icing_risk_0_1_by_wind_region"
+
+    # Solar locations (2)
+    solar:
+      site_ids: "constants.solar_site_ids"
+      solar_irradiance_Wm2_by_site: "derived.solar_irradiance_Wm2_by_solar_site"
+      temperature_C_by_site: "derived.temperature_C_by_solar_site"
+      precipitation_snow_mmph_by_site: "derived.precipitation_snow_mmph_by_solar_site"
+      cloud_cover_0_1_by_site: "derived.cloud_cover_0_1_by_solar_site"
+
+    # Handy debug
+    synoptic:
+      temperature_C: "state.syn_temperature_C"
+      wind_mps: "state.syn_wind_mps"
+      cloud_cover_0_1: "state.syn_cloud_0_1"
+      is_snowing: "state.syn_is_snowing"
+      snow_intensity_mmph: "state.syn_snow_intensity_mmph"

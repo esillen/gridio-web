@@ -1,8 +1,14 @@
 export { WeatherModel } from './WeatherModel'
 export type { WeatherState, WeatherOutput } from './WeatherModel'
 
+export { WeatherRegionsModel } from './WeatherRegionsModel'
+export type { WindRegionWeather, SolarSiteWeather, SynopticWeather, WeatherRegionsOutput } from './WeatherRegionsModel'
+
 export { ForecastModel } from './ForecastModel'
 export type { ForecastArrays, ForecastOutput } from './ForecastModel'
+
+export { ForecastRegionalModel } from './ForecastRegionalModel'
+export type { ForecastRegionalOutput } from './ForecastRegionalModel'
 
 export { ResidentialSpaceHeatingModel } from './consumption/ResidentialSpaceHeatingModel'
 export type { HeatingModelInput, HeatingBreakdown } from './consumption/ResidentialSpaceHeatingModel'
@@ -22,8 +28,14 @@ export type { HydroDispatch, HydroDispatchMode, HydroForecast, HydroBreakdown } 
 export { WindFleetModel } from './production/WindFleetModel'
 export type { WindInput, WindBreakdown } from './production/WindFleetModel'
 
+export { WindFleetRegionalModel } from './production/WindFleetRegionalModel'
+export type { WindRegionalInput, WindRegionBreakdown, WindFleetRegionalBreakdown } from './production/WindFleetRegionalModel'
+
 export { SolarPVFleetModel } from './production/SolarPVFleetModel'
 export type { SolarInput, SolarBreakdown } from './production/SolarPVFleetModel'
+
+export { SolarPVFleetRegionalModel } from './production/SolarPVFleetRegionalModel'
+export type { SolarRegionalInput, SolarSiteBreakdown, SolarFleetRegionalBreakdown } from './production/SolarPVFleetRegionalModel'
 
 export { BiofuelWasteCHPModel } from './production/BiofuelWasteCHPModel'
 export type { CHPDispatchMode, CHPHeatPriority, CHPInput, CHPBreakdown } from './production/BiofuelWasteCHPModel'

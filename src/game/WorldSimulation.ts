@@ -1,7 +1,7 @@
 import { PowerGrid, HISTORY_SAMPLE_INTERVAL_S, type GridSnapshot } from './PowerGrid'
 import { 
-  WeatherModel, 
-  ForecastModel, 
+  WeatherRegionsModel, 
+  ForecastRegionalModel, 
   ResidentialSpaceHeatingModel,
   ResidentialNonHeatingModel,
   ServicesCommercialModel,
@@ -11,8 +11,8 @@ import {
   NuclearFleetModel,
   HydroReservoirFleetModel,
   HydroRunOfRiverModel,
-  WindFleetModel,
-  SolarPVFleetModel,
+  WindFleetRegionalModel,
+  SolarPVFleetRegionalModel,
   BiofuelWasteCHPModel,
   IndustrialCHPModel,
   GasOilPeakersModel,
@@ -24,9 +24,8 @@ import {
   FFRModel,
   DispatcherModel,
   GameplayCorrectionModel,
-  type WeatherOutput, 
-  type ForecastOutput, 
-  type ForecastArrays,
+  type WeatherRegionsOutput, 
+  type ForecastRegionalOutput,
   type HeatingBreakdown,
   type NonHeatingBreakdown,
   type ServicesBreakdown,
@@ -36,8 +35,8 @@ import {
   type NuclearBreakdown,
   type HydroBreakdown,
   type RoRBreakdown,
-  type WindBreakdown,
-  type SolarBreakdown,
+  type WindFleetRegionalBreakdown,
+  type SolarFleetRegionalBreakdown,
   type CHPBreakdown,
   type IndustrialCHPBreakdown,
   type PeakersBreakdown,
@@ -62,11 +61,7 @@ export interface ClockState {
 
 export interface WeatherSnapshot {
   time: number
-  current: WeatherOutput
-  forecast1h: ForecastOutput
-  forecast6h: ForecastOutput
-  forecast12h: ForecastOutput
-  forecast24h: ForecastOutput
+  current: WeatherRegionsOutput
 }
 
 export interface ConsumptionSnapshot {
@@ -133,8 +128,8 @@ export interface WorldConfig {
 
 export class WorldSimulation {
   private _grid: PowerGrid
-  private _weather: WeatherModel
-  private _forecast: ForecastModel
+  private _weather: WeatherRegionsModel
+  private _forecast: ForecastRegionalModel
   private _heatingDemand: ResidentialSpaceHeatingModel
   private _nonHeatingDemand: ResidentialNonHeatingModel
   private _servicesDemand: ServicesCommercialModel
@@ -144,8 +139,8 @@ export class WorldSimulation {
   private _nuclearFleet: NuclearFleetModel
   private _hydroReservoir: HydroReservoirFleetModel
   private _hydroRoR: HydroRunOfRiverModel
-  private _windFleet: WindFleetModel
-  private _solarFleet: SolarPVFleetModel
+  private _windFleet: WindFleetRegionalModel
+  private _solarFleet: SolarPVFleetRegionalModel
   private _chpFleet: BiofuelWasteCHPModel
   private _industrialChp: IndustrialCHPModel
   private _peakers: GasOilPeakersModel
@@ -158,6 +153,7 @@ export class WorldSimulation {
   private _dispatcher: DispatcherModel
   private _gameplayCorrection: GameplayCorrectionModel
   private _currentTime = 0
+  private _latestForecastOutput: ForecastRegionalOutput | null = null
   private _weatherHistory: WeatherSnapshot[] = []
   private _consumptionHistory: ConsumptionSnapshot[] = []
   private _productionHistory: ProductionSnapshot[] = []
@@ -168,8 +164,8 @@ export class WorldSimulation {
   constructor(config: WorldConfig) {
     this._config = config
     this._grid = new PowerGrid()
-    this._weather = new WeatherModel()
-    this._forecast = new ForecastModel()
+    this._weather = new WeatherRegionsModel()
+    this._forecast = new ForecastRegionalModel()
     this._heatingDemand = new ResidentialSpaceHeatingModel(
       'heating-residential',
       'Residential Space Heating'
@@ -197,8 +193,8 @@ export class WorldSimulation {
     this._nuclearFleet = new NuclearFleetModel()
     this._hydroReservoir = new HydroReservoirFleetModel()
     this._hydroRoR = new HydroRunOfRiverModel()
-    this._windFleet = new WindFleetModel()
-    this._solarFleet = new SolarPVFleetModel()
+    this._windFleet = new WindFleetRegionalModel()
+    this._solarFleet = new SolarPVFleetRegionalModel()
     this._chpFleet = new BiofuelWasteCHPModel()
     this._industrialChp = new IndustrialCHPModel()
     this._peakers = new GasOilPeakersModel()
@@ -218,7 +214,7 @@ export class WorldSimulation {
     this._forecast.reset()
     
     // Initialize heating demand with actual weather temperature for better warm-up
-    const initialTemp = this._weather.state.temperatureC
+    const initialTemp = this._weather.synopticTemperatureC
     this._heatingDemand.reset(initialTemp)
     this._nonHeatingDemand.reset()
     this._servicesDemand.reset()
@@ -285,14 +281,7 @@ export class WorldSimulation {
     const weatherOutput = this._weather.tick(clock)
 
     // Update forecast
-    this._forecast.tick(clock, {
-      temperatureC: weatherOutput.temperatureC,
-      frontOffsetC: this._weather.state.frontOffsetC,
-      windSpeed100mMps: weatherOutput.windSpeed100mMps,
-      cloudCover01: weatherOutput.cloudCover01,
-      precipitationSnowMmph: weatherOutput.precipitationSnowMmph,
-      icingRisk01: weatherOutput.icingRisk01,
-    })
+    this._latestForecastOutput = this._forecast.tick(clock, weatherOutput)
 
     // Get previous frequency state (or default)
     const prevFreqHz = this._frequencyModel.currentFrequencyHz
@@ -336,25 +325,20 @@ export class WorldSimulation {
     // Update wind fleet
     if (toggles.wind) {
       this._windFleet.tick({
-        windSpeed100mMps: weatherOutput.windSpeed100mMps,
-        windGustMps: weatherOutput.windSpeed100mMps * 1.3,
-        temperatureC: weatherOutput.temperatureC,
-        icingRisk01: weatherOutput.icingRisk01,
+        windRegions: weatherOutput.windRegions,
       })
     }
 
     // Update solar fleet
     if (toggles.solar) {
       this._solarFleet.tick({
-        solarIrradianceWm2: weatherOutput.solarIrradianceWm2,
-        temperatureC: weatherOutput.temperatureC,
-        precipitationSnowMmph: weatherOutput.precipitationSnowMmph,
+        solarSites: weatherOutput.solarSites,
       })
     }
 
     // Update CHP fleet (heat-led, using temperature-based district heat demand proxy)
     if (toggles.chp) {
-      const districtHeatDemandMWth = this.computeDistrictHeatDemand(weatherOutput.temperatureC, clock.localHour)
+      const districtHeatDemandMWth = this.computeDistrictHeatDemand(weatherOutput.synoptic.temperatureC, clock.localHour)
       this._chpFleet.tick({
         heatDemandMWth: districtHeatDemandMWth,
         nonChpHeatSupplyMWth: districtHeatDemandMWth * 0.45,
@@ -380,8 +364,8 @@ export class WorldSimulation {
 
     // Update heating demand model with current weather
     this._heatingDemand.tick({
-      temperatureOutdoorC: weatherOutput.temperatureC,
-      windSpeedMps: weatherOutput.windSpeed100mMps,
+      temperatureOutdoorC: weatherOutput.synoptic.temperatureC,
+      windSpeedMps: weatherOutput.synoptic.windMps,
       localHour: clock.localHour,
       curtailmentFrac01: drCurtailmentFrac,
     })
@@ -391,8 +375,8 @@ export class WorldSimulation {
       localHour: clock.localHour,
       localMinute: clock.localMinute,
       dayOfWeek: 0,
-      temperatureOutdoorC: weatherOutput.temperatureC,
-      cloudCover01: weatherOutput.cloudCover01,
+      temperatureOutdoorC: weatherOutput.synoptic.temperatureC,
+      cloudCover01: weatherOutput.synoptic.cloudCover01,
       includeDHW: true,
       includeEV: false,
       curtailmentFrac01: drCurtailmentFrac,
@@ -403,8 +387,8 @@ export class WorldSimulation {
       localHour: clock.localHour,
       localMinute: clock.localMinute,
       dayOfWeek: 0,
-      temperatureOutdoorC: weatherOutput.temperatureC,
-      cloudCover01: weatherOutput.cloudCover01,
+      temperatureOutdoorC: weatherOutput.synoptic.temperatureC,
+      cloudCover01: weatherOutput.synoptic.cloudCover01,
       curtailmentFrac01: drCurtailmentFrac,
     })
 
@@ -413,7 +397,7 @@ export class WorldSimulation {
       localHour: clock.localHour,
       localMinute: clock.localMinute,
       dayOfWeek: 0,
-      temperatureC: weatherOutput.temperatureC,
+      temperatureC: weatherOutput.synoptic.temperatureC,
     })
 
     // Update industry demand model
@@ -474,10 +458,6 @@ export class WorldSimulation {
       this._weatherHistory.push({
         time: this._currentTime,
         current: weatherOutput,
-        forecast1h: this._forecast.getForecast(3600),
-        forecast6h: this._forecast.getForecast(6 * 3600),
-        forecast12h: this._forecast.getForecast(12 * 3600),
-        forecast24h: this._forecast.getForecast(24 * 3600),
       })
 
       this._consumptionHistory.push({
@@ -617,7 +597,7 @@ export class WorldSimulation {
     this._currentTime++
   }
 
-  private computeRoRInflow(clock: ClockState, weather: WeatherOutput): number {
+  private computeRoRInflow(clock: ClockState, weather: WeatherRegionsOutput): number {
     // Simple inflow model for run-of-river:
     // Base inflow varies by season (higher in spring/summer due to snowmelt and rain)
     // Plus some contribution from recent precipitation
@@ -632,11 +612,11 @@ export class WorldSimulation {
     const hourFactor = 0.95 + 0.1 * Math.sin((clock.localHour - 6) / 24 * 2 * Math.PI)
 
     // Precipitation boost (rain adds to river flow with delay, simplified here)
-    const precipBoost = 1.0 + Math.min(0.3, weather.precipitationSnowMmph * 0.1)
+    const precipBoost = 1.0 + Math.min(0.3, weather.synoptic.snowIntensityMmph * 0.1)
 
     // Temperature effect: warmer = more melt = more flow (in spring/summer)
-    const tempEffect = weather.temperatureC > 0 
-      ? 1.0 + Math.min(0.2, weather.temperatureC * 0.01) 
+    const tempEffect = weather.synoptic.temperatureC > 0 
+      ? 1.0 + Math.min(0.2, weather.synoptic.temperatureC * 0.01) 
       : 0.8
 
     const inflowFraction = seasonalFactor * hourFactor * precipBoost * tempEffect
@@ -682,13 +662,13 @@ export class WorldSimulation {
 
   private buildDispatcherInput(
     clock: ClockState,
-    weatherOutput: WeatherOutput,
+    weatherOutput: WeatherRegionsOutput,
     freqHz: number,
     rocofHz: number,
     fcrUsed: { up: number; down: number },
     afrrUsed: { up: number; down: number }
   ): DispatcherInput {
-    // Build 24-hour forecast arrays (simplified: extrapolate from current values)
+    // Build 24-hour forecast arrays (simplified: use forecast model's output)
     const forecast24h = this.build24hForecast(clock, weatherOutput)
     
     const hydroBreakdown = this._hydroReservoir.breakdown
@@ -772,7 +752,7 @@ export class WorldSimulation {
     }
   }
 
-  private build24hForecast(clock: ClockState, weather: WeatherOutput): {
+  private build24hForecast(clock: ClockState, weather: WeatherRegionsOutput): {
     stepS: number
     demandTotalMW: number[]
     windGenerationMW: number[]
@@ -786,19 +766,19 @@ export class WorldSimulation {
                                   0.92, 0.91, 0.92, 0.95, 1.00, 1.08, 1.10, 1.05, 0.98, 0.92, 0.85, 0.80]
     
     // Temperature-adjusted base demand (colder = higher demand)
-    const tempFactor = 1 + Math.max(0, (5 - weather.temperatureC) * 0.02)
+    const tempFactor = 1 + Math.max(0, (5 - weather.synoptic.temperatureC) * 0.02)
     const baseDemandMW = 15000 * tempFactor
     
     // Wind: estimate from weather, not current production
     const windCapacity = 16000
-    const windSpeedMps = weather.windSpeed100mMps
+    const windSpeedMps = weather.synoptic.windMps
     // Simple wind power curve: cut-in 3 m/s, rated 12 m/s
     const windCF = Math.pow(Math.max(0, Math.min(1, (windSpeedMps - 3) / 9)), 2) * 0.35
     const baseWindMW = windCapacity * windCF
     
     // Solar: estimate from weather
     const solarCapacity = 4000
-    const cloudFactor = 1 - weather.cloudCover01 * 0.3
+    const cloudFactor = 1 - weather.synoptic.cloudCover01 * 0.3
     
     // RoR: seasonal estimate
     const dayOfYear = clock.dayOfYear
@@ -807,7 +787,7 @@ export class WorldSimulation {
     const baseRoRMW = 2400 * rorSeasonalFactor
     
     // Bio/Waste CHP: estimate from temperature (heat-led)
-    const heatingDegrees = Math.max(0, 15 - weather.temperatureC)
+    const heatingDegrees = Math.max(0, 15 - weather.synoptic.temperatureC)
     const chpHeatFactor = Math.min(1, heatingDegrees / 35)
     const baseBioWasteChpMW = 2500 * (0.3 + 0.7 * chpHeatFactor) // Base + heating component
     
@@ -898,7 +878,7 @@ export class WorldSimulation {
     return this._weatherHistory[this._weatherHistory.length - 1] ?? null
   }
 
-  get currentWeather(): WeatherOutput | null {
+  get currentWeather(): WeatherRegionsOutput | null {
     return this.latestWeatherSnapshot?.current ?? null
   }
 
@@ -938,11 +918,11 @@ export class WorldSimulation {
     return this._hydroRoR.breakdown
   }
 
-  get windBreakdown(): WindBreakdown | null {
+  get windBreakdown(): WindFleetRegionalBreakdown | null {
     return this._windFleet.breakdown
   }
 
-  get solarBreakdown(): SolarBreakdown | null {
+  get solarBreakdown(): SolarFleetRegionalBreakdown | null {
     return this._solarFleet.breakdown
   }
 
@@ -998,12 +978,8 @@ export class WorldSimulation {
     return this._dispatcher.hourlyPlan
   }
 
-  getForecast(deltaS: number): ForecastOutput {
-    return this._forecast.getForecast(deltaS)
-  }
-
-  get forecastArrays(): ForecastArrays {
-    return this._forecast.getArrays()
+  get forecastRegional(): ForecastRegionalOutput | null {
+    return this._latestForecastOutput
   }
 
   reset(): void {
