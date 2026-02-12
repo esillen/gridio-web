@@ -29,14 +29,6 @@ OUTPUT_FIELDS = [
     "other",
     "total",
 ]
-CONSUMPTION_FIELDS = [
-    "timestamp_local",
-    "timestamp_utc",
-    "flex",
-    "metered",
-    "profiled",
-    "total",
-]
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,18 +54,6 @@ def fetch_production(start_utc: datetime, end_utc: datetime) -> List[dict]:
         "mba": MBA_CODES,
     }
     url = f"{API_BASE}/EXP16/Volumes?{urlencode(params, doseq=True)}"
-    with urlopen(url) as response:
-        payload = response.read().decode("utf-8")
-    return json.loads(payload)
-
-
-def fetch_consumption(start_utc: datetime, end_utc: datetime) -> List[dict]:
-    params = {
-        "start": to_iso_millis(start_utc),
-        "end": to_iso_millis(end_utc),
-        "mba": MBA_CODES,
-    }
-    url = f"{API_BASE}/EXP15/Consumption?{urlencode(params, doseq=True)}"
     with urlopen(url) as response:
         payload = response.read().decode("utf-8")
     return json.loads(payload)
@@ -114,31 +94,6 @@ def merge_rows(rows: List[dict]) -> Dict[str, Dict[str, float]]:
     return merged
 
 
-def merge_consumption(rows: List[dict]) -> Dict[str, Dict[str, float]]:
-    merged: Dict[str, Dict[str, float]] = {}
-    for row in rows:
-        ts_utc = row.get("timestampUTC")
-        if not ts_utc:
-            continue
-        bucket = merged.setdefault(
-            ts_utc,
-            {
-                "timestamp_utc": ts_utc,
-                "timestamp_local": None,
-                "flex": 0.0,
-                "metered": 0.0,
-                "profiled": 0.0,
-                "total": 0.0,
-            },
-        )
-        bucket["timestamp_local"] = row.get("timestamp") or bucket["timestamp_local"]
-        bucket["flex"] += float(row.get("flex") or 0.0)
-        bucket["metered"] += float(row.get("metered") or 0.0)
-        bucket["profiled"] += float(row.get("profiled") or 0.0)
-        bucket["total"] += float(row.get("total") or 0.0)
-    return merged
-
-
 def main() -> None:
     args = parse_args()
     try:
@@ -152,36 +107,20 @@ def main() -> None:
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
 
+    rows = fetch_production(start_utc, end_utc)
+    merged = merge_rows(rows)
+    ordered = [merged[key] for key in sorted(merged.keys())]
+
     output_dir = Path("grid_data") / args.day
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "production.csv"
 
-    production_rows = fetch_production(start_utc, end_utc)
-    production_merged = merge_rows(production_rows)
-    production_ordered = [
-        production_merged[key] for key in sorted(production_merged.keys())
-    ]
-    production_path = output_dir / "production.csv"
-    with production_path.open("w", newline="", encoding="utf-8") as csv_file:
+    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_FIELDS)
         writer.writeheader()
-        writer.writerows(production_ordered)
+        writer.writerows(ordered)
 
-    consumption_rows = fetch_consumption(start_utc, end_utc)
-    consumption_merged = merge_consumption(consumption_rows)
-    consumption_ordered = [
-        consumption_merged[key] for key in sorted(consumption_merged.keys())
-    ]
-    consumption_path = output_dir / "consumption.csv"
-    with consumption_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=CONSUMPTION_FIELDS)
-        writer.writeheader()
-        writer.writerows(consumption_ordered)
-
-    print(
-        "Wrote "
-        f"{len(production_ordered)} production rows to {production_path} and "
-        f"{len(consumption_ordered)} consumption rows to {consumption_path}"
-    )
+    print(f"Wrote {len(ordered)} rows to {output_path}")
 
 
 if __name__ == "__main__":

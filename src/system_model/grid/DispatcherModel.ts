@@ -184,6 +184,9 @@ const CONSTANTS = {
     emergencyHz: 49.50,
     fcrSaturationFrac: 0.85,
     afrrSaturationFrac: 0.85,
+    imbalanceGain: 0.5,
+    imbalanceMaxMW: 3000,
+    imbalanceHydroShare: 0.6,
   },
   
   hydroPolicy: {
@@ -303,6 +306,26 @@ export class DispatcherModel {
       input.capabilities.interconnectors.netImportMinMW,
       input.capabilities.interconnectors.netImportMaxMW
     )
+
+    const imbalanceMW = input.frequencyState.imbalanceMW ?? 0
+    if (imbalanceMW !== 0) {
+      const corrMW = clamp(
+        -imbalanceMW * CONSTANTS.realtime.imbalanceGain,
+        -CONSTANTS.realtime.imbalanceMaxMW,
+        CONSTANTS.realtime.imbalanceMaxMW
+      )
+      const hydroShare = clamp01(CONSTANTS.realtime.imbalanceHydroShare)
+      hydroTargetRtMW = clamp(
+        hydroTargetRtMW + corrMW * hydroShare,
+        input.capabilities.hydroReservoir.minMW,
+        input.capabilities.hydroReservoir.maxMW
+      )
+      importTargetRtMW = clamp(
+        importTargetRtMW + corrMW * (1 - hydroShare),
+        input.capabilities.interconnectors.netImportMinMW,
+        input.capabilities.interconnectors.netImportMaxMW
+      )
+    }
     
     // Escalation: DR and peakers if frequency bad or reserves saturated
     const needEscalation = (f <= CONSTANTS.realtime.peakerTriggerHz) ||

@@ -168,6 +168,10 @@ export class WorldSimulation {
   private _frequencyHistory: FrequencySnapshot[] = []
   private _balancingHistory: BalancingSnapshot[] = []
   
+  private _prevTotalProductionMW = 0
+  private _prevTotalConsumptionMW = 0
+  private _timeBaseOffsetS = 0
+
   private _config: WorldConfig
 
 
@@ -253,6 +257,10 @@ export class WorldSimulation {
     this._productionHistory = []
     this._frequencyHistory = []
     this._balancingHistory = []
+
+    this._prevTotalProductionMW = 15000
+    this._prevTotalConsumptionMW = 15000
+    this._timeBaseOffsetS = 0
     
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
@@ -275,6 +283,7 @@ export class WorldSimulation {
   }
 
   resetToStartOfDay(): void {
+    this._timeBaseOffsetS += this._currentTime
     this._currentTime = 0
     this._grid.resetTime()
     this._weatherHistory = []
@@ -285,6 +294,7 @@ export class WorldSimulation {
   }
 
   tick(): void {
+    const simTimeS = this._currentTime + this._timeBaseOffsetS
     const clock = this.getClock()
 
     // Update weather
@@ -298,6 +308,7 @@ export class WorldSimulation {
     const prevRocof = this._frequencyModel.breakdown?.rocofHzPerS ?? 0
     const prevFcrBreakdown = this._fcrModel.breakdown
     const prevAfrrBreakdown = this._afrrModel.breakdown
+    const prevImbalanceMW = this._prevTotalProductionMW - this._prevTotalConsumptionMW
     
     // Update dispatcher to get setpoints
     const dispatcherInput = this.buildDispatcherInput(
@@ -305,6 +316,7 @@ export class WorldSimulation {
       weatherOutput,
       prevFreqHz,
       prevRocof,
+      prevImbalanceMW,
       { up: prevFcrBreakdown?.upUsedMW ?? 0, down: prevFcrBreakdown?.downUsedMW ?? 0 },
       { up: prevAfrrBreakdown?.upUsedMW ?? 0, down: prevAfrrBreakdown?.downUsedMW ?? 0 }
     )
@@ -315,7 +327,7 @@ export class WorldSimulation {
 
     // Update nuclear fleet
     if (toggles.nuclear) {
-      this._nuclearFleet.tick(this._currentTime)
+      this._nuclearFleet.tick(simTimeS)
     }
 
     // Update hydro reservoir with dispatcher setpoint
@@ -324,7 +336,7 @@ export class WorldSimulation {
         targetProductionMW: corrected.hydroReservoirMW,
         mode: 'follow_target',
       })
-      this._hydroReservoir.tick(this._currentTime)
+      this._hydroReservoir.tick(simTimeS)
     }
 
     // Update hydro run-of-river with inflow proxy
@@ -605,6 +617,9 @@ export class WorldSimulation {
     // Update grid (collects updates from all connected actors)
     this._grid.tick()
     
+    this._prevTotalProductionMW = totalProductionMW
+    this._prevTotalConsumptionMW = totalConsumptionMW
+
     this._currentTime++
   }
 
@@ -657,7 +672,7 @@ export class WorldSimulation {
   }
 
   private getClock(): ClockState {
-    const totalSeconds = this._currentTime
+    const totalSeconds = this._currentTime + this._timeBaseOffsetS
     const localHour = Math.floor(totalSeconds / 3600) % 24
     const localMinute = Math.floor((totalSeconds % 3600) / 60)
     const localSecond = totalSeconds % 60
@@ -676,6 +691,7 @@ export class WorldSimulation {
     weatherOutput: WeatherRegionsOutput,
     freqHz: number,
     rocofHz: number,
+    imbalanceMW: number,
     fcrUsed: { up: number; down: number },
     afrrUsed: { up: number; down: number }
   ): DispatcherInput {
@@ -698,7 +714,7 @@ export class WorldSimulation {
     
     return {
       time: {
-        unixS: this._currentTime,
+        unixS: this._currentTime + this._timeBaseOffsetS,
         localHour: clock.localHour,
         localMinute: clock.localMinute,
         localSecond: clock.localSecond,
@@ -718,6 +734,7 @@ export class WorldSimulation {
       frequencyState: {
         frequencyHz: freqHz,
         rocofHzPerS: rocofHz,
+        imbalanceMW,
       },
       reservesState: {
         fcrActivatedMW: 0,
