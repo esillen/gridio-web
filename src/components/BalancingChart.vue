@@ -102,7 +102,7 @@ function getOpts(width: number, height: number): uPlot.Options {
         value: (_, v) => v != null ? formatHours(v) : '--',
       },
       {
-        label: 'FCR',
+        label: 'FCR-N',
         stroke: COLORS.fcr,
         width: 2,
         fill: COLORS.fcr + '40',

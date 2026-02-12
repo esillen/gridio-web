@@ -61,9 +61,6 @@ const CONSTANTS = {
   // Curtailment
   curtailmentMinFactor: 0.80,
   curtailableShare: 0.55,
-  
-  // Consumption output smoothing
-  tauConsumptionSmoothS: 480.0,
 }
 
 // Derived constants
@@ -100,7 +97,6 @@ export class ServicesCommercialModel implements Actor {
   id: string
   name: string
 
-  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastHeatingMW = 0
   private lastBreakdown: ServicesBreakdown | null = null
@@ -172,14 +168,10 @@ export class ServicesCommercialModel implements Actor {
     // Total (instantaneous), capped
     let consumptionInstantMW = plugItMW + lightingMW + ventilationMW + refrigerationMW + heatingMW
     consumptionInstantMW = Math.min(consumptionInstantMW, C.peakCapMW)
-    
-    // Smooth consumption output to avoid steps
-    this.consumptionSmoothMW += 
-      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / C.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = this.consumptionSmoothMW
+    this.lastConsumptionMW = consumptionInstantMW
     this.lastBreakdown = {
-      consumptionMW: this.consumptionSmoothMW,
+      consumptionMW: consumptionInstantMW,
       plugItMW,
       lightingMW,
       ventilationMW,
@@ -190,6 +182,78 @@ export class ServicesCommercialModel implements Actor {
     }
 
     return this.lastBreakdown
+  }
+
+  forecast24h(
+    input: ServicesInput,
+    weatherForecast: { stepS: number; temperatureOutdoorC: number[]; cloudCover01: number[] }
+  ): { stepS: number; consumptionMW: number[] } {
+    const stepS = weatherForecast.stepS
+    const out: number[] = []
+    let heatingMW = this.lastHeatingMW
+    const tDayS0 = input.localHour * 3600 + input.localMinute * 60
+
+    for (let i = 0; i < weatherForecast.temperatureOutdoorC.length; i++) {
+      const tOffsetS = i * stepS
+      const tDayS = (tDayS0 + tOffsetS) % 86400
+      const hour = Math.floor(tDayS / 3600)
+      const dayOffset = Math.floor((tDayS0 + tOffsetS) / 86400)
+      const dayOfWeek = (input.dayOfWeek + dayOffset) % 7
+      const isWeekend = dayOfWeek >= 5
+
+      const occ01 = isWeekend
+        ? (OCCUPANCY_WEEKEND[hour] ?? 0.5)
+        : (OCCUPANCY_WEEKDAY[hour] ?? 0.5)
+
+      const businessActivity = clamp01(input.businessActivity01 ?? 1.0)
+      const holiday = clamp01(input.holiday01 ?? 0)
+      const activityFactor = businessActivity * (1 - 0.35 * holiday)
+
+      const baseFloorMW = AVG_SERVICES_MW * 0.55
+      const baseVariableMW = AVG_SERVICES_MW * 0.75
+      const baseMWPreActivity = baseFloorMW + baseVariableMW * occ01
+      const baseMW = baseMWPreActivity * activityFactor
+
+      const curtailmentFactor = clamp(
+        1 - (input.curtailmentFrac01 ?? 0),
+        CONSTANTS.curtailmentMinFactor,
+        1.0
+      )
+      const baseMWAfterDR = baseMW * (1 - CONSTANTS.curtailableShare + CONSTANTS.curtailableShare * curtailmentFactor)
+
+      const plugItMW = baseMWAfterDR * CONSTANTS.sharePlugAndIt
+
+      const darkness01 = WINTER_DARKNESS_BY_HOUR[hour] ?? 0.5
+      const cloud01 = weatherForecast.cloudCover01[i] ?? input.cloudCover01
+      const lightingMultiplier = clamp(
+        CONSTANTS.lightingMinMultiplier + 0.75 * darkness01 + CONSTANTS.lightingCloudCoeff * cloud01,
+        CONSTANTS.lightingMinMultiplier,
+        CONSTANTS.lightingMaxMultiplier
+      )
+      const lightingMW = baseMWAfterDR * CONSTANTS.shareLighting * lightingMultiplier * (0.35 + 0.65 * occ01)
+
+      const ventilationFactor = CONSTANTS.ventilationMinFraction + CONSTANTS.ventilationOccSensitivity * occ01
+      const ventilationMW = baseMWAfterDR * CONSTANTS.shareVentilationAndPumps * ventilationFactor
+
+      const refrigerationFactor = Math.max(CONSTANTS.refrigerationMinFraction, 1.0 + CONSTANTS.refrigerationOccCoeff * (occ01 - 0.5))
+      const refrigerationMW = baseMW * CONSTANTS.shareRefrigeration * refrigerationFactor
+
+      const tempC = weatherForecast.temperatureOutdoorC[i] ?? input.temperatureOutdoorC
+      const heatingDegreeC = Math.max(0, CONSTANTS.heatingBalanceTempC - tempC)
+      const heatingDegreeDesignC = CONSTANTS.heatingBalanceTempC - CONSTANTS.designTempC
+      const heatingTempFactor01 = clamp(heatingDegreeC / heatingDegreeDesignC, 0, 1)
+      const heatingTargetMWRaw = CONSTANTS.serviceHeatingPeakMW * heatingTempFactor01 * (0.40 + 0.60 * occ01) * activityFactor
+      const heatingTargetMW = heatingTargetMWRaw * curtailmentFactor
+
+      heatingMW += (heatingTargetMW - heatingMW) * (stepS / CONSTANTS.heatingResponseTauS)
+
+      let consumptionInstantMW = plugItMW + lightingMW + ventilationMW + refrigerationMW + heatingMW
+      consumptionInstantMW = Math.min(consumptionInstantMW, CONSTANTS.peakCapMW)
+
+      out.push(consumptionInstantMW)
+    }
+
+    return { stepS, consumptionMW: out }
   }
 
   getUpdate(): PowerUpdate {
@@ -208,7 +272,6 @@ export class ServicesCommercialModel implements Actor {
   }
 
   reset(): void {
-    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastHeatingMW = 0
     this.lastBreakdown = null

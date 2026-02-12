@@ -99,7 +99,7 @@ function getOpts(width: number, height: number): uPlot.Options {
     series: [
       {},
       {
-        label: 'FCR Capacity (MW)',
+        label: 'FCR-N Capacity (MW)',
         scale: 'mw',
         stroke: COLORS.bid,
         width: 2,

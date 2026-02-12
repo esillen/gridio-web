@@ -171,6 +171,7 @@ export class WorldSimulation {
   private _prevTotalProductionMW = 0
   private _prevTotalConsumptionMW = 0
   private _timeBaseOffsetS = 0
+  private _interconnectorP = 0.2
 
   private _config: WorldConfig
 
@@ -261,6 +262,7 @@ export class WorldSimulation {
     this._prevTotalProductionMW = 15000
     this._prevTotalConsumptionMW = 15000
     this._timeBaseOffsetS = 0
+    this._interconnectorP = 0.2
     
     // Connect supply models
     this._grid.connect(this._nuclearFleet)
@@ -400,8 +402,6 @@ export class WorldSimulation {
       dayOfWeek: 0,
       temperatureOutdoorC: weatherOutput.synoptic.temperatureC,
       cloudCover01: weatherOutput.synoptic.cloudCover01,
-      includeDHW: true,
-      includeEV: false,
       curtailmentFrac01: drCurtailmentFrac,
     })
 
@@ -461,6 +461,14 @@ export class WorldSimulation {
 
     // Update interconnectors with dispatcher setpoint
     if (toggles.interconnectors) {
+      const imbalanceMW = domesticProductionMW - totalConsumptionMWForInterconnectors
+      const targetNetImportMW = Math.max(
+        -INTERCONNECTORS_CONSTANTS.exportMaxMW,
+        Math.min(
+          INTERCONNECTORS_CONSTANTS.importMaxMW,
+          -this._interconnectorP * imbalanceMW
+        )
+      )
       this._interconnectors.tick({
         localHour: clock.localHour,
         totalGenerationMW: domesticProductionMW,
@@ -468,7 +476,7 @@ export class WorldSimulation {
         frequencyHz: this._frequencyModel.currentFrequencyHz,
         rocofHzPerS: this._frequencyModel.breakdown?.rocofHzPerS ?? 0,
         dispatchMode: 'follow_target',
-        targetNetImportMW: corrected.netImportMW,
+        targetNetImportMW,
       })
     }
 
@@ -695,20 +703,7 @@ export class WorldSimulation {
     fcrUsed: { up: number; down: number },
     afrrUsed: { up: number; down: number }
   ): DispatcherInput {
-    const heatingMW = this._heatingDemand.consumptionMW
-    const nonHeatingMW = this._nonHeatingDemand.consumptionMW
-    const servicesMW = this._servicesDemand.consumptionMW
-    const transportMW = this._transportDemand.consumptionMW
-    const industryMW = this._industryDemand.consumptionMW
-    const lossesMW = this._gridLosses.consumptionMW
-    const forecast24h = this.build24hForecast(clock, weatherOutput, {
-      heatingMW,
-      nonHeatingMW,
-      servicesMW,
-      transportMW,
-      industryMW,
-      lossesMW,
-    })
+    const forecast24h = this.build24hForecast(clock, weatherOutput)
 
     const hydroBreakdown = this._hydroReservoir.breakdown
     
@@ -795,15 +790,7 @@ export class WorldSimulation {
 
   private build24hForecast(
     clock: ClockState,
-    weather: WeatherRegionsOutput,
-    demandNow: {
-      heatingMW: number
-      nonHeatingMW: number
-      servicesMW: number
-      transportMW: number
-      industryMW: number
-      lossesMW: number
-    }
+    weather: WeatherRegionsOutput
   ): {
     stepS: number
     demandTotalMW: number[]
@@ -813,14 +800,130 @@ export class WorldSimulation {
     bioWasteChpGenerationMW: number[]
     industrialChpGenerationMW: number[]
   } {
+    const stepS = 3600
+    const steps = 24
     const demandHourlyPattern = [0.75, 0.72, 0.70, 0.70, 0.72, 0.80, 0.95, 1.05, 1.02, 0.98, 0.95, 0.93,
-                                  0.92, 0.91, 0.92, 0.95, 1.00, 1.08, 1.10, 1.05, 0.98, 0.92, 0.85, 0.80]
+      0.92, 0.91, 0.92, 0.95, 1.00, 1.08, 1.10, 1.05, 0.98, 0.92, 0.85, 0.80]
 
-    const baseOnlyMW = demandNow.heatingMW + demandNow.nonHeatingMW + demandNow.servicesMW + demandNow.transportMW
-    const patternAtNow = demandHourlyPattern[clock.localHour % 24] ?? 1.0
-    const baseDemandMW = patternAtNow > 0 ? baseOnlyMW / patternAtNow : baseOnlyMW
-    const industryMW = demandNow.industryMW
-    const lossesMW = demandNow.lossesMW
+    const forecast = this._latestForecastOutput
+    const tempForecast: number[] = []
+    const windForecast: number[] = []
+    const cloudForecast: number[] = []
+
+    for (let i = 0; i < steps; i++) {
+      const tS = i * stepS
+      if (!forecast) {
+        tempForecast.push(weather.synoptic.temperatureC)
+        windForecast.push(weather.synoptic.windMps)
+        cloudForecast.push(weather.synoptic.cloudCover01)
+        continue
+      }
+
+      const idx = Math.min(
+        (forecast.forecastTemperatureCByWindRegion[0]?.length ?? 1) - 1,
+        Math.round(tS / forecast.stepS)
+      )
+
+      const temps = forecast.forecastTemperatureCByWindRegion.map((row) => row[idx] ?? weather.synoptic.temperatureC)
+      const winds = forecast.forecastWindSpeed100mMpsByRegion.map((row) => row[idx] ?? weather.synoptic.windMps)
+      const clouds = forecast.forecastCloudCover01BySite.map((row) => row[idx] ?? weather.synoptic.cloudCover01)
+
+      const avgTemp = temps.reduce((sum, v) => sum + v, 0) / Math.max(1, temps.length)
+      const avgWind = winds.reduce((sum, v) => sum + v, 0) / Math.max(1, winds.length)
+      const avgCloud = clouds.reduce((sum, v) => sum + v, 0) / Math.max(1, clouds.length)
+
+      tempForecast.push(avgTemp)
+      windForecast.push(avgWind)
+      cloudForecast.push(avgCloud)
+    }
+
+    const heatingForecast = this._heatingDemand.forecast24h(
+      {
+        temperatureOutdoorC: weather.synoptic.temperatureC,
+        windSpeedMps: weather.synoptic.windMps,
+        localHour: clock.localHour,
+        curtailmentFrac01: 0,
+      },
+      {
+        stepS,
+        temperatureOutdoorC: tempForecast,
+        windSpeedMps: windForecast,
+      }
+    ).consumptionMW
+
+    const nonHeatingForecast = this._nonHeatingDemand.forecast24h(
+      {
+        localHour: clock.localHour,
+        localMinute: clock.localMinute,
+        dayOfWeek: 0,
+        temperatureOutdoorC: weather.synoptic.temperatureC,
+        cloudCover01: weather.synoptic.cloudCover01,
+        curtailmentFrac01: 0,
+      },
+      {
+        stepS,
+        temperatureOutdoorC: tempForecast,
+        cloudCover01: cloudForecast,
+      }
+    ).consumptionMW
+
+    const servicesForecast = this._servicesDemand.forecast24h(
+      {
+        localHour: clock.localHour,
+        localMinute: clock.localMinute,
+        dayOfWeek: 0,
+        temperatureOutdoorC: weather.synoptic.temperatureC,
+        cloudCover01: weather.synoptic.cloudCover01,
+        curtailmentFrac01: 0,
+      },
+      {
+        stepS,
+        temperatureOutdoorC: tempForecast,
+        cloudCover01: cloudForecast,
+      }
+    ).consumptionMW
+
+    const transportForecast = this._transportDemand.forecast24h(
+      {
+        localHour: clock.localHour,
+        localMinute: clock.localMinute,
+        dayOfWeek: 0,
+        temperatureC: weather.synoptic.temperatureC,
+        gridStress01: 0,
+        priceSignal01: 0,
+      },
+      stepS
+    ).consumptionMW
+
+    const industryForecast = this._industryDemand.forecast24h(
+      {
+        localHour: clock.localHour,
+        dayOfWeek: 0,
+        activityFactor: 1.0,
+        gridStress01: 0,
+        priceSignal01: 0,
+        drParticipation01: 0,
+        manualCurtailmentFrac01: 0,
+      },
+      stepS
+    ).consumptionMW
+
+    const baseDemandForecast: number[] = []
+    for (let i = 0; i < steps; i++) {
+      baseDemandForecast[i] =
+        (heatingForecast[i] ?? 0) +
+        (nonHeatingForecast[i] ?? 0) +
+        (servicesForecast[i] ?? 0) +
+        (transportForecast[i] ?? 0) +
+        (industryForecast[i] ?? 0)
+    }
+
+    const lossesForecast = this._gridLosses.forecast24h({
+      stepS,
+      totalConsumptionMW: baseDemandForecast,
+    }).consumptionMW
+
+    const demandTotalMW = baseDemandForecast.map((value, i) => value + (lossesForecast[i] ?? 0))
 
     // Wind: estimate from weather, not current production
     const windCapacity = 16000
@@ -847,19 +950,15 @@ export class WorldSimulation {
     // Industrial CHP: ~742 MW average, relatively flat profile
     const baseIndustrialChpMW = 742
     
-    const demandTotalMW: number[] = []
     const windGenerationMW: number[] = []
     const solarGenerationMW: number[] = []
     const runOfRiverGenerationMW: number[] = []
     const bioWasteChpGenerationMW: number[] = []
     const industrialChpGenerationMW: number[] = []
     
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < steps; i++) {
       const h = (clock.localHour + i) % 24
-      const pattern = demandHourlyPattern[h] ?? 1.0
 
-      demandTotalMW.push(baseDemandMW * pattern + industryMW + lossesMW)
-      
       // Wind varies ±30% over day
       const windVariation = 1.0 + 0.3 * Math.sin((h - 6) / 24 * 2 * Math.PI)
       windGenerationMW.push(baseWindMW * windVariation)
@@ -884,7 +983,7 @@ export class WorldSimulation {
     }
     
     return {
-      stepS: 3600,
+      stepS,
       demandTotalMW,
       windGenerationMW,
       solarGenerationMW,

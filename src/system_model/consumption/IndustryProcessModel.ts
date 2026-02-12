@@ -91,11 +91,6 @@ const DR = {
   paybackAllowedIfStressBelow: 0.35,
 }
 
-const CONSTANTS = {
-  // Consumption output smoothing
-  tauConsumptionSmoothS: 480.0,
-}
-
 function clamp01(x: number): number {
   return Math.min(Math.max(x, 0), 1)
 }
@@ -111,7 +106,6 @@ export class IndustryProcessModel implements Actor {
   name: string
 
   private deferredMWh = 0
-  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: IndustryBreakdown | null = null
 
@@ -193,14 +187,10 @@ export class IndustryProcessModel implements Actor {
     const consumptionInstantMW = pulpPaperMW + basicMetalsMW + chemicalsRefiningMW + miningQuarryingMW
       + foodMW + woodProductsMW + machineryEquipmentMW + transportEquipmentMW + otherIndustryMW
       + paybackMW
-    
-    // Smooth consumption output to avoid steps
-    this.consumptionSmoothMW += 
-      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / CONSTANTS.tauConsumptionSmoothS)
 
-    this.lastConsumptionMW = this.consumptionSmoothMW
+    this.lastConsumptionMW = consumptionInstantMW
     this.lastBreakdown = {
-      consumptionMW: this.consumptionSmoothMW,
+      consumptionMW: consumptionInstantMW,
       pulpPaperMW,
       basicMetalsMW,
       chemicalsRefiningMW,
@@ -217,6 +207,88 @@ export class IndustryProcessModel implements Actor {
     }
 
     return this.lastBreakdown
+  }
+
+  forecast24h(input: IndustryInput, stepS: number): { stepS: number; consumptionMW: number[] } {
+    const out: number[] = []
+    let deferredMWh = this.deferredMWh
+    const tDayS0 = input.localHour * 3600
+
+    for (let i = 0; i < Math.floor(86400 / stepS); i++) {
+      const tOffsetS = i * stepS
+      const tDayS = (tDayS0 + tOffsetS) % 86400
+      const hour = Math.floor(tDayS / 3600)
+      const dayOffset = Math.floor((tDayS0 + tOffsetS) / 86400)
+      const dayOfWeek = (input.dayOfWeek + dayOffset) % 7
+      const isWeekend = dayOfWeek >= 5
+      const activityFactor = clamp01(input.activityFactor ?? 1.0)
+
+      let pulpPaperBase = AVG_MW.pulpPaper * getScheduleFactor('continuous', hour) * activityFactor
+      let basicMetalsBase = AVG_MW.basicMetals * getScheduleFactor('continuous', hour) * activityFactor
+      let chemicalsRefiningBase = AVG_MW.chemicalsRefining * getScheduleFactor('continuous', hour) * activityFactor
+
+      const miningFactor = getScheduleFactor('mining', hour) * (isWeekend ? SCHEDULE.mining.weekendMult : 1.0)
+      let miningQuarryingBase = AVG_MW.miningQuarrying * miningFactor * activityFactor
+
+      const manufFactor = getScheduleFactor('manufacturing', hour) * (isWeekend ? SCHEDULE.manufacturing.weekendMult : 1.0)
+      let foodBase = AVG_MW.food * manufFactor * activityFactor
+      let woodProductsBase = AVG_MW.woodProducts * manufFactor * activityFactor
+      let machineryEquipmentBase = AVG_MW.machineryEquipment * manufFactor * activityFactor
+      let transportEquipmentBase = AVG_MW.transportEquipment * manufFactor * activityFactor
+      let otherIndustryBase = otherMW * manufFactor * activityFactor
+
+      const gridStress = clamp01(input.gridStress01 ?? 0)
+      const priceSignal = clamp01(input.priceSignal01 ?? 0)
+      const manualCurtail = clamp01(input.manualCurtailmentFrac01 ?? 0)
+      const participation = clamp01(input.drParticipation01 ?? 0)
+
+      let drRequest = clamp01(DR.aStress * gridStress + DR.bPrice * priceSignal + manualCurtail)
+      drRequest *= participation
+
+      const curtailFactor = (1 - DR.flexMinFactor) * drRequest
+      const pulpPaperCurtailed = pulpPaperBase * FLEX_SHARE.pulpPaper * curtailFactor
+      const basicMetalsCurtailed = basicMetalsBase * FLEX_SHARE.basicMetals * curtailFactor
+      const chemicalsRefiningCurtailed = chemicalsRefiningBase * FLEX_SHARE.chemicalsRefining * curtailFactor
+      const miningQuarryingCurtailed = miningQuarryingBase * FLEX_SHARE.miningQuarrying * curtailFactor
+      const foodCurtailed = foodBase * FLEX_SHARE.food * curtailFactor
+      const woodProductsCurtailed = woodProductsBase * FLEX_SHARE.woodProducts * curtailFactor
+      const machineryEquipmentCurtailed = machineryEquipmentBase * FLEX_SHARE.machineryEquipment * curtailFactor
+      const transportEquipmentCurtailed = transportEquipmentBase * FLEX_SHARE.transportEquipment * curtailFactor
+      const otherIndustryCurtailed = otherIndustryBase * FLEX_SHARE.other * curtailFactor
+
+      const totalCurtailedMW = pulpPaperCurtailed + basicMetalsCurtailed + chemicalsRefiningCurtailed
+        + miningQuarryingCurtailed + foodCurtailed + woodProductsCurtailed
+        + machineryEquipmentCurtailed + transportEquipmentCurtailed + otherIndustryCurtailed
+
+      const curtailedMWhThisStep = totalCurtailedMW * (stepS / 3600.0)
+      deferredMWh += curtailedMWhThisStep
+
+      const paybackAllowed = gridStress <= DR.paybackAllowedIfStressBelow
+      let paybackMW = 0
+      if (paybackAllowed) {
+        paybackMW = Math.min(DR.paybackMaxMW, deferredMWh * (3600.0 / stepS))
+      }
+      const paybackMWhThisStep = paybackMW * (stepS / 3600.0)
+      deferredMWh = Math.max(0, deferredMWh - paybackMWhThisStep)
+
+      const pulpPaperMW = pulpPaperBase - pulpPaperCurtailed
+      const basicMetalsMW = basicMetalsBase - basicMetalsCurtailed
+      const chemicalsRefiningMW = chemicalsRefiningBase - chemicalsRefiningCurtailed
+      const miningQuarryingMW = miningQuarryingBase - miningQuarryingCurtailed
+      const foodMW = foodBase - foodCurtailed
+      const woodProductsMW = woodProductsBase - woodProductsCurtailed
+      const machineryEquipmentMW = machineryEquipmentBase - machineryEquipmentCurtailed
+      const transportEquipmentMW = transportEquipmentBase - transportEquipmentCurtailed
+      const otherIndustryMW = otherIndustryBase - otherIndustryCurtailed
+
+      out.push(
+        pulpPaperMW + basicMetalsMW + chemicalsRefiningMW + miningQuarryingMW
+        + foodMW + woodProductsMW + machineryEquipmentMW + transportEquipmentMW + otherIndustryMW
+        + paybackMW
+      )
+    }
+
+    return { stepS, consumptionMW: out }
   }
 
   getUpdate(): PowerUpdate {
@@ -236,7 +308,6 @@ export class IndustryProcessModel implements Actor {
 
   reset(): void {
     this.deferredMWh = 0
-    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

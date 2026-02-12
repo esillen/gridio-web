@@ -110,7 +110,6 @@ tunable_constants:
     max_public_fast_MW: 1200    # HPC stations aggregated
 
     # Smart charging behavior
-    smart_charging_enabled: true
     smart_charging_min_fraction: 0.40   # even under max stress, allow this fraction of planned charging
     smart_charging_stress_exponent: 1.6 # non-linear throttle
 
@@ -328,33 +327,23 @@ per_second_update:
         # Baseline: spread remaining MWh evenly over remaining time (MW = MWh / h)
         avg_MW_needed: "= state.ev_energy_remaining_today_MWh / remaining_hours"
 
-        # Catch-up controller: if we're behind a "typical" cumulative curve, increase near-term MW modestly.
-        # Define a simple expected-delivered fraction by time-of-day (weekday/weekend) using the same weights.
-        # expected_fraction is computed by integrating profile weights from midnight to now and normalizing by full-day integral.
-        expected_fraction_delivered:
-          formula: >
-            expected_cum_fraction_from_profiles(day_type, t_day_seconds)   # helper; precompute lookup table once per day
+        # Catch-up controller: if remaining energy is higher than a linear remaining-time expectation, add MW modestly.
+        remaining_frac: "= remaining_hours / 24"
+        energy_remaining_frac: >
+          if(state.ev_energy_need_today_MWh > 0,
+             state.ev_energy_remaining_today_MWh / state.ev_energy_need_today_MWh,
+             0
+          )
+        error_MWh: "= state.ev_energy_remaining_today_MWh - state.ev_energy_need_today_MWh * remaining_frac"
+        error_MW: "= error_MWh / remaining_hours"
+        catchup_MW: "= error_MW * ev.catchup_gain_per_second"
 
-        actual_fraction_delivered:
-          formula: >
-            if(state.ev_energy_need_today_MWh > 0,
-               state.ev_energy_delivered_today_MWh / state.ev_energy_need_today_MWh,
-               1
-            )
-
-        backlog_frac: "= clamp(-0.5, 0.5, expected_fraction_delivered - actual_fraction_delivered)"
-        catchup_mult: "= 1 + ev.catchup_gain_per_second * backlog_frac * 3600"   # scale to "per hour" effect
-
-        planned_total_MW_now: "= max(0, avg_MW_needed * catchup_mult)"
+        planned_total_MW_now: "= max(0, avg_MW_needed + catchup_MW)"
 
     - name: ev_smart_charging_throttle
       compute:
-        throttle:
-          formula: >
-            if(ev.smart_charging_enabled,
-              max(ev.smart_charging_min_fraction, (1 - grid_stress_0_1) ^ ev.smart_charging_stress_exponent),
-              1
-            )
+        smart_signal_0_1: "= max(grid_stress_0_1, price_signal_0_1)"
+        throttle: "= max(ev.smart_charging_min_fraction, (1 - smart_signal_0_1) ^ ev.smart_charging_stress_exponent)"
         planned_total_MW_throttled: "= planned_total_MW_now * throttle"
 
     - name: ev_allocate_channels_and_apply_caps

@@ -7,9 +7,6 @@ export interface NonHeatingInput {
   temperatureOutdoorC: number
   cloudCover01: number
   curtailmentFrac01?: number
-  includeDHW?: boolean
-  includeEV?: boolean
-  evTargetMW?: number
 }
 
 export interface NonHeatingBreakdown {
@@ -19,7 +16,6 @@ export interface NonHeatingBreakdown {
   cookingMW: number
   laundryMW: number
   dhwMW: number
-  evMW: number
 }
 
 const CONSTANTS = {
@@ -55,9 +51,6 @@ const CONSTANTS = {
   dhwEveningTimeH: 20.0,
 
   curtailmentMinFactor: 0.70,
-  
-  // Consumption output smoothing
-  tauConsumptionSmoothS: 480.0,
 }
 
 // Schedule: [startHour, endHour, multiplier]
@@ -111,7 +104,6 @@ export class ResidentialNonHeatingModel implements Actor {
   id: string
   name: string
 
-  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: NonHeatingBreakdown | null = null
 
@@ -122,8 +114,6 @@ export class ResidentialNonHeatingModel implements Actor {
 
   tick(input: NonHeatingInput): NonHeatingBreakdown {
     const C = CONSTANTS
-    const dt = 1.0
-
     const tDayS = input.localHour * 3600 + input.localMinute * 60
     const isWeekend = input.dayOfWeek >= 5
 
@@ -166,39 +156,83 @@ export class ResidentialNonHeatingModel implements Actor {
     const laundryBias = isWeekend ? C.laundryDaytimeBiasWeekend : C.laundryDaytimeBiasWeekday
     const laundryMW = laundryBaseMW * (1 + (laundryBias - 1) * daytime01)
 
-    // DHW (optional)
-    let dhwMW = 0
-    if (input.includeDHW) {
-      dhwMW = baseTotalMW * C.shareDHWElectric +
-        C.dhwMorningPeakMW * gaussPeak(tDayS, C.dhwMorningTimeH, C.dhwPeakWidthS) +
-        C.dhwEveningPeakMW * gaussPeak(tDayS, C.dhwEveningTimeH, C.dhwPeakWidthS)
-    }
-
-    // EV charging (optional)
-    let evMW = 0
-    if (input.includeEV && input.evTargetMW !== undefined) {
-      evMW = Math.max(0, input.evTargetMW)
-    }
+    // DHW (always included)
+    const dhwMW = baseTotalMW * C.shareDHWElectric +
+      C.dhwMorningPeakMW * gaussPeak(tDayS, C.dhwMorningTimeH, C.dhwPeakWidthS) +
+      C.dhwEveningPeakMW * gaussPeak(tDayS, C.dhwEveningTimeH, C.dhwPeakWidthS)
 
     // Total (instantaneous)
-    const consumptionInstantMW = appliancesMW + lightingMW + cookingMW + laundryMW + dhwMW + evMW
-    
-    // Smooth consumption output to avoid steps
-    this.consumptionSmoothMW += 
-      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / C.tauConsumptionSmoothS)
+    const consumptionInstantMW = appliancesMW + lightingMW + cookingMW + laundryMW + dhwMW
 
-    this.lastConsumptionMW = this.consumptionSmoothMW
+    this.lastConsumptionMW = consumptionInstantMW
     this.lastBreakdown = {
-      consumptionMW: this.consumptionSmoothMW,
+      consumptionMW: consumptionInstantMW,
       appliancesMW,
       lightingMW,
       cookingMW,
       laundryMW,
       dhwMW,
-      evMW,
     }
 
     return this.lastBreakdown
+  }
+
+  forecast24h(
+    input: NonHeatingInput,
+    weatherForecast: { stepS: number; temperatureOutdoorC: number[]; cloudCover01: number[] }
+  ): { stepS: number; consumptionMW: number[] } {
+    const stepS = weatherForecast.stepS
+    const tDayS0 = input.localHour * 3600 + input.localMinute * 60
+    const out: number[] = []
+
+    for (let i = 0; i < weatherForecast.temperatureOutdoorC.length; i++) {
+      const tOffsetS = i * stepS
+      const tDayS = (tDayS0 + tOffsetS) % 86400
+      const hour = Math.floor(tDayS / 3600)
+      const dayOffset = Math.floor((tDayS0 + tOffsetS) / 86400)
+      const dayOfWeek = (input.dayOfWeek + dayOffset) % 7
+      const isWeekend = dayOfWeek >= 5
+
+      const scheduleFactor = getScheduleFactor(hour, isWeekend)
+      const curtailmentFactor = clamp(
+        1 - (input.curtailmentFrac01 ?? 0),
+        CONSTANTS.curtailmentMinFactor,
+        1.0
+      )
+      const baseTotalMW = AVG_NON_HEATING_MW * scheduleFactor * curtailmentFactor
+
+      const appliancesMW = baseTotalMW * CONSTANTS.shareAppliancesElectronics
+
+      const darkness01 = WINTER_DARKNESS_BY_HOUR[hour] ?? 0.5
+      const tempC = weatherForecast.temperatureOutdoorC[i] ?? input.temperatureOutdoorC
+      const cloud01 = weatherForecast.cloudCover01[i] ?? input.cloudCover01
+      const lightingMultiplier = clamp(
+        0.35 + 0.65 * darkness01 +
+        CONSTANTS.lightingCloudCoeff * cloud01 +
+        CONSTANTS.lightingTempCoeffPerC * Math.max(0, -tempC),
+        0.2, 1.6
+      )
+      const lightingMW = baseTotalMW * CONSTANTS.shareLighting * lightingMultiplier
+
+      const cookingBaseMW = baseTotalMW * CONSTANTS.shareCooking
+      const cookingPulseMW =
+        CONSTANTS.cookingBreakfastPeakMW * gaussPeak(tDayS, CONSTANTS.cookingBreakfastTimeH, CONSTANTS.cookingPeakWidthS) +
+        CONSTANTS.cookingDinnerPeakMW * gaussPeak(tDayS, CONSTANTS.cookingDinnerTimeH, CONSTANTS.cookingPeakWidthS)
+      const cookingMW = cookingBaseMW + cookingPulseMW * curtailmentFactor
+
+      const laundryBaseMW = baseTotalMW * CONSTANTS.shareLaundryDishwasher
+      const daytime01 = clamp((hour - 8) / 8.0, 0, 1) * clamp((20 - hour) / 6.0, 0, 1)
+      const laundryBias = isWeekend ? CONSTANTS.laundryDaytimeBiasWeekend : CONSTANTS.laundryDaytimeBiasWeekday
+      const laundryMW = laundryBaseMW * (1 + (laundryBias - 1) * daytime01)
+
+      const dhwMW = baseTotalMW * CONSTANTS.shareDHWElectric +
+        CONSTANTS.dhwMorningPeakMW * gaussPeak(tDayS, CONSTANTS.dhwMorningTimeH, CONSTANTS.dhwPeakWidthS) +
+        CONSTANTS.dhwEveningPeakMW * gaussPeak(tDayS, CONSTANTS.dhwEveningTimeH, CONSTANTS.dhwPeakWidthS)
+
+      out.push(appliancesMW + lightingMW + cookingMW + laundryMW + dhwMW)
+    }
+
+    return { stepS, consumptionMW: out }
   }
 
   getUpdate(): PowerUpdate {
@@ -217,7 +251,6 @@ export class ResidentialNonHeatingModel implements Actor {
   }
 
   reset(): void {
-    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

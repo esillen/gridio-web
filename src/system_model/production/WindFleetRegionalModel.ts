@@ -31,15 +31,15 @@ const CONSTANTS = {
   vCutInMps: 3.0,
   vRatedMps: 12.0,
   vCutOutMps: 25.0,
-  belowRatedExponent: 3.0,
+  belowRatedExponent: 2.0,
 
-  tauWindSmoothS: 180.0,
-  tauPowerSmoothS: 45.0,
-  tauPowerSmooth2S: 20.0,
+  tauWindSmoothS: 900.0,
+  tauPowerSmoothS: 180.0,
+  tauPowerSmooth2S: 120.0,
 
-  gustTripMps: 28.0,
-  gustRestartMps: 22.0,
-  shutdownMinDurationS: 600.0,
+  gustTripMps: 50.0,
+  gustRestartMps: 45.0,
+  shutdownMinDurationS: 60.0,
 
   icingDerateMax01: 0.35,
   icingTempCenterC: -1.0,

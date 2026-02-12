@@ -269,7 +269,7 @@ onUnmounted(() => {
           <span v-if="latestWeather.current.windRegions.length">Wind regions: {{ latestWeather.current.windRegions.map(r => fmt(r.windSpeed100mMps, 1)).join(', ') }} m/s</span>
         </div>
         <div v-else-if="bottomChartView === 'balancing' && latestBalancing" class="chart-numbers">
-          <span>FCR <strong>{{ fmt(latestBalancing.fcrMW) }}</strong></span>
+          <span>FCR-N <strong>{{ fmt(latestBalancing.fcrMW) }}</strong></span>
           <span>FFR <strong>{{ fmt(latestBalancing.ffrMW) }}</strong></span>
           <span>aFRR <strong>{{ fmt(latestBalancing.afrrMW) }}</strong></span>
           <span>mFRR <strong>{{ fmt(latestBalancing.mfrrMW) }}</strong></span>

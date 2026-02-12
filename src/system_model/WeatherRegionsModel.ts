@@ -63,8 +63,8 @@ const CONSTANTS = {
   sigmaTCPerSqrtS: 0.010,
   tauFrontS: 2.0e5,
   sigmaFrontCPerSqrtS: 0.004,
-  tauWindSynS: 7.2e3,
-  sigmaWindSynMpsPerSqrtS: 0.030,
+  tauWindSynS: 1.8e4,
+  sigmaWindSynMpsPerSqrtS: 0.015,
   tauCloudSynS: 1.44e4,
   sigmaCloudSynPerSqrtS: 0.0012,
 
@@ -77,8 +77,10 @@ const CONSTANTS = {
   sigmaSnowIntensityMmphPerSqrtS: 0.02,
 
   // Regional deviations
-  tauWindRegS: 1800.0,
-  sigmaWindRegMpsPerSqrtS: 0.015,
+  tauWindRegSynS: 2.2e4,
+  sigmaWindRegSynMpsPerSqrtS: 0.012,
+  tauWindRegS: 5400.0,
+  sigmaWindRegMpsPerSqrtS: 0.01,
   tauTempRegS: 7200.0,
   sigmaTempRegCPerSqrtS: 0.003,
   tauCloudRegS: 3600.0,
@@ -93,9 +95,9 @@ const CONSTANTS = {
   cloudOffsetBySolarSite: [0.00, 0.05],
 
   // Gust
-  gustBaseMps: 1.0,
-  gustFactor: 0.35,
-  sigmaGustMps: 0.7,
+  gustBaseMps: 0.8,
+  gustFactor: 0.2,
+  sigmaGustMps: 0.4,
 
   // Solar
   solarConstantWm2: 1361.0,
@@ -123,6 +125,7 @@ export class WeatherRegionsModel {
   private synTemperatureC = -8.0
   private frontOffsetC = 0.0
   private synWindMps = 8.0
+  private synWindMpsBySite: number[] = Array(WIND_N).fill(8.0)
   private synCloudCover01 = 0.8
   private synIsSnowing = false
   private synSnowIntensityMmph = 0.0
@@ -190,9 +193,16 @@ export class WeatherRegionsModel {
       this.synSnowIntensityMmph = 0.0
     }
 
-    // Regional wind deviations
+    // Regional synoptic wind (independent per region)
     for (let r = 0; r < WIND_N; r++) {
-      this.windDevMpsBySite[r]! += (0.0 - (this.windDevMpsBySite[r] ?? 0)) * (dt / C.tauWindRegS) + C.sigmaWindRegMpsPerSqrtS * Math.sqrt(dt) * randomNormal()
+      this.synWindMpsBySite[r]! += (VSeasonTargetMps - (this.synWindMpsBySite[r] ?? 0)) * (dt / C.tauWindRegSynS)
+        + C.sigmaWindRegSynMpsPerSqrtS * Math.sqrt(dt) * randomNormal()
+    }
+
+    // Regional wind deviations (shorter-scale, independent)
+    for (let r = 0; r < WIND_N; r++) {
+      this.windDevMpsBySite[r]! += (0.0 - (this.windDevMpsBySite[r] ?? 0)) * (dt / C.tauWindRegS)
+        + C.sigmaWindRegMpsPerSqrtS * Math.sqrt(dt) * randomNormal()
     }
 
     // Regional temp deviations
@@ -213,7 +223,8 @@ export class WeatherRegionsModel {
     // Derive wind-site fields
     const windRegions: WindRegionWeather[] = []
     for (let r = 0; r < WIND_N; r++) {
-      const v = this.synWindMps * (C.windMultiplierBySite[r] ?? 1) + (this.windDevMpsBySite[r] ?? 0)
+      const v = ((this.synWindMpsBySite[r] ?? this.synWindMps) + (this.windDevMpsBySite[r] ?? 0))
+        * (C.windMultiplierBySite[r] ?? 1)
       const windSpeed100mMps = clamp(v, 0.0, 35.0)
 
       const g = windSpeed100mMps + C.gustBaseMps + C.gustFactor * windSpeed100mMps + C.sigmaGustMps * randomNormal()
@@ -281,6 +292,7 @@ export class WeatherRegionsModel {
     this.synTemperatureC = -8.0
     this.frontOffsetC = 0.0
     this.synWindMps = 8.0
+    this.synWindMpsBySite = Array(WIND_N).fill(8.0)
     this.synCloudCover01 = 0.8
     this.synIsSnowing = false
     this.synSnowIntensityMmph = 0.0

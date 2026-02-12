@@ -270,7 +270,7 @@ export class DispatcherModel {
     const hNow = clamp(Math.floor(tDayS / CONSTANTS.dayAheadStepS), 0, 23)
     const nuclearPlanNow = this.planHourly.nuclearMW[hNow] ?? 0
     const hydroPlanNow = this.planHourly.hydroReservoirMW[hNow] ?? 0
-    const importPlanNow = this.planHourly.netImportMW[hNow] ?? 0
+    const importPlanNow = 0
     const peakerPlanNow = this.planHourly.peakersMW[hNow] ?? 0
     
     // Real-time corrections based on frequency
@@ -298,14 +298,7 @@ export class DispatcherModel {
     )
     
     // Import correction (secondary actuator)
-    const importCorrMW = input.sandbox.enableInterconnectors
-      ? CONSTANTS.realtime.importFreqGainMWPerHz * df
-      : 0
-    let importTargetRtMW = clamp(
-      importPlanNow + importCorrMW,
-      input.capabilities.interconnectors.netImportMinMW,
-      input.capabilities.interconnectors.netImportMaxMW
-    )
+    let importTargetRtMW = 0
 
     const imbalanceMW = input.frequencyState.imbalanceMW ?? 0
     if (imbalanceMW !== 0) {
@@ -320,11 +313,7 @@ export class DispatcherModel {
         input.capabilities.hydroReservoir.minMW,
         input.capabilities.hydroReservoir.maxMW
       )
-      importTargetRtMW = clamp(
-        importTargetRtMW + corrMW * (1 - hydroShare),
-        input.capabilities.interconnectors.netImportMinMW,
-        input.capabilities.interconnectors.netImportMaxMW
-      )
+      importTargetRtMW = 0
     }
     
     // Escalation: DR and peakers if frequency bad or reserves saturated
@@ -343,7 +332,9 @@ export class DispatcherModel {
     }
     
     let peakerTargetMW = peakerPlanNow
-    if (input.sandbox.enableGasOilPeakers && needEscalation && f <= CONSTANTS.realtime.peakerTriggerHz) {
+    const hydroAtMax = hydroTargetRtMW >= input.capabilities.hydroReservoir.maxMW - 1
+    if (input.sandbox.enableGasOilPeakers && needEscalation && f <= CONSTANTS.realtime.peakerTriggerHz
+      && (!input.sandbox.enableHydroReservoir || hydroAtMax)) {
       const u = clamp01((CONSTANTS.realtime.peakerTriggerHz - f) / 
                         Math.max(1e-6, CONSTANTS.realtime.peakerTriggerHz - CONSTANTS.realtime.emergencyHz))
       peakerTargetMW = clamp(
@@ -372,13 +363,7 @@ export class DispatcherModel {
       dt
     )
     
-    this.setpointsNow.netImportMW = rampToward(
-      this.setpointsNow.netImportMW,
-      input.sandbox.enableInterconnectors ? importTargetRtMW : 0,
-      input.capabilities.interconnectors.rampMWPerS,
-      input.capabilities.interconnectors.rampMWPerS,
-      dt
-    )
+    this.setpointsNow.netImportMW = 0
     
     this.setpointsNow.peakersMW = rampToward(
       this.setpointsNow.peakersMW,
@@ -404,7 +389,7 @@ export class DispatcherModel {
       planNow: {
         nuclearMW: nuclearPlanNow,
         hydroReservoirMW: hydroPlanNow,
-        netImportMW: importPlanNow,
+        netImportMW: 0,
         peakersMW: peakerPlanNow,
         fcrTargetMW: fcrUpTarget,
         afrrTargetMW: afrrUpTarget,
@@ -493,7 +478,7 @@ export class DispatcherModel {
       }
     }
     
-    // Phase 3: Allocate imports and peakers to cover remaining residual
+    // Phase 3: Allocate hydro headroom before peakers (imports handled separately)
     for (let h = 0; h < N; h++) {
       const demandH = (forecast.demandTotalMW[h] ?? 0) * 
                       (1 + CONSTANTS.forecastErrorMarginFrac + CONSTANTS.lossesMarginFrac)
@@ -506,29 +491,24 @@ export class DispatcherModel {
                         vreH
       
       const nuclearH = this.planHourly.nuclearMW[h]!
-      const hydroH = this.planHourly.hydroReservoirMW[h]!
+      let hydroH = this.planHourly.hydroReservoirMW[h]!
       
       const residual = demandH - mustTakeH - nuclearH - hydroH
-      const prefer = clamp01(policy.preferImports01)
 
-      const impMin = cap.interconnectors.netImportMinMW  // negative allowed
-      const impMax = cap.interconnectors.netImportMaxMW  // positive
+      this.planHourly.netImportMW[h] = 0
 
-      let importUse = 0
-      if (residual >= 0) {
-        // need supply → import (0..impMax)
-        importUse = clamp(residual * prefer, 0, impMax)
-      } else {
-        // surplus → export (impMin..0) IF you want exports in the game
-        importUse = clamp(residual * prefer, impMin, 0)
+      // Use hydro headroom first
+      if (sandbox.enableHydroReservoir && residual > 0) {
+        const hydroHeadroom = Math.max(0, cap.hydroReservoir.maxMW - hydroH)
+        const hydroExtra = Math.min(hydroHeadroom, residual)
+        hydroH += hydroExtra
+        this.planHourly.hydroReservoirMW[h] = hydroH
       }
 
-      this.planHourly.netImportMW[h] = importUse
-      
-      // Peakers
-      const residualAfterImportH = Math.max(0, residual - importUse)
+      // Peakers only for remaining residual
+      const residualAfterHydroH = Math.max(0, demandH - mustTakeH - nuclearH - hydroH)
       const peakerCapH = sandbox.enableGasOilPeakers ? cap.gasOilPeakers.maxMW : 0
-      this.planHourly.peakersMW[h] = Math.min(peakerCapH, residualAfterImportH)
+      this.planHourly.peakersMW[h] = Math.min(peakerCapH, residualAfterHydroH)
     }
   }
 

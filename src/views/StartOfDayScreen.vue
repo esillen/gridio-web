@@ -186,14 +186,14 @@ function queueBiddingMessages() {
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([
-      { id: 'd3_fcr_intro', text: 'Day 3: Today you trade on the FCR market - crucial for grid stability!' },
-      { id: 'd3_fcr_explain', text: 'In FCR, you bid how much power your batteries CAN provide if the grid needs it. You get paid only for being available! But if the grid needs power and you can\'t deliver, you\'ll face penalties.' },
+      { id: 'd3_fcr_intro', text: 'Day 3: Today you trade on the FCR-N market - crucial for grid stability!' },
+      { id: 'd3_fcr_explain', text: 'In FCR-N, you bid how much power your batteries CAN provide if the grid needs it. You get paid only for being available! But if the grid needs power and you can\'t deliver, you\'ll face penalties.' },
       { id: 'd3_goal', text: 'Earn €1000 to advance.' },
     ])
   } else if (day === 4) {
     tutorialController.queueMessages([
-      { id: 'd4_intro', text: 'Day 4: Final tutorial day! You now bid on BOTH DA and FCR markets with full control.' },
-      { id: 'd4_goal', text: 'Earn €2000 to complete the tutorial! Use Tab to switch between DA and FCR views.' },
+      { id: 'd4_intro', text: 'Day 4: Final tutorial day! You now bid on BOTH DA and FCR-N markets with full control.' },
+      { id: 'd4_goal', text: 'Earn €2000 to complete the tutorial! Use Tab to switch between DA and FCR-N views.' },
     ])
   }
 }
@@ -254,7 +254,7 @@ function handleBarInteraction(hour: number, event: MouseEvent, chart: 'da' | 'fc
     const volume = Math.round((0.5 - relY) * 2 * maxPower.value)
     gameState.setDABid(hour, volume)
   } else {
-    // FCR: bottom is 0, top is maxPower
+    // FCR-N: bottom is 0, top is maxPower
     const volume = Math.round((1 - relY) * maxPower.value)
     gameState.setFCRBid(hour, volume)
   }
@@ -425,7 +425,7 @@ function goRight() {
     </div>
 
     <header class="header">
-      <h1>{{ isTutorial ? (tutorialConfig.fcrEnabled && !tutorialConfig.daEnabled ? 'FCR Bidding' : 'Day-Ahead Bidding') : 'Day-Ahead Bidding' }}</h1>
+      <h1>{{ isTutorial ? (tutorialConfig.fcrEnabled && !tutorialConfig.daEnabled ? 'FCR-N Bidding' : 'Day-Ahead Bidding') : 'Day-Ahead Bidding' }}</h1>
     </header>
 
     <div class="main-content">
@@ -455,7 +455,7 @@ function goRight() {
         :class="['tab', { active: activeChart === 'fcr' }]" 
         @click="activeChart = 'fcr'"
       >
-        FCR Market
+        FCR-N Market
         <span class="revenue positive">+{{ totalFCRRevenue.toFixed(0) }} €</span>
       </button>
     </div>
@@ -481,7 +481,7 @@ function goRight() {
         >
           <div class="price-label" :style="getDAPriceStyle(h - 1)">{{ formatPrice(gameState.marketPrices.daEurPerMWh[h - 1] ?? 0) }}</div>
           <div class="bar-area">
-            <!-- FCR bids from other market -->
+            <!-- FCR-N bids from other market -->
             <div 
               class="bar fcr-shadow" 
               :class="{ 'split-left': hasBothBids(h - 1) }"
@@ -509,7 +509,7 @@ function goRight() {
 
     <div v-if="activeChart === 'fcr'" class="chart-section">
       <div class="chart-header">
-        <span class="chart-title">FCR Capacity (EUR/MW/h)</span>
+        <span class="chart-title">FCR-N Capacity (EUR/MW/h)</span>
         <span class="chart-hint">Click/drag to bid symmetric reserve</span>
       </div>
       <div class="bid-chart fcr-chart">

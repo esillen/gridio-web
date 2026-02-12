@@ -43,7 +43,7 @@ const router = useRouter()
     </div>
 
     <div class="footer">
-      <p>Trade batteries on day-ahead and FCR markets to keep the grid stable</p>
+      <p>Trade batteries on day-ahead and FCR-N markets to keep the grid stable</p>
     </div>
   </div>
 </template>

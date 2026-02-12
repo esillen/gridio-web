@@ -15,7 +15,7 @@
       <div class="markets">
         <div class="market-card fcr">
           <div class="market-icon">⚡</div>
-          <h3>FCR Market</h3>
+          <h3>FCR-N Market</h3>
           <p>Get paid for <strong>capacity</strong> — your ability to respond within seconds when frequency deviates.</p>
         </div>
 

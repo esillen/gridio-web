@@ -4,7 +4,7 @@ tick_s: 1
 
 description: >
   Aggregate Swedish residential electricity demand excluding *space heating*.
-  Includes: appliances + lighting + cooking + electronics + laundry/dishwasher + (optional) domestic hot water (DHW) electricity + (optional) EV home charging.
+  Includes: appliances + lighting + cooking + electronics + laundry/dishwasher + domestic hot water (DHW) electricity.
   Excludes: residential space heating electricity (handled by demand_residential_space_heating).
   Horizon: think-ahead <= 24h.
 
@@ -34,14 +34,7 @@ inputs:
   demand_response:
     curtailment_frac_0_1: float  # 0=no change, 0.1 => -10% non-heating demand (behavior/DR)
 
-  # Optional feature toggles (per second)
-  feature_flags:
-    include_DHW: bool
-    include_EV_home_charging: bool
-
-  # Optional EV charging input (per second). If you model EV elsewhere, feed its target here.
-  ev_home_charging:
-    target_MW: float
+  # DHW is always included in this model.
 
 state:
   # For smoother graphs
@@ -106,7 +99,7 @@ constants:
   laundry_daytime_bias_weekend: 1.20
   laundry_daytime_bias_weekday: 1.00
 
-  # ---- DHW simple pulses (if include_DHW) ----
+  # ---- DHW simple pulses ----
   dhw_morning_peak_MW: 700.0
   dhw_evening_peak_MW: 600.0
   dhw_peak_width_s: 5400.0              # 1.5h
@@ -171,24 +164,14 @@ update_per_tick:
   - laundry_bias: "= (is_weekend ? laundry_daytime_bias_weekend : laundry_daytime_bias_weekday)"
   - laundry_MW: "= laundry_base_MW * (1 + (laundry_bias - 1)*daytime_0_1)"
 
-  # 8) DHW (optional)
+  # 8) DHW
   - dhw_MW: >
-      if feature_flags.include_DHW:
-        (base_total_MW * share_DHW_electric)
-        + (dhw_morning_peak_MW * gauss_peak(t_day_s, dhw_morning_time_h, dhw_peak_width_s))
-        + (dhw_evening_peak_MW * gauss_peak(t_day_s, dhw_evening_time_h, dhw_peak_width_s))
-      else:
-        0.0
+      (base_total_MW * share_DHW_electric)
+      + (dhw_morning_peak_MW * gauss_peak(t_day_s, dhw_morning_time_h, dhw_peak_width_s))
+      + (dhw_evening_peak_MW * gauss_peak(t_day_s, dhw_evening_time_h, dhw_peak_width_s))
 
-  # 9) EV charging (optional, comes from a separate EV actor or player control)
-  - ev_MW: >
-      if feature_flags.include_EV_home_charging:
-        max(0, ev_home_charging.target_MW)
-      else:
-        0.0
-
-  # 10) Total consumption
-  - consumption_MW: "= appliances_MW + lighting_MW + cooking_MW + laundry_MW + dhw_MW + ev_MW"
+  # 9) Total consumption
+  - consumption_MW: "= appliances_MW + lighting_MW + cooking_MW + laundry_MW + dhw_MW"
 
 outputs:
   consumption_MW: float
@@ -200,7 +183,6 @@ outputs:
     cooking_MW: float
     laundry_MW: float
     dhw_MW: float
-    ev_MW: float
 
   forecast_24h:
     step_s: "= weather_forecast_24h.step_s"
@@ -211,5 +193,5 @@ outputs:
         use T = weather_forecast_24h.temperature_outdoor_C[i]
         use C = weather_forecast_24h.cloud_cover_0_1[i]
         apply the same formulas as update_per_tick (deterministic; no randomness)
-        (if EV is enabled and you have an EV forecast actor, use that forecast; otherwise assume ev_MW stays constant)
+        (EV charging is modeled in the transport demand model; do not add EV here)
         return array

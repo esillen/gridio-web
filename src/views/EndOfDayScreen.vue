@@ -182,7 +182,7 @@ function formatEur(value: number): string {
       </div>
 
       <div class="chart-box">
-        <h3>FCR Market Performance</h3>
+        <h3>FCR-N Market Performance</h3>
         <FCRBidChart :version="0" />
         <div class="chart-stats">
           <div class="stat-row">
@@ -214,11 +214,11 @@ function formatEur(value: number): string {
         <span class="breakdown-value positive">€{{ formatEur(revenueBreakdown.daRevenue) }}</span>
       </div>
       <div class="breakdown-item">
-        <span class="breakdown-label">FCR Capacity Revenue</span>
+        <span class="breakdown-label">FCR-N Capacity Revenue</span>
         <span class="breakdown-value positive">€{{ formatEur(revenueBreakdown.fcrRevenue) }}</span>
       </div>
       <div class="breakdown-item penalty">
-        <span class="breakdown-label">FCR Delivery Penalties</span>
+        <span class="breakdown-label">FCR-N Delivery Penalties</span>
         <span class="breakdown-value negative">-€{{ formatEur(revenueBreakdown.fcrPenalty) }}</span>
       </div>
       <div class="breakdown-item expandable" :class="{ penalty: revenueBreakdown.imbalanceCost < 0, expanded: showImbalanceBreakdown }" @click="showImbalanceBreakdown = !showImbalanceBreakdown">
@@ -245,7 +245,7 @@ function formatEur(value: number): string {
           </span>
         </div>
         <div class="sub-item" v-if="imbalanceData.cumulativeFcrPenaltyEur > 0">
-          <span class="sub-label">FCR Shortfall Penalty</span>
+          <span class="sub-label">FCR-N Shortfall Penalty</span>
           <span class="sub-value negative">-€{{ formatEur(imbalanceData.cumulativeFcrPenaltyEur) }}</span>
         </div>
         <div class="sub-item">
@@ -275,8 +275,8 @@ function formatEur(value: number): string {
               <p>When your actual delivery differs from your Day-Ahead bid, you settle the difference at the imbalance price. If you over-deliver during high prices, you earn extra. If you under-deliver, you pay the difference.</p>
             </div>
             <div class="help-item">
-              <h4>FCR Shortfall Penalty</h4>
-              <p>If you fail to deliver the FCR response required by your bid when frequency deviates, you pay €50/MWh for the energy shortfall. This only appears if you had FCR delivery failures.</p>
+              <h4>FCR-N Shortfall Penalty</h4>
+              <p>If you fail to deliver the FCR-N response required by your bid when frequency deviates, you pay €50/MWh for the energy shortfall. This only appears if you had FCR-N delivery failures.</p>
             </div>
             <div class="help-item">
               <h4>Volume Fee (€2/MWh)</h4>

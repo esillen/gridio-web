@@ -119,6 +119,9 @@ class GameState {
   private _lastFCRRequiredMW = 0
   private _lastFCRDeliveredMW = 0
   private _autoEffectiveMarkets: Map<string, 'da' | 'fcr' | 'inactive'> = new Map()
+  private _fcrDirectionSeconds = 0
+  private _lastFcrDirection: -1 | 0 | 1 = 0
+  private _fcrActiveDirection: -1 | 0 | 1 = 0
 
   // Reactive UI state - synced once per frame
   currentTime = 0
@@ -177,6 +180,9 @@ class GameState {
     const fcrBids = this.playerBids.fcrBids.map(b => b.volumeMW)
     this._bessPerformance.setBids(daBids, fcrBids)
     this._lastTickHour = -1
+    this._fcrDirectionSeconds = 0
+    this._lastFcrDirection = 0
+    this._fcrActiveDirection = 0
     this.hourlyFulfillment = Array.from({ length: 24 }, (_, h) => ({
       hour: h,
       bidMWh: this.playerBids.daBids[h]?.volumeMW ?? 0,
@@ -285,10 +291,10 @@ class GameState {
     }
     daPower = Math.max(-daCapacity, Math.min(daCapacity, daPower))
 
-    // Calculate FCR target
+    // Calculate FCR-N target: activate after 3s of continuous deviation on one side of 50 Hz
     const freqHz = this._world.currentFrequencyHz
-    const freqDev = 50 - freqHz
-    const fcrRequiredMW = fcrBid * (freqDev / 0.2)
+    const activeDirection = this.updateFcrDirection(freqHz)
+    const fcrRequiredMW = activeDirection === 0 ? 0 : -activeDirection * fcrBid
     const fcrTargetMW = Math.max(-fcrCapacity, Math.min(fcrCapacity, fcrRequiredMW))
 
     let totalActualPower = 0
@@ -516,6 +522,26 @@ class GameState {
 
   setSpeed(speed: SimulationSpeed): void {
     this.speed = speed
+  }
+
+  private updateFcrDirection(freqHz: number): -1 | 0 | 1 {
+    const direction: -1 | 0 | 1 = freqHz > 50 ? 1 : (freqHz < 50 ? -1 : 0)
+
+    if (direction === 0) {
+      this._fcrDirectionSeconds = 0
+      this._fcrActiveDirection = 0
+    } else if (direction !== this._lastFcrDirection) {
+      this._fcrDirectionSeconds = 1
+      this._fcrActiveDirection = 0
+    } else {
+      this._fcrDirectionSeconds += 1
+      if (this._fcrDirectionSeconds >= 3) {
+        this._fcrActiveDirection = direction
+      }
+    }
+
+    this._lastFcrDirection = direction
+    return this._fcrActiveDirection
   }
 
   togglePause(): void {

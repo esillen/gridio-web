@@ -37,7 +37,7 @@
             <span>Commit to deliver/consume energy each hour</span>
           </div>
           <div class="job-item">
-            <span class="job-market fcr">FCR</span>
+            <span class="job-market fcr">FCR-N</span>
             <span>Reserve capacity for automatic frequency response</span>
           </div>
         </div>

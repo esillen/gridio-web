@@ -81,6 +81,39 @@ export class GridLossesModel implements Actor {
     return this.lastBreakdown
   }
 
+  forecast24h(input: {
+    stepS: number
+    totalConsumptionMW: number[]
+    internalTransferSe1Se2MW?: number
+    internalTransferSe2Se3MW?: number
+    internalTransferSe3Se4MW?: number
+  }): { stepS: number; consumptionMW: number[] } {
+    const out: number[] = []
+    let flowSmoothMW = this.flowSmoothMW
+    let lossesSmoothMW = this.lastLossesMW
+    const stepS = input.stepS
+
+    const internalTransferAbsMW = Math.max(0,
+      Math.abs(input.internalTransferSe1Se2MW ?? 0)
+      + Math.abs(input.internalTransferSe2Se3MW ?? 0)
+      + Math.abs(input.internalTransferSe3Se4MW ?? 0)
+    )
+
+    for (const baseConsumptionMW of input.totalConsumptionMW) {
+      const baseFlowMW = Math.max(0, baseConsumptionMW)
+      const effectiveFlowMW = baseFlowMW + CONSTANTS.internalTransferWeight * internalTransferAbsMW
+
+      flowSmoothMW += (effectiveFlowMW - flowSmoothMW) * (stepS / CONSTANTS.tauFlowSmoothS)
+      const variableLossesMW = K_QUADRATIC * flowSmoothMW * flowSmoothMW
+      const lossesInstantMW = FIXED_LOSSES_MW + variableLossesMW
+      lossesSmoothMW += (lossesInstantMW - lossesSmoothMW) * (stepS / CONSTANTS.tauLossesSmoothS)
+
+      out.push(lossesSmoothMW)
+    }
+
+    return { stepS, consumptionMW: out }
+  }
+
   getUpdate(): PowerUpdate {
     return {
       production: 0,

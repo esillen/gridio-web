@@ -93,7 +93,7 @@ const topChartOptions: TopChart[] = ['frequency', 'da', 'fcr', 'imbalance']
 const topChartLabels: Record<TopChart, string> = {
   frequency: 'System Frequency',
   da: 'DA Bids',
-  fcr: 'FCR Bids',
+  fcr: 'FCR-N Bids',
   imbalance: 'Imbalance Settlement',
 }
 
@@ -260,14 +260,14 @@ function queueGameplayMessages() {
     ])
   } else if (day === 3) {
     tutorialController.queueMessages([
-      { id: 'd3_market', text: 'Your batteries are now set to FCR market. They\'ll respond to grid frequency changes.', highlight: 'bess' },
-      { id: 'd3_charge', text: 'You now have Charge/Discharge buttons! But while using them, batteries won\'t respond to FCR - risking failed delivery!', highlight: 'bess' },
-      { id: 'd3_tab', text: 'Press Tab to view the FCR bids chart.', waitFor: 'tab_to_fcr' },
-      { id: 'd3_chart', text: 'This shows your FCR bids and delivery. If the grid needs power, you must deliver!' },
+      { id: 'd3_market', text: 'Your batteries are now set to the FCR-N market. They\'ll respond to grid frequency changes.', highlight: 'bess' },
+      { id: 'd3_charge', text: 'You now have Charge/Discharge buttons! But while using them, batteries won\'t respond to FCR-N - risking failed delivery!', highlight: 'bess' },
+      { id: 'd3_tab', text: 'Press Tab to view the FCR-N bids chart.', waitFor: 'tab_to_fcr' },
+      { id: 'd3_chart', text: 'This shows your FCR-N bids and delivery. If the grid needs power, you must deliver!' },
     ])
   } else if (day === 4) {
     tutorialController.queueMessages([
-      { id: 'd4_toggle', text: 'You can now toggle each battery\'s market: DA, FCR, AUTO (automatic), or Inactive.', highlight: 'bess' },
+      { id: 'd4_toggle', text: 'You can now toggle each battery\'s market: DA, FCR-N, AUTO (automatic), or Inactive.', highlight: 'bess' },
     ])
   }
 }
@@ -479,7 +479,7 @@ watch(tutorialMessage, (msg) => {
           <p>{{ tutorialMessage.text }}</p>
           <div class="message-footer">
             <span v-if="tutorialMessage.waitFor === 'tab_to_da'" class="hint">Press Tab to switch to DA chart</span>
-            <span v-else-if="tutorialMessage.waitFor === 'tab_to_fcr'" class="hint">Press Tab to switch to FCR chart</span>
+            <span v-else-if="tutorialMessage.waitFor === 'tab_to_fcr'" class="hint">Press Tab to switch to FCR-N chart</span>
             <span v-else class="hint">Press Space to continue</span>
           </div>
         </div>

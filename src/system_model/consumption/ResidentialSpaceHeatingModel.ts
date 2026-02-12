@@ -30,9 +30,6 @@ const CONSTANTS = {
 
   // Schedule smoothing
   tauScheduleSmoothS: 1800.0,
-  
-  // Consumption output smoothing
-  tauConsumptionSmoothS: 480.0,
 
   // Capacity caps (MW)
   hpCompressorElectricCapMW: 4500.0,
@@ -100,7 +97,6 @@ export class ResidentialSpaceHeatingModel implements Actor {
   
   private effectiveOutdoorTempC: number
   private scheduleFactorSmooth: number
-  private consumptionSmoothMW = 0
   private lastConsumptionMW = 0
   private lastBreakdown: HeatingBreakdown | null = null
 
@@ -169,11 +165,7 @@ export class ResidentialSpaceHeatingModel implements Actor {
       directSpaceheatElecMW + 
       C.hvacParasiticMW
     
-    // 11) Smooth consumption output to avoid steps
-    this.consumptionSmoothMW += 
-      (consumptionInstantMW - this.consumptionSmoothMW) * (dt / C.tauConsumptionSmoothS)
-
-    this.lastConsumptionMW = this.consumptionSmoothMW
+    this.lastConsumptionMW = consumptionInstantMW
     this.lastBreakdown = {
       hpCompressorElecMW,
       hpAuxResistiveElecMW,
@@ -190,6 +182,69 @@ export class ResidentialSpaceHeatingModel implements Actor {
     }
 
     return this.lastBreakdown
+  }
+
+  forecast24h(
+    input: HeatingModelInput,
+    weatherForecast: { stepS: number; temperatureOutdoorC: number[]; windSpeedMps: number[] }
+  ): { stepS: number; consumptionMW: number[] } {
+    const stepS = weatherForecast.stepS
+    const out: number[] = []
+    let effectiveOutdoorTempC = this.effectiveOutdoorTempC
+    let scheduleFactorSmooth = this.scheduleFactorSmooth
+    const tDayS0 = input.localHour * 3600
+
+    for (let i = 0; i < weatherForecast.temperatureOutdoorC.length; i++) {
+      const tOffsetS = i * stepS
+      const tDayS = (tDayS0 + tOffsetS) % 86400
+      const hour = Math.floor(tDayS / 3600)
+
+      const tempC = weatherForecast.temperatureOutdoorC[i] ?? input.temperatureOutdoorC
+      const windMps = weatherForecast.windSpeedMps[i] ?? input.windSpeedMps
+
+      effectiveOutdoorTempC += (tempC - effectiveOutdoorTempC) * (stepS / CONSTANTS.buildingTauS)
+
+      const scheduleFactorRaw = getScheduleFactorRaw(hour)
+      scheduleFactorSmooth += (scheduleFactorRaw - scheduleFactorSmooth) * (stepS / CONSTANTS.tauScheduleSmoothS)
+
+      const heatingDegreeC = Math.max(0, CONSTANTS.heatingBalanceTempC - effectiveOutdoorTempC)
+      const tempFactor01 = clamp(heatingDegreeC / HEATING_DEGREE_DESIGN_C, 0, 1)
+      const windFactor = 1 + CONSTANTS.windLossCoeffPerMps * Math.max(0, windMps - CONSTANTS.windRefMps)
+      const curtailmentFactor = clamp(1 - (input.curtailmentFrac01 ?? 0), CONSTANTS.curtailmentMinFactor, 1.0)
+
+      const requestedThermalSpaceheatMW =
+        CONSTANTS.thermalSpaceheatDesignMW * tempFactor01 * windFactor * scheduleFactorSmooth * curtailmentFactor
+
+      const thermalHpRequestMW = requestedThermalSpaceheatMW * CONSTANTS.hpPreferredThermalShare
+      const thermalDirectRequestMW = requestedThermalSpaceheatMW * (1 - CONSTANTS.hpPreferredThermalShare)
+
+      const copAir = clamp(
+        CONSTANTS.copAirAt7C - CONSTANTS.copAirSlopePerC * (7 - effectiveOutdoorTempC),
+        CONSTANTS.copAirMin,
+        CONSTANTS.copAirMax
+      )
+      const copWeighted =
+        W_AIR_AIR * copAir +
+        W_AIR_WATER_OR_EXHAUST * CONSTANTS.copExhaustConstant +
+        W_GROUND_OR_LAKE * CONSTANTS.copGroundConstant
+
+      const hpCompressorElecNeededMW = thermalHpRequestMW / copWeighted
+      const hpCompressorElecMW = Math.min(CONSTANTS.hpCompressorElectricCapMW, hpCompressorElecNeededMW)
+      const thermalServedByHpMW = hpCompressorElecMW * copWeighted
+      const thermalHpRemainingMW = Math.max(0, thermalHpRequestMW - thermalServedByHpMW)
+
+      const hpAuxResistiveElecMW = Math.min(CONSTANTS.hpAuxResistiveCapMW, thermalHpRemainingMW)
+      const directSpaceheatElecMW = Math.min(CONSTANTS.directElectricSpaceheatCapMW, thermalDirectRequestMW)
+
+      out.push(
+        hpCompressorElecMW +
+        hpAuxResistiveElecMW +
+        directSpaceheatElecMW +
+        CONSTANTS.hvacParasiticMW
+      )
+    }
+
+    return { stepS, consumptionMW: out }
   }
 
   getUpdate(): PowerUpdate {
@@ -210,7 +265,6 @@ export class ResidentialSpaceHeatingModel implements Actor {
   reset(initialTempC: number = -5): void {
     this.effectiveOutdoorTempC = initialTempC
     this.scheduleFactorSmooth = 1.0
-    this.consumptionSmoothMW = 0
     this.lastConsumptionMW = 0
     this.lastBreakdown = null
   }

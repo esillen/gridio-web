@@ -48,10 +48,10 @@ function getMarketLabel(market: BESSMarket, autoEffective: 'da' | 'fcr' | 'inact
   if (mode === 'discharge') return 'Discharging...'
   
   if (market === 'da') return 'DA'
-  if (market === 'fcr') return 'FCR'
+  if (market === 'fcr') return 'FCR-N'
   if (market === 'auto') {
     if (autoEffective === 'da') return 'AUTO (DA)'
-    if (autoEffective === 'fcr') return 'AUTO (FCR)'
+    if (autoEffective === 'fcr') return 'AUTO (FCR-N)'
     return 'AUTO (—)'
   }
   return 'Inactive'
@@ -100,6 +100,34 @@ function formatPower(mw: number): string {
               class="soc-bar"
               :style="{ opacity: getSocBarFill(i - 1, unit.soc01) }"
             ></div>
+            <div v-if="unit.currentPowerMW < -0.05" class="bess-flow-icon charging" aria-label="Charging">
+              <svg viewBox="0 0 36 14" aria-hidden="true">
+                <g stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="1.5" y="3" width="6" height="8" rx="1" />
+                  <line x1="3" y1="1.5" x2="3" y2="3" />
+                  <line x1="6" y1="1.5" x2="6" y2="3" />
+                  <rect x="28.5" y="3" width="6" height="8" rx="1" />
+                  <line x1="34.5" y1="5" x2="34.5" y2="9" />
+                  <line x1="34.5" y1="7" x2="35.8" y2="7" />
+                  <line x1="11" y1="7" x2="24" y2="7" />
+                  <polyline points="21,4 24,7 21,10" />
+                </g>
+              </svg>
+            </div>
+            <div v-else-if="unit.currentPowerMW > 0.05" class="bess-flow-icon discharging" aria-label="Discharging">
+              <svg viewBox="0 0 36 14" aria-hidden="true">
+                <g stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="1.5" y="3" width="6" height="8" rx="1" />
+                  <line x1="3" y1="1.5" x2="3" y2="3" />
+                  <line x1="6" y1="1.5" x2="6" y2="3" />
+                  <rect x="28.5" y="3" width="6" height="8" rx="1" />
+                  <line x1="34.5" y1="5" x2="34.5" y2="9" />
+                  <line x1="34.5" y1="7" x2="35.8" y2="7" />
+                  <line x1="24" y1="7" x2="11" y2="7" />
+                  <polyline points="14,4 11,7 14,10" />
+                </g>
+              </svg>
+            </div>
           </div>
           <span class="soc-pct">{{ Math.round(unit.soc01 * 100) }}%</span>
         </div>
@@ -116,7 +144,7 @@ function formatPower(mw: number): string {
           ]"
           @click="handleMarketClick(unit.id)"
           :disabled="!marketToggleEnabled && unit.mode === null"
-          :title="unit.mode ? 'Click to stop and return to market' : (marketToggleEnabled ? 'Click to cycle: DA → FCR → AUTO → Inactive' : 'Market toggle disabled')"
+          :title="unit.mode ? 'Click to stop and return to market' : (marketToggleEnabled ? 'Click to cycle: DA → FCR-N → AUTO → Inactive' : 'Market toggle disabled')"
         >
           {{ getMarketLabel(unit.market, unit.autoEffectiveMarket, unit.mode) }}
         </button>
@@ -225,6 +253,7 @@ function formatPower(mw: number): string {
   display: flex;
   gap: 1px;
   flex: 1;
+  position: relative;
 }
 
 .soc-bar {
@@ -241,6 +270,32 @@ function formatPower(mw: number): string {
 
 .soc-bar:nth-child(n+7):nth-child(-n+12) {
   background: linear-gradient(to right, #f59e0b, #fbbf24);
+}
+
+.bess-flow-icon {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  width: 34px;
+  height: 12px;
+  color: #1f2937;
+  opacity: 0.9;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bess-flow-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.bess-flow-icon.charging {
+  color: #3b82f6;
+}
+
+.bess-flow-icon.discharging {
+  color: #10b981;
 }
 
 .soc-pct {
