@@ -181,7 +181,7 @@ onUnmounted(() => {
     <div v-else class="charts-container">
       <div class="section">
         <div class="section-header">
-          <div class="section-label">System Frequency & Imbalance</div>
+          <div class="section-label">System Frequency</div>
         </div>
         <div class="chart-container frequency-chart">
           <FrequencyChart

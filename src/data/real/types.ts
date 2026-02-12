@@ -4,7 +4,6 @@ export interface RealFrequencyPoint {
   timeS: number
   frequencyHz: number
   rocofHzPerS: number
-  imbalanceMW: number
 }
 
 /** 1s MTU → 86400 points per day */

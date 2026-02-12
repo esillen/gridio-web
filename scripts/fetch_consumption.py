@@ -18,14 +18,9 @@ MBA_CODES = [
 ]
 OUTPUT_FIELDS = [
     "time",
-    "hydro",
-    "nuclear",
-    "solar",
-    "thermal",
-    "wind",
-    "wind_offshore",
-    "energy_storage",
-    "other",
+    "flex",
+    "metered",
+    "profiled",
     "total",
 ]
 
@@ -43,7 +38,7 @@ def local_time_hms(value: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch Swedish production data and write a 15-minute CSV."
+        description="Fetch Swedish consumption data and write a 15-minute CSV."
     )
     parser.add_argument(
         "day",
@@ -57,13 +52,13 @@ def to_iso_millis(dt: datetime) -> str:
     return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def fetch_production(start_utc: datetime, end_utc: datetime) -> List[dict]:
+def fetch_consumption(start_utc: datetime, end_utc: datetime) -> List[dict]:
     params = {
         "start": to_iso_millis(start_utc),
         "end": to_iso_millis(end_utc),
         "mba": MBA_CODES,
     }
-    url = f"{API_BASE}/EXP16/Volumes?{urlencode(params, doseq=True)}"
+    url = f"{API_BASE}/EXP15/Consumption?{urlencode(params, doseq=True)}"
     with urlopen(url) as response:
         payload = response.read().decode("utf-8")
     return json.loads(payload)
@@ -79,27 +74,17 @@ def merge_rows(rows: List[dict]) -> Dict[str, Dict[str, float]]:
             ts_utc,
             {
                 "time": "",
-                "hydro": 0.0,
-                "nuclear": 0.0,
-                "solar": 0.0,
-                "thermal": 0.0,
-                "wind": 0.0,
-                "wind_offshore": 0.0,
-                "energy_storage": 0.0,
-                "other": 0.0,
+                "flex": 0.0,
+                "metered": 0.0,
+                "profiled": 0.0,
                 "total": 0.0,
             },
         )
         bucket["time"] = local_time_hms(row.get("timestamp") or "")
-        bucket["hydro"] += float(row.get("hydro") or 0.0)
-        bucket["nuclear"] += float(row.get("nuclear") or 0.0)
-        bucket["solar"] += float(row.get("solar") or 0.0)
-        bucket["thermal"] += float(row.get("thermal") or 0.0)
-        bucket["wind"] += float(row.get("wind") or 0.0)
-        bucket["wind_offshore"] += float(row.get("windOffshore") or 0.0)
-        bucket["energy_storage"] += float(row.get("energyStorage") or 0.0)
-        bucket["other"] += float(row.get("other") or 0.0)
-        bucket["total"] += float(row.get("total") or 0.0)
+        bucket["flex"] += abs(float(row.get("flex") or 0.0))
+        bucket["metered"] += abs(float(row.get("metered") or 0.0))
+        bucket["profiled"] += abs(float(row.get("profiled") or 0.0))
+        bucket["total"] += abs(float(row.get("total") or 0.0))
     return merged
 
 
@@ -116,13 +101,13 @@ def main() -> None:
     start_utc = start_local.astimezone(timezone.utc)
     end_utc = end_local.astimezone(timezone.utc)
 
-    rows = fetch_production(start_utc, end_utc)
+    rows = fetch_consumption(start_utc, end_utc)
     merged = merge_rows(rows)
     ordered = [merged[key] for key in sorted(merged.keys())]
 
     output_dir = Path("public/data") / args.day
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "production.csv"
+    output_path = output_dir / "consumption.csv"
 
     with output_path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_FIELDS)

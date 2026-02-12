@@ -16,7 +16,6 @@ let chart: uPlot | null = null
 const COLORS = {
   frequency: '#10B981',
   rocof: '#F59E0B',
-  imbalance: '#EF4444',
   normalBand: '#D1FAE5',
   alertBand: '#FEF3C7',
   emergencyBand: '#FEE2E2',
@@ -34,15 +33,13 @@ function formatHours(hours: number): string {
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const frequency: number[] = []
-  const imbalance: number[] = []
 
   for (const s of props.history) {
     times.push(s.time / 3600)
     frequency.push(s.frequencyHz)
-    imbalance.push(s.imbalanceMW)
   }
 
-  return [times, frequency, imbalance]
+  return [times, frequency]
 }
 
 function getOpts(width: number, height: number): uPlot.Options {
@@ -56,30 +53,7 @@ function getOpts(width: number, height: number): uPlot.Options {
       },
       y: {
         auto: false,
-        range: () => [49.0, 51.0],
-      },
-      imbalance: {
-        auto: false,
-        range: (u, dataMin, dataMax) => {
-          let lo = dataMin ?? 0
-          let hi = dataMax ?? 0
-          const imbalanceData = u.data[2]
-          if (imbalanceData?.length) {
-            let minVal = Infinity
-            let maxVal = -Infinity
-            for (let i = 0; i < imbalanceData.length; i++) {
-              const v = imbalanceData[i]
-              if (v != null && Number.isFinite(v)) {
-                minVal = Math.min(minVal, v)
-                maxVal = Math.max(maxVal, v)
-              }
-            }
-            if (Number.isFinite(minVal)) lo = minVal
-            if (Number.isFinite(maxVal)) hi = maxVal
-          }
-          const m = Math.max(Math.abs(lo), Math.abs(hi), 50)
-          return [-m, m]
-        },
+        range: () => [49.5, 50.5],
       },
     },
     axes: [
@@ -99,16 +73,6 @@ function getOpts(width: number, height: number): uPlot.Options {
         labelFont: '12px system-ui',
         values: (_, vals) => vals.map(v => v.toFixed(2)),
       },
-      {
-        scale: 'imbalance',
-        stroke: COLORS.imbalance,
-        side: 1,
-        grid: { show: false },
-        ticks: { stroke: COLORS.grid },
-        label: 'Imbalance (MW)',
-        font: '12px system-ui',
-        labelFont: '12px system-ui',
-      },
     ],
     series: [
       {
@@ -120,13 +84,6 @@ function getOpts(width: number, height: number): uPlot.Options {
         stroke: COLORS.frequency,
         width: 2,
         value: (_, v) => v != null ? `${v.toFixed(3)} Hz` : '--',
-      },
-      {
-        label: 'Imbalance',
-        scale: 'imbalance',
-        stroke: COLORS.imbalance,
-        width: 1,
-        value: (_, v) => v != null ? `${v.toFixed(0)} MW` : '--',
       },
     ],
     legend: {
@@ -163,43 +120,18 @@ function getOpts(width: number, height: number): uPlot.Options {
   }
 }
 
-function setImbalanceScaleFromData(u: uPlot, data: uPlot.AlignedData) {
-  const imbalanceData = data[2]
-  if (imbalanceData?.length) {
-    let minVal = Infinity
-    let maxVal = -Infinity
-    for (let i = 0; i < imbalanceData.length; i++) {
-      const v = imbalanceData[i]
-      if (v != null && Number.isFinite(v)) {
-        minVal = Math.min(minVal, v)
-        maxVal = Math.max(maxVal, v)
-      }
-    }
-    if (Number.isFinite(minVal) || Number.isFinite(maxVal)) {
-      const m = Math.max(
-        Math.abs(Number.isFinite(minVal) ? minVal : 0),
-        Math.abs(Number.isFinite(maxVal) ? maxVal : 0),
-        50
-      )
-      u.setScale('imbalance', { min: -m, max: m })
-    }
-  }
-}
-
 function initChart() {
   if (!chartEl.value) return
   const rect = chartEl.value.getBoundingClientRect()
   const opts = getOpts(rect.width, rect.height)
   const data = buildData()
   chart = new uPlot(opts, data, chartEl.value)
-  setImbalanceScaleFromData(chart, data)
 }
 
 function updateChart() {
   if (!chart) return
   const data = buildData()
   chart.setData(data)
-  setImbalanceScaleFromData(chart, data)
 }
 
 onMounted(() => {

@@ -417,8 +417,6 @@ watch(tutorialMessage, (msg) => {
           <ImbalanceSettlementChart
             v-else-if="topChartView === 'imbalance'"
             :history="gameState.imbalanceSettlementHistory"
-            :forecast="gameState.imbalanceSettlement?.forecast4h || null"
-            :currentTime="gameState.currentTime"
             :version="gameState.imbalanceSettlementVersion"
           />
         </div>

@@ -2,13 +2,11 @@
 import { ref, watch, onMounted, onUnmounted } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import type { SettlementSnapshot, SettlementForecastOutput } from '../system_model'
+import type { SettlementSnapshot } from '../system_model'
 import { DAY_DURATION_SECONDS } from '../game/GameState'
 
 const props = defineProps<{
   history: SettlementSnapshot[]
-  forecast: SettlementForecastOutput | null
-  currentTime: number
   version: number
 }>()
 
@@ -17,7 +15,6 @@ let chart: uPlot | null = null
 
 const COLORS = {
   settlement: '#8B5CF6',
-  forecast: '#F59E0B',
   axis: '#6b7280',
   grid: '#e5e7eb',
 }
@@ -32,34 +29,13 @@ function formatHours(hours: number): string {
 function buildData(): uPlot.AlignedData {
   const times: number[] = []
   const settlement: number[] = []
-  const forecast: number[] = []
 
-  // Historical data from history array (each point is at HH:00)
   for (const s of props.history) {
     times.push(s.time / 3600)
     settlement.push(s.settlementPriceEurPerMWh)
-    forecast.push(NaN)
   }
 
-  // Add forecast data at hour boundaries
-  // Forecast shows expected settlement prices - settlement for hour H happens at H+1
-  if (props.forecast && props.forecast.expectedSettlementPriceEurPerMWh.length > 0) {
-    const currentHour = Math.floor(props.currentTime / 3600)
-    
-    // Add forecast points at settlement times (hour + 1)
-    for (let i = 0; i < props.forecast.expectedSettlementPriceEurPerMWh.length; i++) {
-      const forecastHour = currentHour + i
-      const settlementHour = forecastHour + 1 // Settlement happens at end of hour
-      
-      if (settlementHour <= 24) {
-        times.push(settlementHour)
-        settlement.push(NaN)
-        forecast.push(props.forecast.expectedSettlementPriceEurPerMWh[i] ?? 0)
-      }
-    }
-  }
-
-  return [times, settlement, forecast]
+  return [times, settlement]
 }
 
 function getYRange(): [number, number] {
@@ -69,13 +45,6 @@ function getYRange(): [number, number] {
   for (const s of props.history) {
     if (s.settlementPriceEurPerMWh < min) min = s.settlementPriceEurPerMWh
     if (s.settlementPriceEurPerMWh > max) max = s.settlementPriceEurPerMWh
-  }
-  
-  if (props.forecast) {
-    for (const p of props.forecast.expectedSettlementPriceEurPerMWh) {
-      if (p < min) min = p
-      if (p > max) max = p
-    }
   }
   
   // Default range if no data
@@ -130,14 +99,6 @@ function getOpts(width: number, height: number): uPlot.Options {
         stroke: COLORS.settlement,
         width: 2,
         points: { show: true, size: 6, fill: COLORS.settlement },
-        value: (_, v) => v != null && !isNaN(v) ? `${v.toFixed(1)} €/MWh` : '--',
-      },
-      {
-        label: 'Forecast',
-        stroke: COLORS.forecast,
-        width: 2,
-        dash: [5, 5],
-        points: { show: true, size: 6, fill: COLORS.forecast },
         value: (_, v) => v != null && !isNaN(v) ? `${v.toFixed(1)} €/MWh` : '--',
       },
     ],

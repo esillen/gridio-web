@@ -101,7 +101,6 @@ export interface FrequencySnapshot {
   time: number
   frequencyHz: number
   rocofHzPerS: number
-  imbalanceMW: number
   band: FrequencyBand
   hEquivS: number
   sBaseMW: number
@@ -602,7 +601,6 @@ export class WorldSimulation {
         time: this._currentTime,
         frequencyHz: finalFreqBreakdown.frequencyHz,
         rocofHzPerS: finalFreqBreakdown.rocofHzPerS,
-        imbalanceMW: finalFreqBreakdown.imbalanceRawMW,
         band: finalFreqBreakdown.band,
         hEquivS: finalFreqBreakdown.hEquivS,
         sBaseMW: finalFreqBreakdown.sBaseMW,

@@ -4,6 +4,7 @@ import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
+import { loadRealDataDay } from '../data/real'
 import BESSPanel from '../components/BESSPanel.vue'
 
 const route = useRoute()
@@ -141,8 +142,16 @@ onMounted(() => {
 
   gameState.resetBESS()
 
-  if (!isTutorial.value && gameState.config.useSimulation) {
-    gameState.generateMarketPrices(Date.now())
+  if (!isTutorial.value) {
+    if (gameState.config.useSimulation) {
+      gameState.generateMarketPrices(Date.now())
+    } else {
+      const data = loadRealDataDay(gameState.config.day)
+      gameState.marketPrices.daEurPerMWh = [...data.prices.daEurPerMWh]
+      gameState.marketPrices.fcrEurPerMWPerH = [...data.prices.fcrEurPerMWPerH]
+      gameState.imbalancePrices.upEurPerMWh24 = [...data.prices.imbalanceUpEurPerMWh]
+      gameState.imbalancePrices.downEurPerMWh24 = [...data.prices.imbalanceDownEurPerMWh]
+    }
   }
   
   // Set initial chart based on what's enabled

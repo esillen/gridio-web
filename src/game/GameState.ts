@@ -88,7 +88,7 @@ class GameState {
       demandResponse: true,
     },
     useSimulation: false,
-    day: '2026-01-01',
+    day: '2026-01-08',
   }
   speed: SimulationSpeed = 1
   paused = false

@@ -128,7 +128,6 @@ export class RealDataWorld {
         time: t,
         frequencyHz: freq.frequencyHz,
         rocofHzPerS: freq.rocofHzPerS,
-        imbalanceMW: freq.imbalanceMW,
         band,
         hEquivS: 5,
         sBaseMW: 25000,
