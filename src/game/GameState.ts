@@ -1,5 +1,6 @@
 import { reactive, markRaw } from 'vue'
 import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type ProductionSnapshot, type FrequencySnapshot, type BalancingSnapshot } from './WorldSimulation'
+import { RealDataWorld } from './RealDataWorld'
 import type { GridSnapshot } from './PowerGrid'
 import type { WeatherRegionsOutput, ForecastRegionalOutput, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindFleetRegionalBreakdown, SolarFleetRegionalBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
 import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput, type SettlementSnapshot } from '../system_model'
@@ -26,6 +27,8 @@ export interface SimulationToggles {
 export interface GameConfig {
   startDayOfYear: number
   toggles: SimulationToggles
+  useSimulation: boolean
+  day: string
 }
 
 export interface HourlyBid {
@@ -65,14 +68,14 @@ export interface BESSUIState {
 
 class GameState {
   phase: GamePhase = 'start'
-  private _world: WorldSimulation | null = null
+  private _world: WorldSimulation | RealDataWorld | null = null
   private _bessFleet: BESSFleet = new BESSFleet(DEFAULT_BESS_FLEET)
   private _bessPerformance: BESSPerformanceTracker = new BESSPerformanceTracker()
   private _imbalanceSettlement: ImbalanceSettlementModel = new ImbalanceSettlementModel()
   private _dayStartUnixS = 0
   
   config: GameConfig = {
-    startDayOfYear: 15, // Mid-January
+    startDayOfYear: 15,
     toggles: {
       nuclear: true,
       hydroReservoir: true,
@@ -84,6 +87,8 @@ class GameState {
       interconnectors: true,
       demandResponse: true,
     },
+    useSimulation: false,
+    day: '2026-01-01',
   }
   speed: SimulationSpeed = 1
   paused = false
@@ -151,22 +156,27 @@ class GameState {
 
   async startDay(): Promise<void> {
     this.phase = 'initializing'
-    
-    // Small delay to allow UI to update
+
     await new Promise(resolve => setTimeout(resolve, 50))
-    
-    this._world = markRaw(new WorldSimulation(this.config))
-    this._world.initialize()
-    
-    // Run 12-hour warm-up without storing history or running BESS
-    // This allows thermal inertia (2h tau) and control integrators to fully settle
-    const warmupSeconds = 12 * 3600
-    for (let i = 0; i < warmupSeconds; i++) {
-      this._world.tick()
+
+    if (this.config.useSimulation) {
+      this._world = markRaw(new WorldSimulation(this.config))
+      this._world.initialize()
+      const warmupSeconds = 12 * 3600
+      for (let i = 0; i < warmupSeconds; i++) {
+        this._world.tick()
+      }
+      this._world.resetToStartOfDay()
+    } else {
+      this._world = markRaw(new RealDataWorld(this.config.day))
+      this._world.initialize()
+      const prices = this._world.marketPricesDay
+      this.marketPrices.daEurPerMWh = [...prices.daEurPerMWh]
+      this.marketPrices.fcrEurPerMWPerH = [...prices.fcrEurPerMWPerH]
+      const imb = this._world.imbalancePricesDay
+      this.imbalancePrices.upEurPerMWh24 = [...imb.upEurPerMWh24]
+      this.imbalancePrices.downEurPerMWh24 = [...imb.downEurPerMWh24]
     }
-    
-    // Reset world time to 0 and clear all history
-    this._world.resetToStartOfDay()
     
     // Initialize BESS and settlement after warm-up
     this._bessFleet.reset()

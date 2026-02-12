@@ -270,7 +270,7 @@ export class DispatcherModel {
     const hNow = clamp(Math.floor(tDayS / CONSTANTS.dayAheadStepS), 0, 23)
     const nuclearPlanNow = this.planHourly.nuclearMW[hNow] ?? 0
     const hydroPlanNow = this.planHourly.hydroReservoirMW[hNow] ?? 0
-    const importPlanNow = 0
+    //const importPlanNow = 0
     const peakerPlanNow = this.planHourly.peakersMW[hNow] ?? 0
     
     // Real-time corrections based on frequency
@@ -298,7 +298,7 @@ export class DispatcherModel {
     )
     
     // Import correction (secondary actuator)
-    let importTargetRtMW = 0
+    //let importTargetRtMW = 0
 
     const imbalanceMW = input.frequencyState.imbalanceMW ?? 0
     if (imbalanceMW !== 0) {
@@ -313,7 +313,7 @@ export class DispatcherModel {
         input.capabilities.hydroReservoir.minMW,
         input.capabilities.hydroReservoir.maxMW
       )
-      importTargetRtMW = 0
+      //importTargetRtMW = 0
     }
     
     // Escalation: DR and peakers if frequency bad or reserves saturated

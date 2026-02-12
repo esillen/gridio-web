@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
 import { tutorialController } from '../tutorial'
 
@@ -98,7 +98,7 @@ const topChartLabels: Record<TopChart, string> = {
 }
 
 type BottomChart = 'grid' | 'production' | 'consumption' | 'weather' | 'balancing'
-const bottomChartOptions: BottomChart[] = ['grid', 'production', 'consumption', 'weather', 'balancing']
+const bottomChartOptionsAll: BottomChart[] = ['grid', 'production', 'consumption', 'weather', 'balancing']
 const bottomChartLabels: Record<BottomChart, string> = {
   grid: 'Power Grid',
   production: 'Production Breakdown',
@@ -106,6 +106,11 @@ const bottomChartLabels: Record<BottomChart, string> = {
   weather: 'Weather & Forecast',
   balancing: 'Balancing Services',
 }
+
+const bottomChartOptions = computed(() => {
+  if (gameState.config.useSimulation) return bottomChartOptionsAll
+  return bottomChartOptionsAll.filter(c => c !== 'weather' && c !== 'balancing')
+})
 
 const topChartView = ref<TopChart>('frequency')
 const bottomChartView = ref<BottomChart>('grid')
@@ -117,10 +122,15 @@ const tutorialDay = computed(() => tutorialController.currentDay)
 const tutorialConfig = computed(() => tutorialController.config)
 const tutorialMessage = computed(() => tutorialController.currentMessage)
 
-// Watch for message changes to update spotlight
 watch(tutorialMessage, async () => {
   await nextTick()
   updateSpotlight()
+}, { immediate: true })
+
+watch(bottomChartOptions, (opts) => {
+  if (opts.length && !opts.includes(bottomChartView.value)) {
+    bottomChartView.value = opts[0] as BottomChart
+  }
 }, { immediate: true })
 
 // Track tutorial-triggered messages to avoid duplicates
@@ -150,9 +160,10 @@ function cycleTopChart() {
 }
 
 function cycleBottomChart() {
-  const currentIndex = bottomChartOptions.indexOf(bottomChartView.value)
-  const nextIndex = (currentIndex + 1) % bottomChartOptions.length
-  bottomChartView.value = bottomChartOptions[nextIndex] as BottomChart
+  const opts = bottomChartOptions.value
+  const currentIndex = opts.indexOf(bottomChartView.value)
+  const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % opts.length
+  bottomChartView.value = opts[nextIndex] as BottomChart
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -190,9 +201,15 @@ const isDayComplete = computed(() => gameState.phase === 'day_complete')
 
 function proceedToEnd() {
   gameState.proceedToEndScreen()
-  // Navigate with tutorial params if in tutorial mode
-  const params = tutorialController.getUrlParams()
-  router.push(params ? `/end?${params}` : '/end')
+  const query: LocationQueryRaw = { ...route.query }
+  if (isTutorial.value) {
+    query.tutorial = '1'
+    query.day = String(tutorialDay.value)
+  } else {
+    delete query.tutorial
+    delete query.day
+  }
+  router.push({ path: '/end', query })
 }
 
 function handleDayCompleteKeydown(e: KeyboardEvent) {
@@ -217,8 +234,15 @@ onMounted(() => {
   
   // Redirect to /game if not in correct phase
   if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
-    const params = tutorialController.getUrlParams()
-    router.push(params ? `/game?${params}` : '/game')
+    const query: LocationQueryRaw = { ...route.query }
+    if (isTutorial.value) {
+      query.tutorial = '1'
+      query.day = String(tutorialDay.value)
+    } else {
+      delete query.tutorial
+      delete query.day
+    }
+    router.push({ path: '/game', query })
   }
   
   // Queue gameplay tutorial messages

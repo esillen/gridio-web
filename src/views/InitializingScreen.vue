@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
 
@@ -17,9 +17,15 @@ onMounted(() => {
   const checkPhase = setInterval(() => {
     if (gameState.phase === 'day') {
       clearInterval(checkPhase)
-      // Navigate with tutorial params if in tutorial mode
-      const params = tutorialController.getUrlParams()
-      router.push(params ? `/day?${params}` : '/day')
+      const query: LocationQueryRaw = { ...route.query }
+      if (tutorialController.active) {
+        query.tutorial = '1'
+        query.day = String(tutorialController.currentDay)
+      } else {
+        delete query.tutorial
+        delete query.day
+      }
+      router.push({ path: '/day', query })
     }
   }, 100)
 })

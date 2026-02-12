@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import BESSPanel from '../components/BESSPanel.vue'
 
 const route = useRoute()
@@ -130,16 +130,18 @@ const daEnabled = computed(() => !isTutorial.value || tutorialConfig.value.daEna
 const fcrEnabled = computed(() => !isTutorial.value || tutorialConfig.value.fcrEnabled)
 
 onMounted(() => {
-  // Restore tutorial state from URL params if needed
   if (route.query.tutorial === '1' && route.query.day) {
     tutorialController.restoreFromUrl(parseInt(route.query.day as string))
   }
-  
-  // Reset BESS to 50% for visual display (will be reset again when day starts)
+
+  gameState.config.useSimulation = route.query.simulation === 'true'
+  if (typeof route.query.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(route.query.day)) {
+    gameState.config.day = route.query.day
+  }
+
   gameState.resetBESS()
-  
-  // Only generate random prices if not in tutorial mode
-  if (!isTutorial.value) {
+
+  if (!isTutorial.value && gameState.config.useSimulation) {
     gameState.generateMarketPrices(Date.now())
   }
   
@@ -206,9 +208,15 @@ async function startDay() {
   }
   noBidWarning.value = false
   
-  // Navigate with tutorial params if in tutorial mode
-  const params = tutorialController.getUrlParams()
-  router.push(params ? `/initializing?${params}` : '/initializing')
+  const query: LocationQueryRaw = { ...route.query }
+  if (isTutorial.value) {
+    query.tutorial = '1'
+    query.day = String(tutorialDay.value)
+  } else {
+    delete query.tutorial
+    delete query.day
+  }
+  router.push({ path: '/initializing', query })
   
   await gameState.startDay()
   

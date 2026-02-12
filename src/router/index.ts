@@ -36,27 +36,27 @@ const router = createRouter({
     {
       path: '/initializing',
       component: InitializingScreen,
-      beforeEnter: () => {
+      beforeEnter: (to) => {
         if (gameState.phase !== 'initializing') {
-          return '/game'
+          return { path: '/game', query: to.query }
         }
       }
     },
     {
       path: '/day',
       component: DayScreen,
-      beforeEnter: () => {
+      beforeEnter: (to) => {
         if (gameState.phase !== 'day' && gameState.phase !== 'day_complete') {
-          return '/game'
+          return { path: '/game', query: to.query }
         }
       }
     },
     {
       path: '/end',
       component: EndOfDayScreen,
-      beforeEnter: () => {
+      beforeEnter: (to) => {
         if (gameState.phase !== 'end') {
-          return '/game'
+          return { path: '/game', query: to.query }
         }
       }
     },

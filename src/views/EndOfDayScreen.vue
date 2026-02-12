@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
 import DABidChart from '../components/DABidChart.vue'
@@ -99,25 +99,35 @@ function showTutorialTips() {
 
 function restart() {
   gameState.restart()
-  router.push('/game')
+  const query: LocationQueryRaw = { ...route.query }
+  delete query.tutorial
+  delete query.day
+  router.push({ path: '/game', query })
 }
 
 function handleContinue() {
+  const query: LocationQueryRaw = { ...route.query }
   if (isTutorial.value) {
     if (goalMet.value || tutorialConfig.value.earningsGoal === 0) {
       // Advance to next day
       if (tutorialController.nextDay()) {
         // Navigate to game with updated day
-        router.push(`/game?tutorial=1&day=${tutorialController.currentDay}`)
+        query.tutorial = '1'
+        query.day = String(tutorialController.currentDay)
+        router.push({ path: '/game', query })
       } else {
         // Tutorial complete - exit to home
         tutorialController.stop()
-        router.push('/')
+        delete query.tutorial
+        delete query.day
+        router.push({ path: '/', query })
       }
     } else {
       // Retry the day
       tutorialController.retryDay()
-      router.push(`/game?tutorial=1&day=${tutorialController.currentDay}`)
+      query.tutorial = '1'
+      query.day = String(tutorialController.currentDay)
+      router.push({ path: '/game', query })
     }
   } else {
     restart()
@@ -126,7 +136,10 @@ function handleContinue() {
 
 function exitTutorial() {
   tutorialController.stop()
-  router.push('/')
+  const query: LocationQueryRaw = { ...route.query }
+  delete query.tutorial
+  delete query.day
+  router.push({ path: '/', query })
 }
 
 function formatEur(value: number): string {
