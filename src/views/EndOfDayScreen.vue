@@ -3,8 +3,10 @@ import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
+import { campaignController } from '../campaign'
 import DABidChart from '../components/DABidChart.vue'
 import FCRBidChart from '../components/FCRBidChart.vue'
+import ImbalanceCostChart from '../components/ImbalanceCostChart.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,10 +19,13 @@ const isTutorial = computed(() => tutorialController.active)
 const tutorialDay = computed(() => tutorialController.currentDay)
 const tutorialConfig = computed(() => tutorialController.config)
 const goalMet = computed(() => isTutorial.value ? tutorialController.goalMet() : true)
+const isCampaign = computed(() => campaignController.active)
+const campaignDay = computed(() => campaignController.currentDay)
 
 const daPerformance = computed(() => gameState.bessPerformance.daPerformance)
 const fcrPerformance = computed(() => gameState.bessPerformance.fcrPerformance)
 const marketPrices = computed(() => gameState.marketPrices)
+const imbalanceHistory = computed(() => gameState.imbalanceSettlementHistory)
 
 const imbalanceData = computed(() => gameState.imbalanceSettlement)
 
@@ -52,25 +57,17 @@ const revenueBreakdown = computed(() => {
   }
 })
 
-const daStats = computed(() => {
-  const totalBid = daPerformance.value.reduce((sum, h) => sum + h.bidMWh, 0)
-  const totalDelivered = daPerformance.value.reduce((sum, h) => sum + h.deliveredMWh, 0)
-  const fulfillmentRate = totalBid > 0 ? (totalDelivered / totalBid) * 100 : 0
-  return { totalBid, totalDelivered, fulfillmentRate }
-})
-
-const fcrStats = computed(() => {
-  const totalAllocated = fcrPerformance.value.reduce((sum, h) => sum + h.allocatedMW, 0)
-  const totalRequired = fcrPerformance.value.reduce((sum, h) => sum + h.requiredMWh, 0)
-  const totalDelivered = fcrPerformance.value.reduce((sum, h) => sum + h.deliveredMWh, 0)
-  const reliability = totalRequired > 0 ? (totalDelivered / totalRequired) * 100 : 100
-  return { totalAllocated, totalRequired, totalDelivered, reliability }
-})
-
 onMounted(() => {
   // Restore tutorial state from URL params if needed
   if (route.query.tutorial === '1' && route.query.day) {
+    campaignController.stop()
     tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  } else if (route.query.campaign === '1' && route.query.day) {
+    tutorialController.stop()
+    campaignController.restoreFromUrl(parseInt(route.query.day as string))
+  } else {
+    tutorialController.stop()
+    campaignController.stop()
   }
   
   // Show tutorial tips based on performance
@@ -93,7 +90,7 @@ function showTutorialTips() {
   } else if (day === 3 && earnings < 0) {
     tutorialMessage.value = 'Tip: Play it safe - bid small amounts spread through the day and charge manually when needed!'
   } else if (day === 4 && goalMet.value) {
-    tutorialMessage.value = 'CONGRATULATIONS! You completed the tutorial! Now try the sandbox and see how much you can earn!'
+    tutorialMessage.value = 'CONGRATULATIONS! You completed the tutorial campaign! Now try campaign mode or sandbox.'
   }
 }
 
@@ -101,6 +98,7 @@ function restart() {
   gameState.restart()
   const query: LocationQueryRaw = { ...route.query }
   delete query.tutorial
+  delete query.campaign
   delete query.day
   router.push({ path: '/game', query })
 }
@@ -113,12 +111,14 @@ function handleContinue() {
       if (tutorialController.nextDay()) {
         // Navigate to game with updated day
         query.tutorial = '1'
+        delete query.campaign
         query.day = String(tutorialController.currentDay)
         router.push({ path: '/game', query })
       } else {
         // Tutorial complete - exit to home
         tutorialController.stop()
         delete query.tutorial
+        delete query.campaign
         delete query.day
         router.push({ path: '/', query })
       }
@@ -126,8 +126,22 @@ function handleContinue() {
       // Retry the day
       tutorialController.retryDay()
       query.tutorial = '1'
+      delete query.campaign
       query.day = String(tutorialController.currentDay)
       router.push({ path: '/game', query })
+    }
+  } else if (isCampaign.value) {
+    if (campaignController.nextDay()) {
+      query.campaign = '1'
+      delete query.tutorial
+      query.day = String(campaignController.currentDay)
+      router.push({ path: '/game', query })
+    } else {
+      campaignController.stop()
+      delete query.tutorial
+      delete query.campaign
+      delete query.day
+      router.push({ path: '/', query })
     }
   } else {
     restart()
@@ -138,6 +152,7 @@ function exitTutorial() {
   tutorialController.stop()
   const query: LocationQueryRaw = { ...route.query }
   delete query.tutorial
+  delete query.campaign
   delete query.day
   router.push({ path: '/', query })
 }
@@ -150,11 +165,12 @@ function formatEur(value: number): string {
 <template>
   <div class="end-screen">
     <!-- Tutorial indicator -->
-    <div v-if="isTutorial" class="tutorial-indicator">
-      <span class="tutorial-day">Tutorial Day {{ tutorialDay }}/4</span>
+    <div v-if="isTutorial || isCampaign" class="tutorial-indicator">
+      <span v-if="isTutorial" class="tutorial-day">Tutorial Campaign Day {{ tutorialDay }}/4</span>
+      <span v-else class="tutorial-day">Campaign Day {{ campaignDay }}/6</span>
     </div>
 
-    <h1>{{ isTutorial ? 'Day ' + tutorialDay + ' Results' : 'End of Day Report' }}</h1>
+    <h1>{{ isTutorial ? 'Tutorial Campaign Day ' + tutorialDay + ' Results' : (isCampaign ? 'Campaign Day ' + campaignDay + ' Results' : 'End of Day Report') }}</h1>
     
     <div class="revenue-summary">
       <h2>Total Revenue</h2>
@@ -176,48 +192,17 @@ function formatEur(value: number): string {
       <div class="chart-box">
         <h3>Day-Ahead Market Performance</h3>
         <DABidChart :version="0" />
-        <div class="chart-stats">
-          <div class="stat-row">
-            <span class="stat-label">Total Bid:</span>
-            <span class="stat-value">{{ daStats.totalBid.toFixed(1) }} MWh</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Delivered:</span>
-            <span class="stat-value">{{ daStats.totalDelivered.toFixed(1) }} MWh</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Fulfillment:</span>
-            <span class="stat-value" :class="{ good: daStats.fulfillmentRate >= 95, warning: daStats.fulfillmentRate < 95 && daStats.fulfillmentRate >= 80, bad: daStats.fulfillmentRate < 80 }">
-              {{ daStats.fulfillmentRate.toFixed(1) }}%
-            </span>
-          </div>
-        </div>
       </div>
 
       <div class="chart-box">
         <h3>FCR-N Market Performance</h3>
         <FCRBidChart :version="0" />
-        <div class="chart-stats">
-          <div class="stat-row">
-            <span class="stat-label">Required by Grid:</span>
-            <span class="stat-value">{{ fcrStats.totalRequired.toFixed(1) }} MWh</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Delivered:</span>
-            <span class="stat-value">{{ fcrStats.totalDelivered.toFixed(1) }} MWh</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Failed Delivery:</span>
-            <span class="stat-value" :class="{ bad: revenueBreakdown.totalFailed > 0 }">{{ revenueBreakdown.totalFailed.toFixed(1) }} MWh</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Reliability:</span>
-            <span class="stat-value" :class="{ good: fcrStats.reliability >= 95, warning: fcrStats.reliability < 95 && fcrStats.reliability >= 80, bad: fcrStats.reliability < 80 }">
-              {{ fcrStats.reliability.toFixed(1) }}%
-            </span>
-          </div>
-        </div>
       </div>
+    </div>
+
+    <div class="imbalance-chart-box">
+      <h3>Imbalance Settlement Price vs Paid</h3>
+      <ImbalanceCostChart :history="imbalanceHistory" />
     </div>
 
     <div class="revenue-breakdown">
@@ -255,6 +240,12 @@ function formatEur(value: number): string {
           <span class="sub-label">DA Imbalance Cashflow</span>
           <span class="sub-value" :class="{ positive: imbalanceData.cumulativeDaImbalanceCashflowEur >= 0, negative: imbalanceData.cumulativeDaImbalanceCashflowEur < 0 }">
             {{ imbalanceData.cumulativeDaImbalanceCashflowEur >= 0 ? '+' : '' }}€{{ formatEur(imbalanceData.cumulativeDaImbalanceCashflowEur) }}
+          </span>
+        </div>
+        <div class="sub-item">
+          <span class="sub-label">FCR-N Imbalance Cashflow</span>
+          <span class="sub-value" :class="{ positive: imbalanceData.cumulativeFcrImbalanceCashflowEur >= 0, negative: imbalanceData.cumulativeFcrImbalanceCashflowEur < 0 }">
+            {{ imbalanceData.cumulativeFcrImbalanceCashflowEur >= 0 ? '+' : '' }}€{{ formatEur(imbalanceData.cumulativeFcrImbalanceCashflowEur) }}
           </span>
         </div>
         <div class="sub-item" v-if="imbalanceData.cumulativeFcrPenaltyEur > 0">
@@ -318,14 +309,17 @@ function formatEur(value: number): string {
       <button class="restart-btn primary" @click="handleContinue">
         <template v-if="isTutorial">
           <template v-if="goalMet || tutorialConfig.earningsGoal === 0">
-            {{ tutorialDay === 4 ? 'Finish Tutorial' : 'Continue to Day ' + (tutorialDay + 1) }}
+            {{ tutorialDay === 4 ? 'Finish Tutorial Campaign' : 'Continue to Day ' + (tutorialDay + 1) }}
           </template>
           <template v-else>Retry Day {{ tutorialDay }}</template>
+        </template>
+        <template v-else-if="isCampaign">
+          {{ campaignDay === 6 ? 'Finish Campaign' : 'Continue to Day ' + (campaignDay + 1) }}
         </template>
         <template v-else>Start New Day</template>
       </button>
       <button v-if="isTutorial" class="restart-btn secondary" @click="exitTutorial">
-        Exit Tutorial
+        Exit Tutorial Campaign
       </button>
     </div>
   </div>
@@ -393,13 +387,13 @@ h3 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 1rem;
 }
 
 .chart-box {
   background: white;
   border-radius: 12px;
-  padding: 1.5rem;
+  padding: 1rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
@@ -410,14 +404,16 @@ h3 {
 }
 
 .chart-box > :nth-child(2) {
-  height: 200px;
+  height: 160px;
   flex-shrink: 0;
 }
 
-.chart-stats {
-  margin-top: 1rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--color-gray-200);
+.imbalance-chart-box {
+  background: white;
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .stat-row {

@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { gameState, type SimulationSpeed } from '../game/GameState'
 import { tutorialController } from '../tutorial'
+import { campaignController } from '../campaign'
 
 const route = useRoute()
 import PowerChart from '../components/PowerChart.vue'
@@ -121,6 +122,8 @@ const isTutorial = computed(() => tutorialController.active)
 const tutorialDay = computed(() => tutorialController.currentDay)
 const tutorialConfig = computed(() => tutorialController.config)
 const tutorialMessage = computed(() => tutorialController.currentMessage)
+const isCampaign = computed(() => campaignController.active)
+const campaignDay = computed(() => campaignController.currentDay)
 
 watch(tutorialMessage, async () => {
   await nextTick()
@@ -204,9 +207,15 @@ function proceedToEnd() {
   const query: LocationQueryRaw = { ...route.query }
   if (isTutorial.value) {
     query.tutorial = '1'
+    delete query.campaign
     query.day = String(tutorialDay.value)
+  } else if (isCampaign.value) {
+    query.campaign = '1'
+    delete query.tutorial
+    query.day = String(campaignDay.value)
   } else {
     delete query.tutorial
+    delete query.campaign
     delete query.day
   }
   router.push({ path: '/end', query })
@@ -225,7 +234,14 @@ function handleDayCompleteKeydown(e: KeyboardEvent) {
 onMounted(() => {
   // Restore tutorial state from URL params if needed
   if (route.query.tutorial === '1' && route.query.day) {
+    campaignController.stop()
     tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  } else if (route.query.campaign === '1' && route.query.day) {
+    tutorialController.stop()
+    campaignController.restoreFromUrl(parseInt(route.query.day as string))
+  } else {
+    tutorialController.stop()
+    campaignController.stop()
   }
   
   window.addEventListener('keydown', handleKeydown)
@@ -237,9 +253,15 @@ onMounted(() => {
     const query: LocationQueryRaw = { ...route.query }
     if (isTutorial.value) {
       query.tutorial = '1'
+      delete query.campaign
       query.day = String(tutorialDay.value)
+    } else if (isCampaign.value) {
+      query.campaign = '1'
+      delete query.tutorial
+      query.day = String(campaignDay.value)
     } else {
       delete query.tutorial
+      delete query.campaign
       delete query.day
     }
     router.push({ path: '/game', query })
@@ -276,7 +298,7 @@ function queueGameplayMessages() {
   if (day === 1) {
     tutorialController.queueMessages([
       { id: 'd1_control', text: 'This is the control room where you monitor and control everything during a trading day.' },
-      { id: 'd1_batteries', text: 'These are your batteries. Their state of charge (SOC), power (MW), and capacity (MWh) are displayed.', highlight: 'bess' },
+      { id: 'd1_batteries', text: 'These are your batteries. In this tutorial campaign you start with one 10 MW / 10 MWh battery. SOC, power, and capacity are displayed here.', highlight: 'bess' },
       { id: 'd1_no_control', text: 'Today, batteries respond automatically to your DA bids (DA is the selected mode and you can\'t change it for now).', highlight: 'bess' },
       { id: 'd1_frequency', text: 'This chart shows grid frequency and imbalance. Your services help balance the grid! However, this information is irrelevant when only trading on DA.', highlight: 'chart' },
       { id: 'd1_tab', text: 'Press Tab to switch to the DA bids chart to monitor your bids and delivery.', highlight: 'chart-tabs', waitFor: 'tab_to_da' },
@@ -343,13 +365,14 @@ watch(tutorialMessage, (msg) => {
 <template>
   <div class="day-screen">
     <!-- Tutorial indicator -->
-    <div v-if="isTutorial" class="tutorial-indicator">
-      <span class="tutorial-day">Tutorial Day {{ tutorialDay }}/4</span>
-      <span v-if="tutorialConfig.earningsGoal > 0" class="tutorial-goal">Goal: €{{ tutorialConfig.earningsGoal }}</span>
+    <div v-if="isTutorial || isCampaign" class="tutorial-indicator">
+      <span v-if="isTutorial" class="tutorial-day">Tutorial Campaign Day {{ tutorialDay }}/4</span>
+      <span v-else class="tutorial-day">Campaign Day {{ campaignDay }}/6</span>
+      <span v-if="isTutorial && tutorialConfig.earningsGoal > 0" class="tutorial-goal">Goal: €{{ tutorialConfig.earningsGoal }}</span>
     </div>
 
     <header class="header">
-      <h1>{{ isTutorial ? 'Day ' + tutorialDay : 'Day Simulation' }}</h1>
+      <h1>{{ isTutorial ? 'Tutorial Campaign Day ' + tutorialDay : (isCampaign ? 'Campaign Day ' + campaignDay : 'Day Simulation') }}</h1>
       <div class="header-stats">
         <div class="frequency-display" :class="gameState.currentFrequencyBand">
           {{ gameState.currentFrequencyHz.toFixed(3) }} Hz

@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import { gameState } from '../game/GameState'
+import type { BESSConfig } from '../system_model'
 
 export type TutorialDay = 1 | 2 | 3 | 4
 export type TutorialPhase = 'bidding' | 'day' | 'end'
@@ -35,7 +36,7 @@ const DAY_CONFIGS: Record<TutorialDay, DayConfig> = {
     fcrEnabled: false,
     chargeDischargeEnabled: false,
     marketToggleEnabled: false,
-    earningsGoal: 1000,
+    earningsGoal: 5,
     forcedMarket: 'da',
   },
   3: {
@@ -43,7 +44,7 @@ const DAY_CONFIGS: Record<TutorialDay, DayConfig> = {
     fcrEnabled: true,
     chargeDischargeEnabled: true,
     marketToggleEnabled: false,
-    earningsGoal: 1000,
+    earningsGoal: 5,
     forcedMarket: 'fcr',
   },
   4: {
@@ -51,9 +52,35 @@ const DAY_CONFIGS: Record<TutorialDay, DayConfig> = {
     fcrEnabled: true,
     chargeDischargeEnabled: true,
     marketToggleEnabled: true,
-    earningsGoal: 2000,
+    earningsGoal: 10,
     forcedMarket: null,
   },
+}
+
+const TUTORIAL_REAL_DAY_BY_TUTORIAL_DAY: Record<TutorialDay, string> = {
+  1: '2026-01-08',
+  2: '2026-01-09',
+  3: '2026-01-10',
+  4: '2026-01-11',
+}
+
+const TUTORIAL_BASE_BATTERY: BESSConfig = {
+  id: 'tutorial-bess-1',
+  name: 'Tutorial BESS 1',
+  maxPowerMW: 10, // 10 MW
+  capacityMWh: 10, // 10 MWh
+  roundTripEfficiency: 0.90,
+  initialSoC01: 0.5,
+}
+
+function tutorialFleetForDay(day: TutorialDay): BESSConfig[] {
+  if (day === 4) {
+    return [
+      { ...TUTORIAL_BASE_BATTERY, id: 'tutorial-bess-1', name: 'Tutorial BESS 1' },
+      { ...TUTORIAL_BASE_BATTERY, id: 'tutorial-bess-2', name: 'Tutorial BESS 2' },
+    ]
+  }
+  return [{ ...TUTORIAL_BASE_BATTERY, id: 'tutorial-bess-1', name: 'Tutorial BESS 1' }]
 }
 
 class TutorialController {
@@ -94,12 +121,19 @@ class TutorialController {
   }
 
   restoreFromUrl(day: number): void {
-    // Only restore if not already active at the right day
-    if (this.active && this.currentDay === day) return
+    // Always re-apply fleet from URL state, even if day is unchanged.
+    // This prevents stale/default fleets when mode switching has just reset BESS.
+    if (this.active && this.currentDay === day) {
+      this.applyDayData()
+      this.applyDayFleet()
+      return
+    }
     
     const validDay = (day >= 1 && day <= 4 ? day : 1) as TutorialDay
     this.active = true
     this.currentDay = validDay
+    this.applyDayData()
+    this.applyDayFleet()
     // Don't call setupDay() - just restore the active state
     // The game state should already be in progress
   }
@@ -113,6 +147,7 @@ class TutorialController {
     this.active = false
     this.currentMessage = null
     this.messageQueue = []
+    gameState.resetToDefaultBESSFleet()
   }
 
   setupDay(): void {
@@ -125,8 +160,18 @@ class TutorialController {
     
     // Reset game state
     gameState.restart()
-    gameState.generateMarketPrices(this.seed)
+    this.applyDayData()
+    this.applyDayFleet()
     gameState.clearBids()
+  }
+
+  private applyDayData(): void {
+    gameState.config.useSimulation = false
+    gameState.config.day = TUTORIAL_REAL_DAY_BY_TUTORIAL_DAY[this.currentDay]
+  }
+
+  private applyDayFleet(): void {
+    gameState.setBESSFleet(tutorialFleetForDay(this.currentDay))
   }
 
   queueMessages(messages: TutorialMessage[]): void {

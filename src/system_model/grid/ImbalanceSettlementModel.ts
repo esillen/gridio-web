@@ -25,6 +25,8 @@ export interface LastSettlement {
   daDeviationMWh: number
   fcrShortfallMWh: number
   daImbalanceCashflowEur: number
+  fcrImbalanceCashflowEur: number
+  totalImbalanceCashflowEur: number
   fcrPenaltyEur: number
   feeVolumeEur: number
   feeImbalanceEur: number
@@ -50,6 +52,8 @@ export interface ImbalanceSettlementOutput {
   cumulativeFcrShortfallMWh: number
   cumulativeNetCashEur: number
   cumulativeDaImbalanceCashflowEur: number
+  cumulativeFcrImbalanceCashflowEur: number
+  cumulativeTotalImbalanceCashflowEur: number
   cumulativeFcrPenaltyEur: number
   cumulativeFeeVolumeEur: number
   cumulativeFeeImbalanceEur: number
@@ -60,6 +64,8 @@ export interface ImbalanceSettlementOutput {
 export interface SettlementSnapshot {
   time: number
   settlementPriceEurPerMWh: number
+  daImbalanceCashflowEur: number
+  totalImbalanceCashflowEur: number
 }
 
 export class ImbalanceSettlementModel {
@@ -89,6 +95,8 @@ export class ImbalanceSettlementModel {
     daDeviationMWh: 0,
     fcrShortfallMWh: 0,
     daImbalanceCashflowEur: 0,
+    fcrImbalanceCashflowEur: 0,
+    totalImbalanceCashflowEur: 0,
     fcrPenaltyEur: 0,
     feeVolumeEur: 0,
     feeImbalanceEur: 0,
@@ -100,6 +108,8 @@ export class ImbalanceSettlementModel {
   private cumulativeFcrShortfallMWh = 0
   private cumulativeNetCashEur = 0
   private cumulativeDaImbalanceCashflowEur = 0
+  private cumulativeFcrImbalanceCashflowEur = 0
+  private cumulativeTotalImbalanceCashflowEur = 0
   private cumulativeFcrPenaltyEur = 0
   private cumulativeFeeVolumeEur = 0
   private cumulativeFeeImbalanceEur = 0
@@ -121,6 +131,8 @@ export class ImbalanceSettlementModel {
     this.cumulativeFcrShortfallMWh = 0
     this.cumulativeNetCashEur = 0
     this.cumulativeDaImbalanceCashflowEur = 0
+    this.cumulativeFcrImbalanceCashflowEur = 0
+    this.cumulativeTotalImbalanceCashflowEur = 0
     this.cumulativeFcrPenaltyEur = 0
     this.cumulativeFeeVolumeEur = 0
     this.cumulativeFeeImbalanceEur = 0
@@ -134,6 +146,8 @@ export class ImbalanceSettlementModel {
       daDeviationMWh: 0,
       fcrShortfallMWh: 0,
       daImbalanceCashflowEur: 0,
+      fcrImbalanceCashflowEur: 0,
+      totalImbalanceCashflowEur: 0,
       fcrPenaltyEur: 0,
       feeVolumeEur: 0,
       feeImbalanceEur: 0,
@@ -181,6 +195,7 @@ export class ImbalanceSettlementModel {
 
       // DA deviation vs schedule
       const daDeviationMWh = this.accDADeliveredMWh - this.accDAScheduledMWh
+      const fcrDeviationMWh = this.accFCRDeliveredMWh - this.accFCRRequiredMWh
 
       // FCR shortfall (only penalize under-delivery)
       const fcrShortfallMWh = Math.max(0, Math.abs(this.accFCRRequiredMWh) - Math.abs(this.accFCRDeliveredMWh))
@@ -189,6 +204,8 @@ export class ImbalanceSettlementModel {
       // old was like this which was more realistic but not good for the game.
       //const daImbalanceCashflowEur = daDeviationMWh * settlementPrice
       const daImbalanceCashflowEur = Math.min(0, daDeviationMWh * settlementPrice)
+      const fcrImbalanceCashflowEur = Math.min(0, fcrDeviationMWh * settlementPrice)
+      const totalImbalanceCashflowEur = daImbalanceCashflowEur + fcrImbalanceCashflowEur
 
       // FCR penalty for shortfall
       const fcrPenaltyEur = fcrShortfallMWh * this.FCR_PENALTY_EUR_PER_MWH
@@ -202,7 +219,7 @@ export class ImbalanceSettlementModel {
         ? this.ESETT_WEEKLY_FEE_EUR / (7.0 * 24.0)
         : 0
 
-      const netCashflowEur = daImbalanceCashflowEur - fcrPenaltyEur - feeVolumeEur - feeImbalanceEur - feeWeeklyAllocEur
+      const netCashflowEur = totalImbalanceCashflowEur - fcrPenaltyEur - feeVolumeEur - feeImbalanceEur - feeWeeklyAllocEur
 
       // Store last settlement
       this.lastSettlement = {
@@ -213,6 +230,8 @@ export class ImbalanceSettlementModel {
         daDeviationMWh,
         fcrShortfallMWh,
         daImbalanceCashflowEur,
+        fcrImbalanceCashflowEur,
+        totalImbalanceCashflowEur,
         fcrPenaltyEur,
         feeVolumeEur,
         feeImbalanceEur,
@@ -225,6 +244,8 @@ export class ImbalanceSettlementModel {
       this.cumulativeFcrShortfallMWh += fcrShortfallMWh
       this.cumulativeNetCashEur += netCashflowEur
       this.cumulativeDaImbalanceCashflowEur += daImbalanceCashflowEur
+      this.cumulativeFcrImbalanceCashflowEur += fcrImbalanceCashflowEur
+      this.cumulativeTotalImbalanceCashflowEur += totalImbalanceCashflowEur
       this.cumulativeFcrPenaltyEur += fcrPenaltyEur
       this.cumulativeFeeVolumeEur += feeVolumeEur
       this.cumulativeFeeImbalanceEur += feeImbalanceEur
@@ -238,6 +259,8 @@ export class ImbalanceSettlementModel {
         this._history.push({
           time: settlementTimeS,
           settlementPriceEurPerMWh: settlementPrice,
+          daImbalanceCashflowEur,
+          totalImbalanceCashflowEur,
         })
       }
 
@@ -278,6 +301,8 @@ export class ImbalanceSettlementModel {
       cumulativeFcrShortfallMWh: this.cumulativeFcrShortfallMWh,
       cumulativeNetCashEur: this.cumulativeNetCashEur,
       cumulativeDaImbalanceCashflowEur: this.cumulativeDaImbalanceCashflowEur,
+      cumulativeFcrImbalanceCashflowEur: this.cumulativeFcrImbalanceCashflowEur,
+      cumulativeTotalImbalanceCashflowEur: this.cumulativeTotalImbalanceCashflowEur,
       cumulativeFcrPenaltyEur: this.cumulativeFcrPenaltyEur,
       cumulativeFeeVolumeEur: this.cumulativeFeeVolumeEur,
       cumulativeFeeImbalanceEur: this.cumulativeFeeImbalanceEur,

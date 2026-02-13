@@ -3,7 +3,7 @@ import { WorldSimulation, type WeatherSnapshot, type ConsumptionSnapshot, type P
 import { RealDataWorld } from './RealDataWorld'
 import type { GridSnapshot } from './PowerGrid'
 import type { WeatherRegionsOutput, ForecastRegionalOutput, HeatingBreakdown, NonHeatingBreakdown, ServicesBreakdown, TransportBreakdown, NuclearBreakdown, HydroBreakdown, RoRBreakdown, WindFleetRegionalBreakdown, SolarFleetRegionalBreakdown, FrequencyBreakdown, FrequencyBand } from '../system_model'
-import { BESSFleet, DEFAULT_BESS_FLEET, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput, type SettlementSnapshot } from '../system_model'
+import { BESSFleet, DEFAULT_BESS_FLEET, type BESSConfig, type BESSMode, type BESSMarket, ImbalanceSettlementModel, type ImbalanceSettlementOutput, type SettlementSnapshot } from '../system_model'
 import { BESSPerformanceTracker } from './BESSPerformanceTracker'
 
 export type GamePhase = 'start' | 'initializing' | 'day' | 'day_complete' | 'end'
@@ -449,7 +449,26 @@ class GameState {
 
   resetBESS(): void {
     this._bessFleet.reset()
+    this.clampBidsToFleetLimits()
+    this._bessPerformance.setBids(
+      this.playerBids.daBids.map(b => b.volumeMW),
+      this.playerBids.fcrBids.map(b => b.volumeMW),
+    )
     this.syncBESSState()
+  }
+
+  setBESSFleet(configs: BESSConfig[]): void {
+    this._bessFleet = new BESSFleet(configs.map(c => ({ ...c })))
+    this.clampBidsToFleetLimits()
+    this._bessPerformance.setBids(
+      this.playerBids.daBids.map(b => b.volumeMW),
+      this.playerBids.fcrBids.map(b => b.volumeMW),
+    )
+    this.resetBESS()
+  }
+
+  resetToDefaultBESSFleet(): void {
+    this.setBESSFleet(DEFAULT_BESS_FLEET)
   }
 
   get bessPerformance(): BESSPerformanceTracker {
@@ -597,8 +616,19 @@ class GameState {
     this.currentFrequencyBand = 'normal'
     this.historyVersion = 0
     this.weatherHistoryVersion = 0
+    this.resetToDefaultBESSFleet()
     this.resetBids()
     this.phase = 'start'
+  }
+
+  private clampBidsToFleetLimits(): void {
+    const maxVolume = this._bessFleet.totalMaxPowerMW
+    for (const bid of this.playerBids.daBids) {
+      bid.volumeMW = Math.max(-maxVolume, Math.min(maxVolume, bid.volumeMW))
+    }
+    for (const bid of this.playerBids.fcrBids) {
+      bid.volumeMW = Math.max(0, Math.min(maxVolume, bid.volumeMW))
+    }
   }
 
   resetBids(): void {

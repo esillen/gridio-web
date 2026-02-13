@@ -1,9 +1,11 @@
-The tutorial game is played in four days.
-In all tutorial days, you should not be able to change any sandbox settings.
-In all tutorial days, random processes have a set seed where seed=day_number. 
+The tutorial campaign is played in four days.
+In all tutorial campaign days, you should not be able to change any sandbox settings.
+In all tutorial campaign days, random processes have a set seed where seed=day_number.
 That random seed should most of all make DA and FCR-N prices predictable. Other consistencies are a byproduct.
 
 On the first day, you trade only on DA.
+On days 1-3, you have one battery (10 MW and 10 MWh).
+On day 4, you have two batteries (10 MW and 10 MWh each).
 The player must make at least one bid to be able to start the day.
 During this day, the player has no control over the batteries and everything happens automatically.
 DA deliveries happen automatically and you cannot change that.
@@ -30,21 +32,21 @@ During an explainer the gameplay is paused, then it becomes resumed:
 
 
 DAY 2
-On the second day, you also only trade on DA but you have to earn at least 600€
+On the second day, you also only trade on DA but you have to earn at least 5€
 
 [At the start of day 2]
-- Today you have to meet an earnings goal! Earn 600€ to continue to the next day.
+- Today you have to meet an earnings goal! Earn 5€ to continue to the next day.
 - These numbers represent how much 1MWh costs to buy or sell.
 
 [Stop the players from placing no bids]
-- You didn't place any bids! You need to make 400€ in order to advance to the next day.
+- You didn't place any bids! You need to make 5€ in order to advance to the next day.
 
 [At the daily breakdown - if you fail show some tips]
 - Tip: Never trade more than your batteries can store! Imbalance is expensive compared to what you earn on selling energy.
 - Tip: Your batteries start at 50% state of charge (SOC), use that knowledge wisely.
 
-[If you manage to get >0€ but <600€]
-- Tip: trading has a small fee that you can see in the breakdown. Make sure to plan for earning more than 600€ to advance.
+[If you manage to get >0€ but <5€]
+- Tip: trading has a small fee that you can see in the breakdown. Make sure to plan for earning more than 5€ to advance.
 
 
 Day 3
@@ -53,10 +55,10 @@ On the third day, you will only be able to trade on FCR-N
 - Just like before, you place your bets here. However this time you say how much power that can be maximally be used if the grid needs it.
 - This market is a simplification of the real FCR-D up/down and FCR-N markets. In this game your batteries activate if there is a frequency deviation in the grid no matter what.
 - On this market you get paid no matter what even if there was no delivery. Just keep in mind that placing lots of bids here means that you will have to deliver if there is a grid need.
-- To move on from this day you need to earn 400€.
+- To move on from this day you need to earn 5€.
 
 [Stop the players from placing no bids]
-- You didn't place any bids! You need to make 400€ in order to advance to the next day.
+- You didn't place any bids! You need to make 5€ in order to advance to the next day.
 
 [Start of day]
 - Note that your batteries have a new pre-selected market which is FCR-N. You cannot change it.
@@ -70,8 +72,8 @@ On the third day, you will only be able to trade on FCR-N
 
 Day 4:
 On the fourth day, you bid on both FCR-N and DA
-- Today is the end of the tutorial! You now bid on both DA and FCR-N and you will have full control over your batteries.
-- Make 1000€ to finish the tutorial!
+- Today is the end of the tutorial campaign! You now bid on both DA and FCR-N and you will have full control over your batteries.
+- Make 10€ to finish the tutorial campaign!
 
 [When the day starts]
 - You are now able to toggle what market the battery should be active on: DA, FCR-N or AUTO which automatically chooses an allocation of your battery portfolio. You can also choose to deactivate your battery.
@@ -81,7 +83,7 @@ On the fourth day, you bid on both FCR-N and DA
 - Don't forget the advanced charts for super-detailed optimization!
 
 [If you win]
-- CONGRATULATIONS! You beat the tutorial! Now try the sandbox and see how much money you can make by being an optimizer!
+- CONGRATULATIONS! You beat the tutorial campaign! Now try campaign mode or sandbox.
 
 
 After the fourth day, you go back to the index and can choose to do whatever next.

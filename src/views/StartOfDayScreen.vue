@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import type { Component } from 'vue'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
+import { campaignController } from '../campaign'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { loadRealDataDay } from '../data/real'
 import BESSPanel from '../components/BESSPanel.vue'
@@ -98,6 +99,8 @@ const isTutorial = computed(() => tutorialController.active)
 const tutorialDay = computed(() => tutorialController.currentDay)
 const tutorialConfig = computed(() => tutorialController.config)
 const tutorialMessage = computed(() => tutorialController.currentMessage)
+const isCampaign = computed(() => campaignController.active)
+const campaignDay = computed(() => campaignController.currentDay)
 
 type EnergyType = 'nuclear' | 'hydroReservoir' | 'hydroRoR' | 'wind' | 'solar' | 'chp' | 'peakers' | 'interconnectors' | 'demandResponse'
 
@@ -132,7 +135,14 @@ const fcrEnabled = computed(() => !isTutorial.value || tutorialConfig.value.fcrE
 
 onMounted(() => {
   if (route.query.tutorial === '1' && route.query.day) {
+    campaignController.stop()
     tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  } else if (route.query.campaign === '1' && route.query.day) {
+    tutorialController.stop()
+    campaignController.restoreFromUrl(parseInt(route.query.day as string))
+  } else {
+    tutorialController.stop()
+    campaignController.stop()
   }
 
   gameState.config.useSimulation = route.query.simulation === 'true'
@@ -140,9 +150,13 @@ onMounted(() => {
     gameState.config.day = route.query.day
   }
 
-  gameState.resetBESS()
+  if (!isTutorial.value && !isCampaign.value) {
+    gameState.resetToDefaultBESSFleet()
+  } else {
+    gameState.resetBESS()
+  }
 
-  if (!isTutorial.value) {
+  if (!isTutorial.value && !isCampaign.value) {
     if (gameState.config.useSimulation) {
       gameState.generateMarketPrices(Date.now())
     } else {
@@ -182,15 +196,15 @@ function queueBiddingMessages() {
   const day = tutorialDay.value
   if (day === 1) {
     tutorialController.queueMessages([
-      { id: 'd1_welcome', text: 'Welcome to the Tutorial! Over 4 in-game days, you\'ll gradually learn to trade successfully on energy markets.' },
+      { id: 'd1_welcome', text: 'Welcome to the Tutorial Campaign! Over 4 in-game days, you\'ll gradually learn to trade successfully on energy markets.' },
       { id: 'd1_da_explain', text: 'Today you trade on the Day-Ahead (DA) market only. Drag up to sell energy volumes, drag down to buy.', highlight: 'da-chart' },
       { id: 'd1_prices', text: 'The numbers show prices in €/MWh. Larger, redder numbers = higher prices. Sell high, buy low!', highlight: 'prices' },
-      { id: 'd1_batteries', text: 'This is your battery fleet! Batteries have power (MW) and energy (MWh). The MW rating means how much power they can deliver at most at any one instant. The MWh rating means how much energy they can maximally store.', highlight: 'batteries' },
+      { id: 'd1_batteries', text: 'This is your battery fleet! In the tutorial campaign you start with one battery rated 10 MW and 10 MWh. Power means how much it can charge/discharge instantly, and energy means total storage.', highlight: 'batteries' },
       { id: 'd1_place_bid', text: 'Place at least one bid and then start the day!', highlight: 'da-chart' },
     ])
   } else if (day === 2) {
     tutorialController.queueMessages([
-      { id: 'd2_goal', text: 'Day 2: Earn at least €1000 to advance! Plan your bids carefully.' },
+      { id: 'd2_goal', text: 'Day 2: Earn at least €5 to advance! Plan your bids carefully.' },
       { id: 'd2_capacity', text: 'The maximum bid you can make (up or down) is constrained by the power rating of your batteries. Other than that, the game (and the real world market) will not stop you from making bids that are impossible to fulfill. Don\'t bid more than you can deliver as you need to pay penalties for failed deliveries!', highlight: 'da-chart' },
       { id: 'd2_battery_capacity', text: 'Check your batteries\' energy capacity (the MWh number). The energy capacity will limit how much power you will be able to deliver throughout the day. Buy (charge) when the price is low, sell (discharge) when price is high.', highlight: 'batteries' },
       { id: 'd2_tips', text: 'For the sake of the game, your batteries are reset to 50% state-of-charge (SOC) every day. Trade wisely to hit your goal!' },
@@ -199,12 +213,12 @@ function queueBiddingMessages() {
     tutorialController.queueMessages([
       { id: 'd3_fcr_intro', text: 'Day 3: Today you trade on the FCR-N market - crucial for grid stability!' },
       { id: 'd3_fcr_explain', text: 'In FCR-N, you bid how much power your batteries CAN provide if the grid needs it. You get paid only for being available! But if the grid needs power and you can\'t deliver, you\'ll face penalties.' },
-      { id: 'd3_goal', text: 'Earn €1000 to advance.' },
+      { id: 'd3_goal', text: 'Earn €5 to advance.' },
     ])
   } else if (day === 4) {
     tutorialController.queueMessages([
-      { id: 'd4_intro', text: 'Day 4: Final tutorial day! You now bid on BOTH DA and FCR-N markets with full control.' },
-      { id: 'd4_goal', text: 'Earn €2000 to complete the tutorial! Use Tab to switch between DA and FCR-N views.' },
+      { id: 'd4_intro', text: 'Day 4: Final tutorial day! You now have two batteries (10 MW / 10 MWh each) and can bid on BOTH DA and FCR-N markets with full control.' },
+      { id: 'd4_goal', text: 'Earn €10 to complete the tutorial campaign! Use Tab to switch between DA and FCR-N views.' },
     ])
   }
 }
@@ -220,9 +234,15 @@ async function startDay() {
   const query: LocationQueryRaw = { ...route.query }
   if (isTutorial.value) {
     query.tutorial = '1'
+    delete query.campaign
     query.day = String(tutorialDay.value)
+  } else if (isCampaign.value) {
+    query.campaign = '1'
+    delete query.tutorial
+    query.day = String(campaignDay.value)
   } else {
     delete query.tutorial
+    delete query.campaign
     delete query.day
   }
   router.push({ path: '/initializing', query })
@@ -268,11 +288,11 @@ function handleBarInteraction(hour: number, event: MouseEvent, chart: 'da' | 'fc
   
   if (chart === 'da') {
     // DA: center is 0, top is +maxPower (sell), bottom is -maxPower (buy)
-    const volume = Math.round((0.5 - relY) * 2 * maxPower.value)
+    const volume = Number(((0.5 - relY) * 2 * maxPower.value).toFixed(3))
     gameState.setDABid(hour, volume)
   } else {
     // FCR-N: bottom is 0, top is maxPower
-    const volume = Math.round((1 - relY) * maxPower.value)
+    const volume = Number(((1 - relY) * maxPower.value).toFixed(3))
     gameState.setFCRBid(hour, volume)
   }
 }
@@ -436,13 +456,14 @@ function goRight() {
 <template>
   <div class="start-screen">
     <!-- Tutorial day indicator -->
-    <div v-if="isTutorial" class="tutorial-indicator">
-      <span class="tutorial-day">Tutorial Day {{ tutorialDay }}/4</span>
-      <span v-if="tutorialConfig.earningsGoal > 0" class="tutorial-goal">Goal: €{{ tutorialConfig.earningsGoal }}</span>
+    <div v-if="isTutorial || isCampaign" class="tutorial-indicator">
+      <span v-if="isTutorial" class="tutorial-day">Tutorial Campaign Day {{ tutorialDay }}/4</span>
+      <span v-else class="tutorial-day">Campaign Day {{ campaignDay }}/6</span>
+      <span v-if="isTutorial && tutorialConfig.earningsGoal > 0" class="tutorial-goal">Goal: €{{ tutorialConfig.earningsGoal }}</span>
     </div>
 
     <header class="header">
-      <h1>{{ isTutorial ? (tutorialConfig.fcrEnabled && !tutorialConfig.daEnabled ? 'FCR-N Bidding' : 'Day-Ahead Bidding') : 'Day-Ahead Bidding' }}</h1>
+      <h1>{{ isTutorial ? (tutorialConfig.fcrEnabled && !tutorialConfig.daEnabled ? 'FCR-N Bidding' : 'Day-Ahead Bidding') : (isCampaign ? 'Campaign Bidding' : 'Day-Ahead Bidding') }}</h1>
     </header>
 
     <div class="main-content">
@@ -564,7 +585,7 @@ function goRight() {
       </div>
     </div>
 
-    <div v-if="!isTutorial" class="sandbox-section">
+    <div v-if="!isTutorial && !isCampaign" class="sandbox-section">
       <button class="sandbox-header" @click="showSandbox = !showSandbox">
         <span class="sandbox-title">Sandbox <span class="sandbox-subtitle">(what if this was not part of the system...)</span></span>
         <span class="chevron" :class="{ expanded: showSandbox }">▼</span>

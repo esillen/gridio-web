@@ -3,6 +3,7 @@ import { onMounted } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { gameState } from '../game/GameState'
 import { tutorialController } from '../tutorial'
+import { campaignController } from '../campaign'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,7 +11,14 @@ const router = useRouter()
 onMounted(() => {
   // Restore tutorial state from URL params if needed
   if (route.query.tutorial === '1' && route.query.day) {
+    campaignController.stop()
     tutorialController.restoreFromUrl(parseInt(route.query.day as string))
+  } else if (route.query.campaign === '1' && route.query.day) {
+    tutorialController.stop()
+    campaignController.restoreFromUrl(parseInt(route.query.day as string))
+  } else {
+    tutorialController.stop()
+    campaignController.stop()
   }
   
   // Watch for phase change to 'day'
@@ -20,9 +28,15 @@ onMounted(() => {
       const query: LocationQueryRaw = { ...route.query }
       if (tutorialController.active) {
         query.tutorial = '1'
+        delete query.campaign
         query.day = String(tutorialController.currentDay)
+      } else if (campaignController.active) {
+        query.campaign = '1'
+        delete query.tutorial
+        query.day = String(campaignController.currentDay)
       } else {
         delete query.tutorial
+        delete query.campaign
         delete query.day
       }
       router.push({ path: '/day', query })

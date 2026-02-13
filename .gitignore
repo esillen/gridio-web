@@ -32,3 +32,5 @@ publish.sh
 
 model_output
 dist-sim
+frequency-data
+public/data/

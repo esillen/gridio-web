@@ -15,8 +15,16 @@ const router = useRouter()
         <button class="option-btn tutorial" @click="router.push('/tutorial')">
           <span class="btn-icon">🎓</span>
           <span class="btn-text">
-            <span class="btn-title">Take the Tutorial</span>
+            <span class="btn-title">Take the Tutorial Campaign</span>
             <span class="btn-desc">Learn the game controls step by step</span>
+          </span>
+        </button>
+
+        <button class="option-btn campaign" @click="router.push('/campaign')">
+          <span class="btn-icon">🗓️</span>
+          <span class="btn-text">
+            <span class="btn-title">Start Campaign Mode</span>
+            <span class="btn-desc">Play six days with a growing battery fleet</span>
           </span>
         </button>
 
@@ -97,6 +105,14 @@ h1 {
 
 .option-btn.tutorial:hover {
   background: #fffbeb;
+}
+
+.option-btn.campaign {
+  border-color: #22c55e;
+}
+
+.option-btn.campaign:hover {
+  background: #f0fdf4;
 }
 
 .option-btn.play {

@@ -3,6 +3,7 @@ import LandingPage from '../views/LandingPage.vue'
 import IntroductionScreen from '../views/introduction/IntroductionScreen.vue'
 import AfterIntroductionScreen from '../views/AfterIntroductionScreen.vue'
 import TutorialScreen from '../tutorial/TutorialScreen.vue'
+import CampaignScreen from '../campaign/CampaignScreen.vue'
 import StartOfDayScreen from '../views/StartOfDayScreen.vue'
 import InitializingScreen from '../views/InitializingScreen.vue'
 import DayScreen from '../views/DayScreen.vue'
@@ -28,6 +29,10 @@ const router = createRouter({
     {
       path: '/tutorial',
       component: TutorialScreen
+    },
+    {
+      path: '/campaign',
+      component: CampaignScreen
     },
     {
       path: '/game',

@@ -2,11 +2,13 @@
 import { onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { tutorialController, type TutorialDay } from './TutorialController'
+import { campaignController } from '../campaign'
 
 const route = useRoute()
 const router = useRouter()
 
 onMounted(() => {
+  campaignController.stop()
   const dayParam = parseInt(route.query.day as string)
   const day = (dayParam >= 1 && dayParam <= 4 ? dayParam : 1) as TutorialDay
   
@@ -17,7 +19,7 @@ onMounted(() => {
 
 <template>
   <div class="loading">
-    <p>Starting tutorial...</p>
+    <p>Starting tutorial campaign...</p>
   </div>
 </template>
 

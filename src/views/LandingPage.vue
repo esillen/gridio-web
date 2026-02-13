@@ -18,7 +18,9 @@ const router = useRouter()
     </div>
 
     <div class="hero">
-      <h1 class="logo">Grid.io</h1>
+      <h1 class="logo">
+        <span class="logo-text">Grid.io</span>
+      </h1>
       <p class="tagline">Make money by balancing the power grid</p>
     </div>
 
@@ -31,8 +33,14 @@ const router = useRouter()
 
       <button class="option-btn tutorial" @click="router.push('/tutorial')">
         <span class="option-icon">🎓</span>
-        <span class="option-title">Tutorial</span>
+        <span class="option-title">Tutorial Campaign</span>
         <span class="option-desc">Learn by playing through 4 guided trading days</span>
+      </button>
+
+      <button class="option-btn campaign" @click="router.push('/campaign')">
+        <span class="option-icon">🗓️</span>
+        <span class="option-title">Campaign Mode</span>
+        <span class="option-desc">Play 6 days with a growing battery fleet</span>
       </button>
 
       <button class="option-btn play" @click="router.push('/game')">
@@ -135,6 +143,81 @@ const router = useRouter()
   margin-bottom: 0.5rem;
   letter-spacing: -0.02em;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo-text {
+  background: linear-gradient(100deg, #f8fafc 0%, #e2e8f0 36%, #93c5fd 50%, #e2e8f0 64%, #f8fafc 100%);
+  background-size: 240% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: electric-flow 7s linear infinite, edge-spark 3.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 8px rgba(125, 211, 252, 0.22));
+}
+
+.logo::before {
+  content: '';
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 0.45rem;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(147, 197, 253, 0.85), transparent);
+  opacity: 0.6;
+  animation: line-pulse 3.4s ease-in-out infinite;
+}
+
+@keyframes electric-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 240% 50%;
+  }
+}
+
+@keyframes line-pulse {
+  0%, 100% {
+    opacity: 0.25;
+    transform: scaleX(0.85);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scaleX(1);
+  }
+}
+
+@keyframes edge-spark {
+  0%, 100% {
+    filter:
+      drop-shadow(0 0 6px rgba(125, 211, 252, 0.18))
+      drop-shadow(0 0 1px rgba(191, 219, 254, 0.16));
+  }
+  24% {
+    filter:
+      drop-shadow(0 0 8px rgba(147, 197, 253, 0.24))
+      drop-shadow(0 0 2px rgba(191, 219, 254, 0.20));
+  }
+  27% {
+    filter:
+      drop-shadow(0 0 5px rgba(125, 211, 252, 0.14))
+      drop-shadow(0 0 1px rgba(191, 219, 254, 0.12));
+  }
+  54% {
+    filter:
+      drop-shadow(0 0 9px rgba(147, 197, 253, 0.26))
+      drop-shadow(0 0 2px rgba(191, 219, 254, 0.22));
+  }
+  57% {
+    filter:
+      drop-shadow(0 0 6px rgba(125, 211, 252, 0.18))
+      drop-shadow(0 0 1px rgba(191, 219, 254, 0.16));
+  }
 }
 
 .tagline {
@@ -198,6 +281,14 @@ const router = useRouter()
 
 .option-btn.tutorial:hover {
   background: #fffbeb;
+}
+
+.option-btn.campaign {
+  border-color: #22c55e;
+}
+
+.option-btn.campaign:hover {
+  background: #f0fdf4;
 }
 
 .option-btn.play {
