@@ -105,16 +105,17 @@ def main() -> None:
     merged = merge_rows(rows)
     ordered = [merged[key] for key in sorted(merged.keys())]
 
-    output_dir = Path("public/data") / args.day
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "consumption.csv"
-
-    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_FIELDS)
-        writer.writeheader()
-        writer.writerows(ordered)
-
-    print(f"Wrote {len(ordered)} rows to {output_path}")
+    targets = [
+        Path("public/data") / args.day / "consumption.csv",
+        Path("src/data/real/raw") / args.day / "consumption.csv",
+    ]
+    for output_path in targets:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_FIELDS)
+            writer.writeheader()
+            writer.writerows(ordered)
+        print(f"Wrote {len(ordered)} rows to {output_path}")
 
 
 if __name__ == "__main__":

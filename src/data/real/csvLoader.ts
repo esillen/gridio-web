@@ -1,23 +1,54 @@
 /**
- * Placeholder loader. Replace with file-based loading: e.g. import JSON from
- * ./days/${day}.json or fetch from public/data/${day}.json. Types in ./types match.
+ * Real-data loader backed by CSV files in public/data/{day}/*.csv.
  */
 import type { RealDataDay, RealFrequencyPoint, RealProductionPoint, RealConsumptionPoint } from './types'
-import frequency20260108Csv from '../../../public/data/2026-01-08/frequency.csv?raw'
-import production20260108Csv from '../../../public/data/2026-01-08/production.csv?raw'
-import consumption20260108Csv from '../../../public/data/2026-01-08/consumption.csv?raw'
 
-const ONE = 1
 const SECONDS_PER_DAY = 24 * 60 * 60
-const REAL_FREQUENCY_CSV_BY_DAY: Record<string, string> = {
-  '2026-01-08': frequency20260108Csv,
-}
-const REAL_PRODUCTION_CSV_BY_DAY: Record<string, string> = {
-  '2026-01-08': production20260108Csv,
-}
-const REAL_CONSUMPTION_CSV_BY_DAY: Record<string, string> = {
-  '2026-01-08': consumption20260108Csv,
-}
+const REAL_FREQUENCY_CSV_BY_DAY: Record<string, string> = (() => {
+  const modules = import.meta.glob('../../../public/data/*/frequency.csv', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>
+  const out: Record<string, string> = {}
+  for (const [path, content] of Object.entries(modules)) {
+    const m = path.match(/\/public\/data\/(\d{4}-\d{2}-\d{2})\/frequency\.csv$/)
+    const day = m?.[1]
+    if (!day) continue
+    out[day] = content
+  }
+  return out
+})()
+const REAL_PRODUCTION_CSV_BY_DAY: Record<string, string> = (() => {
+  const modules = import.meta.glob('../../../public/data/*/production.csv', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>
+  const out: Record<string, string> = {}
+  for (const [path, content] of Object.entries(modules)) {
+    const m = path.match(/\/public\/data\/(\d{4}-\d{2}-\d{2})\/production\.csv$/)
+    const day = m?.[1]
+    if (!day) continue
+    out[day] = content
+  }
+  return out
+})()
+const REAL_CONSUMPTION_CSV_BY_DAY: Record<string, string> = (() => {
+  const modules = import.meta.glob('../../../public/data/*/consumption.csv', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  }) as Record<string, string>
+  const out: Record<string, string> = {}
+  for (const [path, content] of Object.entries(modules)) {
+    const m = path.match(/\/public\/data\/(\d{4}-\d{2}-\d{2})\/consumption\.csv$/)
+    const day = m?.[1]
+    if (!day) continue
+    out[day] = content
+  }
+  return out
+})()
 const REAL_PRICES_CSV_BY_DAY: Record<string, string> = (() => {
   const modules = import.meta.glob('../../../public/data/*/prices.csv', {
     query: '?raw',
@@ -133,10 +164,10 @@ function parsePricesCsv(csv: string, day: string): { da: number[]; fcr: number[]
   }
   const headers = lines[0]?.split(',').map(v => v.trim().toLowerCase()) ?? []
   const timeIdx = headers.indexOf('time')
-  const daIdx = headers.indexOf('day_ahead_price')
-  const fcrIdx = headers.indexOf('price')
-  const upIdx = headers.indexOf('imbalance_price_up')
-  const downIdx = headers.indexOf('imbalance_price_down')
+  const daIdx = headers.indexOf('day_ahead')
+  const fcrIdx = headers.indexOf('fcrn')
+  const upIdx = headers.indexOf('imbalance_up')
+  const downIdx = headers.indexOf('imbalance_down')
   if (timeIdx < 0 || daIdx < 0 || fcrIdx < 0 || upIdx < 0 || downIdx < 0) {
     throw new Error(`Prices CSV is missing required columns for ${day}`)
   }
@@ -157,10 +188,10 @@ function parsePricesCsv(csv: string, day: string): { da: number[]; fcr: number[]
     const fcr = Number(fcrRaw)
     const up = Number(upRaw)
     const down = Number(downRaw)
-    if (daRaw && !Number.isNaN(da)) row.day_ahead_price = da
-    if (fcrRaw && !Number.isNaN(fcr)) row.price = fcr
-    if (upRaw && !Number.isNaN(up)) row.imbalance_price_up = up
-    if (downRaw && !Number.isNaN(down)) row.imbalance_price_down = down
+    if (daRaw && !Number.isNaN(da)) row.day_ahead = da
+    if (fcrRaw && !Number.isNaN(fcr)) row.fcrn = fcr
+    if (upRaw && !Number.isNaN(up)) row.imbalance_up = up
+    if (downRaw && !Number.isNaN(down)) row.imbalance_down = down
     rowsByTime.set(timeS, row)
   }
 
@@ -173,10 +204,10 @@ function parsePricesCsv(csv: string, day: string): { da: number[]; fcr: number[]
     const timeS = h * 3600
     const row = rowsByTime.get(timeS)
     if (!row) throw new Error(`Missing prices row for ${day} at ${timeS}s`)
-    da[h] = readRequired(row, 'day_ahead_price', day, timeS)
-    fcr[h] = readRequired(row, 'price', day, timeS)
-    up[h] = readRequired(row, 'imbalance_price_up', day, timeS)
-    down[h] = readRequired(row, 'imbalance_price_down', day, timeS)
+    da[h] = readRequired(row, 'day_ahead', day, timeS)
+    fcr[h] = readRequired(row, 'fcrn', day, timeS)
+    up[h] = readRequired(row, 'imbalance_up', day, timeS)
+    down[h] = readRequired(row, 'imbalance_down', day, timeS)
   }
 
   return { da, fcr, up, down }
@@ -190,134 +221,85 @@ function readRequired(row: Record<string, number>, key: string, day: string, tim
   return value
 }
 
-function placeholderFrequency(_day: string): RealFrequencyPoint[] {
+function loadFrequency(_day: string): RealFrequencyPoint[] {
   const realCsv = REAL_FREQUENCY_CSV_BY_DAY[_day]
-  if (realCsv) {
-    return parseFrequencyCsv(realCsv)
+  if (!realCsv) {
+    throw new Error(`Missing frequency.csv for ${_day} in public/data/${_day}`)
   }
-
-  const points: RealFrequencyPoint[] = []
-  for (let timeS = 0; timeS < SECONDS_PER_DAY; timeS++) {
-    points.push({
-      timeS,
-      frequencyHz: ONE,
-      rocofHzPerS: ONE,
-    })
-  }
-  return points
+  return parseFrequencyCsv(realCsv)
 }
 
-function placeholderProduction(_day: string): RealProductionPoint[] {
+function loadProduction(_day: string): RealProductionPoint[] {
   const realCsv = REAL_PRODUCTION_CSV_BY_DAY[_day]
-  if (realCsv) {
-    const rowsByTime = parseRowsByTime(realCsv, [
-      'hydro',
-      'nuclear',
-      'solar',
-      'thermal',
-      'wind',
-      'wind_offshore',
-      'energy_storage',
-      'other',
-      'total',
-    ])
-    const points: RealProductionPoint[] = []
-    for (let i = 0; i < 96; i++) {
-      const timeS = i * 900
-      const row = rowsByTime.get(timeS)
-      if (!row) throw new Error(`Missing production row for ${_day} at ${timeS}s`)
-      const nuclearMW = readRequired(row, 'nuclear', _day, timeS)
-      const hydroReservoirMW = readRequired(row, 'hydro', _day, timeS)
-      const hydroRoRMW = 0
-      const windMW = readRequired(row, 'wind', _day, timeS) + readRequired(row, 'wind_offshore', _day, timeS)
-      const solarMW = readRequired(row, 'solar', _day, timeS)
-      const chpMW = readRequired(row, 'thermal', _day, timeS)
-      const industrialChpMW = readRequired(row, 'energy_storage', _day, timeS)
-      const peakersMW = readRequired(row, 'other', _day, timeS)
-      const interconnectorsMW = 0
-      const totalMW = readRequired(row, 'total', _day, timeS)
-      points.push({
-        timeS,
-        nuclearMW,
-        hydroReservoirMW,
-        hydroRoRMW,
-        windMW,
-        solarMW,
-        chpMW,
-        industrialChpMW,
-        peakersMW,
-        interconnectorsMW,
-        totalMW,
-      })
-    }
-    return points
+  if (!realCsv) {
+    throw new Error(`Missing production.csv for ${_day} in public/data/${_day}`)
   }
 
+  const rowsByTime = parseRowsByTime(realCsv, [
+    'hydro',
+    'nuclear',
+    'solar',
+    'thermal',
+    'wind',
+    'wind_offshore',
+    'energy_storage',
+    'other',
+    'total',
+  ])
   const points: RealProductionPoint[] = []
   for (let i = 0; i < 96; i++) {
     const timeS = i * 900
+    const row = rowsByTime.get(timeS)
+    if (!row) throw new Error(`Missing production row for ${_day} at ${timeS}s`)
+    const nuclearMW = readRequired(row, 'nuclear', _day, timeS)
+    const hydroReservoirMW = readRequired(row, 'hydro', _day, timeS)
+    const hydroRoRMW = 0
+    const windMW = readRequired(row, 'wind', _day, timeS) + readRequired(row, 'wind_offshore', _day, timeS)
+    const solarMW = readRequired(row, 'solar', _day, timeS)
+    const chpMW = readRequired(row, 'thermal', _day, timeS)
+    const industrialChpMW = readRequired(row, 'energy_storage', _day, timeS)
+    const peakersMW = readRequired(row, 'other', _day, timeS)
+    const interconnectorsMW = 0
+    const totalMW = readRequired(row, 'total', _day, timeS)
     points.push({
       timeS,
-      nuclearMW: ONE,
-      hydroReservoirMW: ONE,
-      hydroRoRMW: ONE,
-      windMW: ONE,
-      solarMW: ONE,
-      chpMW: ONE,
-      industrialChpMW: ONE,
-      peakersMW: ONE,
-      interconnectorsMW: ONE,
-      totalMW: ONE * 10,
+      nuclearMW,
+      hydroReservoirMW,
+      hydroRoRMW,
+      windMW,
+      solarMW,
+      chpMW,
+      industrialChpMW,
+      peakersMW,
+      interconnectorsMW,
+      totalMW,
     })
   }
   return points
 }
 
-function placeholderConsumption(_day: string): RealConsumptionPoint[] {
+function loadConsumption(_day: string): RealConsumptionPoint[] {
   const realCsv = REAL_CONSUMPTION_CSV_BY_DAY[_day]
-  if (realCsv) {
-    const rowsByTime = parseRowsByTime(realCsv, ['flex', 'metered', 'profiled', 'total'])
-    const points: RealConsumptionPoint[] = []
-    for (let i = 0; i < 96; i++) {
-      const timeS = i * 900
-      const row = rowsByTime.get(timeS)
-      if (!row) throw new Error(`Missing consumption row for ${_day} at ${timeS}s`)
-      const transportMW = Math.abs(readRequired(row, 'flex', _day, timeS))
-      const industryMW = Math.abs(readRequired(row, 'metered', _day, timeS))
-      const nonHeatingMW = Math.abs(readRequired(row, 'profiled', _day, timeS))
-      const heatingMW = 0
-      const servicesMW = 0
-      const lossesMW = 0
-      const exportsMW = 0
-      const totalMW = Math.abs(readRequired(row, 'total', _day, timeS))
-      points.push({
-        timeS,
-        heatingMW,
-        nonHeatingMW,
-        servicesMW,
-        transportMW,
-        industryMW,
-        lossesMW,
-        exportsMW,
-        totalMW,
-      })
-    }
-    return points
+  if (!realCsv) {
+    throw new Error(`Missing consumption.csv for ${_day} in public/data/${_day}`)
   }
 
+  const rowsByTime = parseRowsByTime(realCsv, ['flex', 'metered', 'profiled', 'total'])
   const points: RealConsumptionPoint[] = []
   for (let i = 0; i < 96; i++) {
     const timeS = i * 900
+    const row = rowsByTime.get(timeS)
+    if (!row) throw new Error(`Missing consumption row for ${_day} at ${timeS}s`)
     points.push({
       timeS,
-      heatingMW: ONE,
-      nonHeatingMW: ONE,
-      servicesMW: ONE,
-      transportMW: ONE,
-      industryMW: ONE,
-      lossesMW: ONE,
-      exportsMW: ONE,
-      totalMW: ONE * 7,
+      heatingMW: 0,
+      nonHeatingMW: Math.abs(readRequired(row, 'profiled', _day, timeS)),
+      servicesMW: 0,
+      transportMW: Math.abs(readRequired(row, 'flex', _day, timeS)),
+      industryMW: Math.abs(readRequired(row, 'metered', _day, timeS)),
+      lossesMW: 0,
+      exportsMW: 0,
+      totalMW: Math.abs(readRequired(row, 'total', _day, timeS)),
     })
   }
   return points
@@ -325,29 +307,22 @@ function placeholderConsumption(_day: string): RealConsumptionPoint[] {
 
 export function loadRealDataDay(day: string): RealDataDay {
   const realPricesCsv = REAL_PRICES_CSV_BY_DAY[day]
-  const hasRealSeriesForDay = Boolean(
-    REAL_FREQUENCY_CSV_BY_DAY[day] ||
-    REAL_PRODUCTION_CSV_BY_DAY[day] ||
-    REAL_CONSUMPTION_CSV_BY_DAY[day]
-  )
-  if (hasRealSeriesForDay && !realPricesCsv) {
+  if (!realPricesCsv) {
     throw new Error(`Missing prices.csv for ${day} in public/data/${day}`)
   }
-  const parsedPrices = realPricesCsv
-    ? parsePricesCsv(realPricesCsv, day)
-    : null
+  const parsedPrices = parsePricesCsv(realPricesCsv, day)
 
   return {
     day,
-    frequency: { stepS: 1, points: placeholderFrequency(day) },
-    production: { stepS: 900, points: placeholderProduction(day) },
-    consumption: { stepS: 900, points: placeholderConsumption(day) },
+    frequency: { stepS: 1, points: loadFrequency(day) },
+    production: { stepS: 900, points: loadProduction(day) },
+    consumption: { stepS: 900, points: loadConsumption(day) },
     prices: {
       stepS: 3600,
-      daEurPerMWh: parsedPrices ? parsedPrices.da : Array(24).fill(ONE),
-      fcrEurPerMWPerH: parsedPrices ? parsedPrices.fcr : Array(24).fill(ONE),
-      imbalanceUpEurPerMWh: parsedPrices ? parsedPrices.up : Array(24).fill(ONE),
-      imbalanceDownEurPerMWh: parsedPrices ? parsedPrices.down : Array(24).fill(ONE),
+      daEurPerMWh: parsedPrices.da,
+      fcrEurPerMWPerH: parsedPrices.fcr,
+      imbalanceUpEurPerMWh: parsedPrices.up,
+      imbalanceDownEurPerMWh: parsedPrices.down,
     },
   }
 }

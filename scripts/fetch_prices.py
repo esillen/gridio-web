@@ -14,16 +14,16 @@ ESETT_BASE = "https://api.opendata.esett.com"
 SE3_MBA = "10Y1001A1001A46L"
 OUTPUT_FIELDS = [
     "time",
-    "price",
-    "day_ahead_price",
-    "imbalance_price_up",
-    "imbalance_price_down",
+    "fcrn",
+    "day_ahead",
+    "imbalance_up",
+    "imbalance_down",
 ]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch SE3 FCR-N and eSett DA/imbalance prices for one day."
+        description="Fetch FCR-N auction price and eSett SE3 DA/imbalance prices for one day."
     )
     parser.add_argument(
         "day",
@@ -96,15 +96,7 @@ def fetch_esett_prices(target_day: date) -> list[dict]:
     return json.loads(payload)
 
 
-def find_column(header: list[str], patterns: tuple[str, ...]) -> int:
-    lowered = [h.strip().lower() for h in header]
-    for i, col in enumerate(lowered):
-        if all(p in col for p in patterns):
-            return i
-    return -1
-
-
-def parse_fcr_se3_prices(csv_text: str) -> dict[str, str]:
+def parse_fcr_n_prices(csv_text: str) -> dict[str, str]:
     csv_text = csv_text.lstrip("\ufeff")
     lines = csv_text.splitlines()
     if not lines:
@@ -115,23 +107,24 @@ def parse_fcr_se3_prices(csv_text: str) -> dict[str, str]:
     if not header:
         return {}
     header = [h.strip().lstrip("\ufeff") for h in header]
+    lowered = [h.lower() for h in header]
 
-    idx_time = find_column(header, ("datum",))
-    idx_se3_price = find_column(header, ("se3", "pris"))
-    if idx_se3_price < 0:
-        idx_se3_price = find_column(header, ("se3", "price"))
-    if idx_se3_price < 0:
-        idx_se3_price = find_column(header, ("se3",))
+    try:
+        idx_time = lowered.index("datum")
+    except ValueError as exc:
+        raise RuntimeError("Could not find required FCR column: Datum") from exc
 
-    if idx_time < 0 or idx_se3_price < 0:
-        raise RuntimeError("Could not find required FCR columns for time and SE3 price")
+    try:
+        idx_fcr_n_price = lowered.index("fcr-n pris (eur/mw)")
+    except ValueError as exc:
+        raise RuntimeError("Could not find required FCR column: FCR-N Pris (EUR/MW)") from exc
 
     out: dict[str, str] = {}
     for row in reader:
-        if not row or len(row) <= max(idx_time, idx_se3_price):
+        if not row or len(row) <= max(idx_time, idx_fcr_n_price):
             continue
         time_raw = row[idx_time].strip()
-        price_raw = row[idx_se3_price].strip()
+        price_raw = row[idx_fcr_n_price].strip()
         if not time_raw or not price_raw:
             continue
         time_hms = extract_time_hms(time_raw)
@@ -179,10 +172,10 @@ def build_rows(
     return [
         {
             "time": t,
-            "price": fcr.get(t, ""),
-            "day_ahead_price": day_ahead.get(t, ""),
-            "imbalance_price_up": imbalance_up.get(t, ""),
-            "imbalance_price_down": imbalance_down.get(t, ""),
+            "fcrn": fcr.get(t, ""),
+            "day_ahead": day_ahead.get(t, ""),
+            "imbalance_up": imbalance_up.get(t, ""),
+            "imbalance_down": imbalance_down.get(t, ""),
         }
         for t in all_times
     ]
@@ -196,21 +189,22 @@ def main() -> None:
         raise SystemExit(f"Invalid date format: {args.day}") from exc
 
     fcr_csv = fetch_fcr_csv(target_day, target_day + timedelta(days=1))
-    fcr_prices = parse_fcr_se3_prices(fcr_csv)
+    fcr_prices = parse_fcr_n_prices(fcr_csv)
     esett_rows = fetch_esett_prices(target_day)
     day_ahead_prices, imbalance_up, imbalance_down = parse_esett_price_rows(esett_rows)
     rows = build_rows(fcr_prices, day_ahead_prices, imbalance_up, imbalance_down)
 
-    output_dir = Path("public/data") / args.day
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "prices.csv"
-
-    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_FIELDS)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"Wrote {len(rows)} rows to {output_path}")
+    targets = [
+        Path("public/data") / args.day / "prices.csv",
+        Path("src/data/real/raw") / args.day / "prices.csv",
+    ]
+    for output_path in targets:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"Wrote {len(rows)} rows to {output_path}")
 
 
 if __name__ == "__main__":

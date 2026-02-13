@@ -200,11 +200,9 @@ export class ImbalanceSettlementModel {
       // FCR shortfall (only penalize under-delivery)
       const fcrShortfallMWh = Math.max(0, Math.abs(this.accFCRRequiredMWh) - Math.abs(this.accFCRDeliveredMWh))
 
-      // DA imbalance cashflow (one-price settlement, capped at 0 - can't profit from imbalances)
-      // old was like this which was more realistic but not good for the game.
-      //const daImbalanceCashflowEur = daDeviationMWh * settlementPrice
-      const daImbalanceCashflowEur = Math.min(0, daDeviationMWh * settlementPrice)
-      const fcrImbalanceCashflowEur = Math.min(0, fcrDeviationMWh * settlementPrice)
+      // DA/FCR imbalance cashflow (one-price settlement; can be positive or negative)
+      const daImbalanceCashflowEur = daDeviationMWh * settlementPrice
+      const fcrImbalanceCashflowEur = fcrDeviationMWh * settlementPrice
       const totalImbalanceCashflowEur = daImbalanceCashflowEur + fcrImbalanceCashflowEur
 
       // FCR penalty for shortfall

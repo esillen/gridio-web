@@ -156,16 +156,14 @@ onMounted(() => {
     gameState.resetBESS()
   }
 
-  if (!isTutorial.value && !isCampaign.value) {
-    if (gameState.config.useSimulation) {
-      gameState.generateMarketPrices(Date.now())
-    } else {
-      const data = loadRealDataDay(gameState.config.day)
-      gameState.marketPrices.daEurPerMWh = [...data.prices.daEurPerMWh]
-      gameState.marketPrices.fcrEurPerMWPerH = [...data.prices.fcrEurPerMWPerH]
-      gameState.imbalancePrices.upEurPerMWh24 = [...data.prices.imbalanceUpEurPerMWh]
-      gameState.imbalancePrices.downEurPerMWh24 = [...data.prices.imbalanceDownEurPerMWh]
-    }
+  if (gameState.config.useSimulation) {
+    gameState.generateMarketPrices(Date.now())
+  } else {
+    const data = loadRealDataDay(gameState.config.day)
+    gameState.marketPrices.daEurPerMWh = [...data.prices.daEurPerMWh]
+    gameState.marketPrices.fcrEurPerMWPerH = [...data.prices.fcrEurPerMWPerH]
+    gameState.imbalancePrices.upEurPerMWh24 = [...data.prices.imbalanceUpEurPerMWh]
+    gameState.imbalancePrices.downEurPerMWh24 = [...data.prices.imbalanceDownEurPerMWh]
   }
   
   // Set initial chart based on what's enabled
